@@ -4,3 +4,7 @@
 [submodule "third_party/vk-bootstrap"]
 	path = third_party/vk-bootstrap
 	url = git@github.com:charles-lunarg/vk-bootstrap.git
+[submodule "third_party/imgui"]
+	path = third_party/imgui
+	url = git@github.com:ocornut/imgui.git
+	branch = docking

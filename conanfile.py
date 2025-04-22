@@ -17,13 +17,7 @@ class VulkanAppConan(ConanFile):
 
     def requirements(self):
         self.requires("glfw/3.4")
-        self.requires("imgui/1.91.8")
-
-    def generate(self):
-        copy(self, "*glfw*", os.path.join(self.dependencies["imgui"].package_folder,
-            "res", "bindings"), os.path.join(self.source_folder, "bindings"))
-        copy(self, "*vulkan*", os.path.join(self.dependencies["imgui"].package_folder,
-            "res", "bindings"), os.path.join(self.source_folder, "bindings"))
+        self.requires("imguizmo/1.83")
 
     def build(self):
         cmake = CMake(self)
