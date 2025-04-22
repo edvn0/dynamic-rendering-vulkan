@@ -65,6 +65,16 @@ auto Swapchain::draw_frame(Window &w, GUISystem &gui_system) -> void {
       .pStencilAttachment = nullptr,
   };
 
+  VkViewport viewport{};
+  viewport.x = 0.0f;
+  viewport.y = static_cast<float>(swapchain_extent.height);
+  viewport.width = static_cast<float>(swapchain_extent.width);
+  viewport.height = -static_cast<float>(swapchain_extent.height);
+  viewport.minDepth = 0.0f;
+  viewport.maxDepth = 1.0f;
+
+  vkCmdSetViewport(cmd, 0, 1, &viewport);
+
   vkCmdBeginRendering(cmd, &render_info);
 
   gui_system.end_frame(cmd);

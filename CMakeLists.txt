@@ -10,8 +10,8 @@ find_package(imguizmo REQUIRED CONFIG)
 
 add_subdirectory(third_party)
 
-add_executable(${PROJECT_NAME} src/main.cpp src/window.cpp src/swapchain.cpp src/gui_system.cpp src/command_buffer.cpp)
-target_link_libraries(${PROJECT_NAME} PRIVATE Vulkan::Vulkan vk-bootstrap::vk-bootstrap glfw imgui imguizmo::imguizmo)
+add_executable(${PROJECT_NAME} src/main.cpp src/window.cpp src/swapchain.cpp src/gui_system.cpp src/command_buffer.cpp src/allocator.cpp)
+target_link_libraries(${PROJECT_NAME} PRIVATE Vulkan::Vulkan vk-bootstrap::vk-bootstrap glfw imgui imguizmo::imguizmo VulkanMemoryAllocator)
 target_include_directories(${PROJECT_NAME} PRIVATE src)
 
 if(MSVC)

@@ -7,18 +7,18 @@
 #include <thread>
 
 #include "command_buffer.hpp"
-#include "image_transition.hpp"
-#include "swapchain.hpp"
-
 #include "device.hpp"
+#include "gpu_buffer.hpp"
+#include "gui_system.hpp"
+#include "image.hpp"
+#include "image_transition.hpp"
 #include "instance.hpp"
+#include "swapchain.hpp"
 #include "window.hpp"
 
 #include "GLFW/glfw3.h"
 #include "VkBootstrap.h"
 #include "imgui.h"
-
-#include "gui_system.hpp"
 
 struct FrametimeCalculator {
   using clock = std::chrono::high_resolution_clock;
@@ -55,9 +55,46 @@ auto main(int, char **) -> std::int32_t {
 
   struct Layer final : public ILayer {
     std::unique_ptr<CommandBuffer> command_buffer;
+    std::unique_ptr<Image> offscreen_image;
+    std::unique_ptr<GpuBuffer> vertex_buffer;
 
-    explicit Layer(const Device &dev) {
-      command_buffer = CommandBuffer::create(dev);
+    explicit Layer(const Device &dev)
+        : command_buffer(CommandBuffer::create(dev)) {
+
+      offscreen_image =
+          Image::create(dev, ImageConfiguration{
+                                 .extent = {800, 600},
+                                 .format = VK_FORMAT_B8G8R8A8_SRGB,
+                             });
+
+      vertex_buffer = std::make_unique<GpuBuffer>(
+          dev,
+          VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+          true);
+
+      struct Vertex {
+        std::array<float, 3> pos{
+            0.f,
+            0.f,
+            0.f,
+        };
+        std::array<float, 3> normal{
+            0.f,
+            0.f,
+            1.f,
+        };
+        std::array<float, 2> uv{
+            0.f,
+            0.f,
+        };
+      };
+
+      std::array<Vertex, 3> vertices = {
+          Vertex{{0.f, 0.f, 0.f}, {0.f, 0.f, 1.f}, {0.f, 0.f}},
+          Vertex{{1.f, 0.f, 0.f}, {0.f, 0.f, 1.f}, {1.f, 0.f}},
+          Vertex{{0.5f, 1.f, 0.f}, {0.f, 0.f, 1.f}, {0.5f, 1.f}},
+      };
+      vertex_buffer->upload<Vertex>(std::span(vertices));
     }
 
     auto on_event(Event &event) -> bool override {
@@ -102,7 +139,49 @@ auto main(int, char **) -> std::int32_t {
       command_buffer->begin_frame(frame_index);
       command_buffer->begin_timer(frame_index, "geometry_pass");
 
-      // ...record geometry draw calls
+      {
+        const VkCommandBuffer cmd = command_buffer->get(frame_index);
+
+        VkClearValue clear_value = {.color = {{0.f, 0.f, 0.f, 1.f}}};
+
+        VkRenderingAttachmentInfo color_attachment{
+            .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+            .imageView = offscreen_image->get_view(),
+            .imageLayout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
+            .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+            .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+            .clearValue = clear_value,
+        };
+
+        VkRenderingInfo render_info{
+            .sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
+            .renderArea =
+                {
+                    .offset = {0, 0},
+                    .extent =
+                        {
+                            offscreen_image->width(),
+                            offscreen_image->height(),
+                        },
+                },
+            .layerCount = 1,
+            .colorAttachmentCount = 1,
+            .pColorAttachments = &color_attachment,
+        };
+
+        vkCmdBeginRendering(cmd, &render_info);
+        //         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+        //         pipeline);
+        auto offsets = std::array<VkDeviceSize, 1>{0};
+        const std::array<VkBuffer, 1> vertex_buffers{
+            vertex_buffer->get(),
+        };
+        vkCmdBindVertexBuffers(
+            cmd, 0, static_cast<std::uint32_t>(vertex_buffers.size()),
+            vertex_buffers.data(), offsets.data());
+        vkCmdDraw(cmd, 3, 1, 0, 0);
+        vkCmdEndRendering(cmd);
+      }
 
       command_buffer->end_timer(frame_index, "geometry_pass");
       command_buffer->begin_timer(frame_index, "gui_pass");

@@ -2,6 +2,7 @@
 
 #include "instance.hpp"
 
+#include "allocator.hpp"
 #include <optional>
 
 class Device {
@@ -31,7 +32,7 @@ public:
       assert(false && "Failed to create device");
     }
 
-    return Device(dev_result.value());
+    return Device(instance, dev_result.value());
   }
 
   auto graphics_queue() const -> VkQueue {
@@ -41,6 +42,9 @@ public:
     }
     return queue_result.value();
   }
+
+  auto get_allocator() -> Allocator & { return allocator; }
+  auto get_allocator() const -> const Allocator & { return allocator; }
 
   auto get_device() const -> VkDevice { return device.device; }
   auto get_physical_device() const -> VkPhysicalDevice {
@@ -65,7 +69,9 @@ public:
   }
 
 private:
-  explicit Device(const vkb::Device &dev) : device(dev) {}
+  explicit Device(const Core::Instance &instance, const vkb::Device &dev)
+      : device(dev), allocator(instance, *this) {}
 
   vkb::Device device;
+  Allocator allocator;
 };

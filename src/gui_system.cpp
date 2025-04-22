@@ -6,6 +6,7 @@
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_vulkan.h>
 
+#include "config.hpp"
 #include <ImGuizmo.h>
 
 auto GUISystem::begin_frame() const -> void {
@@ -33,8 +34,8 @@ auto GUISystem::begin_frame() const -> void {
   ImGui::DockSpaceOverViewport(dockspace_id, ImGui::GetMainViewport(),
                                ImGuiDockNodeFlags_PassthruCentralNode);
 
-  // ImGuizmo::SetOrthographic(false);
-  // ImGuizmo::BeginFrame();
+  ImGuizmo::SetOrthographic(false);
+  ImGuizmo::BeginFrame();
 }
 
 auto GUISystem::end_frame(VkCommandBuffer cmd_buf) const -> void {
@@ -72,8 +73,8 @@ auto GUISystem::init_for_vulkan(const Core::Instance &instance,
   info.PipelineCache = VK_NULL_HANDLE;
   info.DescriptorPool = VK_NULL_HANDLE;
   info.ApiVersion = VK_API_VERSION_1_4;
-  info.MinImageCount = 2;
-  info.ImageCount = 2;
+  info.MinImageCount = image_count;
+  info.ImageCount = image_count;
   info.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
   info.DescriptorPoolSize = 100;
   info.Allocator = nullptr;
@@ -99,7 +100,6 @@ auto GUISystem::init_for_vulkan(const Core::Instance &instance,
   // Need to setup dockspace and viewport
   auto &io = ImGui::GetIO();
   io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
-  io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
 }
 
 auto GUISystem::shutdown() const -> void {

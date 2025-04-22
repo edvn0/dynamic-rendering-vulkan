@@ -27,3 +27,11 @@ function(generate_imgui)
 endfunction()
 
 generate_imgui()
+
+function(generate_vma)
+    add_library(VulkanMemoryAllocator STATIC ${CMAKE_CURRENT_SOURCE_DIR}/vma.cpp)
+    target_include_directories(VulkanMemoryAllocator PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/VulkanMemoryAllocator/include)
+    target_link_libraries(VulkanMemoryAllocator PRIVATE Vulkan::Vulkan)
+endfunction()
+
+generate_vma()

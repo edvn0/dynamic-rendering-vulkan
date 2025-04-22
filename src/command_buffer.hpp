@@ -48,10 +48,11 @@ public:
 
   VkCommandBuffer get(std::uint32_t frame_index) const;
   VkQueryPool get_query_pool(std::uint32_t frame_index) const;
-  void reset_pool() const;
+  auto reset_pool() const -> void;
+  auto reset_command_buffer(std::uint32_t frame_index) const -> void;
   VkFence get_fence(std::uint32_t frame_index) const;
-  void wait_for_fence(std::uint32_t frame_index) const;
-  void reset_fence(std::uint32_t frame_index) const;
+  auto wait_for_fence(std::uint32_t frame_index) const -> void;
+  auto reset_fence(std::uint32_t frame_index) const -> void;
 
   auto begin_frame(std::uint32_t frame_index) const {
     wait_for_fence(frame_index);
@@ -78,14 +79,14 @@ public:
 private:
   using TimedSectionMap = std::unordered_map<std::string, TimedSection,
                                              string_hash, std::equal_to<>>;
-  mutable std::array<TimedSectionMap, image_count> timer_sections{};
-  mutable std::array<uint32_t, image_count> next_query_index{};
+  mutable frame_array<TimedSectionMap> timer_sections{};
+  mutable frame_array<uint32_t> next_query_index{};
 
   double timestamp_period{0.0};
   VkCommandPool command_pool{VK_NULL_HANDLE};
-  std::array<VkCommandBuffer, image_count> command_buffers{};
-  std::array<VkQueryPool, image_count> query_pools{};
-  std::array<VkFence, image_count> fences{};
+  frame_array<VkCommandBuffer> command_buffers{};
+  frame_array<VkQueryPool> query_pools{};
+  frame_array<VkFence> fences{};
   VkQueue execution_queue{VK_NULL_HANDLE};
   const Device *device{nullptr};
 

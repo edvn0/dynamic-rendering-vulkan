@@ -19,7 +19,7 @@ CommandBuffer::CommandBuffer(const Device &dev, VkQueue q,
 }
 
 CommandBuffer::~CommandBuffer() {
-  for (auto pool : query_pools) {
+  for (auto &pool : query_pools) {
     if (pool)
       vkDestroyQueryPool(device->get_device(), pool, nullptr);
   }
@@ -28,7 +28,7 @@ CommandBuffer::~CommandBuffer() {
     vkDestroyCommandPool(device->get_device(), command_pool, nullptr);
   }
 
-  for (auto fence : fences) {
+  for (auto &fence : fences) {
     if (fence)
       vkDestroyFence(device->get_device(), fence, nullptr);
   }
@@ -121,7 +121,8 @@ void CommandBuffer::end(uint32_t frame_index) const {
 
 void CommandBuffer::submit(uint32_t frame_index, VkSemaphore wait_semaphore,
                            VkSemaphore signal_semaphore, VkFence fence) const {
-  VkSubmitInfo submit_info{};
+  VkSubmitInfo submit_info;
+  std::memset(&submit_info, 0, sizeof(submit_info));
   submit_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
 
   if (wait_semaphore) {
@@ -166,6 +167,10 @@ VkQueryPool CommandBuffer::get_query_pool(uint32_t frame_index) const {
 
 void CommandBuffer::reset_pool() const {
   vkResetCommandPool(device->get_device(), command_pool, 0);
+}
+
+void CommandBuffer::reset_command_buffer(uint32_t frame_index) const {
+  vkResetCommandBuffer(command_buffers[frame_index], 0);
 }
 
 VkFence CommandBuffer::get_fence(uint32_t frame_index) const {

@@ -68,6 +68,8 @@ private:
       glfwWaitEvents();
     }
 
+    std::cout << "Recreating swapchain..." << std::endl;
+
     vkDeviceWaitIdle(device);
     cleanup_swapchain();
     create_swapchain();
@@ -161,6 +163,9 @@ private:
     vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physical_device, surface, &caps);
 
     swapchain_extent = choose_extent(caps);
+
+    std::cout << "Swapchain extent: " << swapchain_extent.width << "x"
+              << swapchain_extent.height << std::endl;
 
     std::uint32_t format_count;
     vkGetPhysicalDeviceSurfaceFormatsKHR(physical_device, surface,

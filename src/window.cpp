@@ -21,7 +21,6 @@ auto Window::hookup_events() -> void {
         d.event_callback(ev);
         d.framebuffer_resized = true;
       });
-  // key press/release
   glfwSetKeyCallback(
       glfw_window, [](GLFWwindow *w, int key, int, int action, int) {
         auto const &d =
@@ -35,7 +34,6 @@ auto Window::hookup_events() -> void {
           d.event_callback(ev);
         }
       });
-  // mouse button
   glfwSetMouseButtonCallback(
       glfw_window, +[](GLFWwindow *w, int button, int action, int) {
         auto const &d =
@@ -48,7 +46,6 @@ auto Window::hookup_events() -> void {
           d.event_callback(ev);
         }
       });
-  // cursor move
   glfwSetCursorPosCallback(
       glfw_window, +[](GLFWwindow *w, double x, double y) {
         auto const &d =
