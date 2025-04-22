@@ -1,0 +1,128 @@
+[
+  {
+    "directory": "C:\\D\\Personal\\wsl-vulkan\\build\\Debug",
+    "command": "",
+    "file": "cmake_object_order_depends_target_vk-bootstrap",
+    "output": "cmake_object_order_depends_target_VulkanApp"
+  },
+  {
+    "directory": "C:\\D\\Personal\\wsl-vulkan\\build\\Debug",
+    "command": "C:\\PROGRA~1\\MIB055~1\\2022\\PROFES~1\\VC\\Tools\\MSVC\\1443~1.348\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP  -IC:\\D\\Personal\\wsl-vulkan\\bindings -IC:\\D\\Personal\\wsl-vulkan\\third_party\\vk-bootstrap\\src -external:IC:\\Vk\\1.4.309.0\\include -external:IC:\\Users\\EdwinC\\.conan2\\p\\b\\glfw35ea85bbba787\\p\\include -external:IC:\\Users\\EdwinC\\.conan2\\p\\b\\imguiff9aa0ccf724e\\p\\include -external:W0 /DWIN32 /D_WINDOWS /EHsc /Zi /Ob0 /Od /RTC1 -std:c++latest -MTd /W4 /WX /showIncludes /FoCMakeFiles\\VulkanApp.dir\\src\\main.cpp.obj /FdCMakeFiles\\VulkanApp.dir\\ /FS -c C:\\D\\Personal\\wsl-vulkan\\src\\main.cpp",
+    "file": "C:/D/Personal/wsl-vulkan/src/main.cpp",
+    "output": "CMakeFiles/VulkanApp.dir/src/main.cpp.obj"
+  },
+  {
+    "directory": "C:\\D\\Personal\\wsl-vulkan\\build\\Debug",
+    "command": "C:\\PROGRA~1\\MIB055~1\\2022\\PROFES~1\\VC\\Tools\\MSVC\\1443~1.348\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP  -IC:\\D\\Personal\\wsl-vulkan\\bindings -IC:\\D\\Personal\\wsl-vulkan\\third_party\\vk-bootstrap\\src -external:IC:\\Vk\\1.4.309.0\\include -external:IC:\\Users\\EdwinC\\.conan2\\p\\b\\glfw35ea85bbba787\\p\\include -external:IC:\\Users\\EdwinC\\.conan2\\p\\b\\imguiff9aa0ccf724e\\p\\include -external:W0 /DWIN32 /D_WINDOWS /EHsc /Zi /Ob0 /Od /RTC1 -std:c++latest -MTd /W4 /WX /showIncludes /FoCMakeFiles\\VulkanApp.dir\\bindings\\imgui_impl_glfw.cpp.obj /FdCMakeFiles\\VulkanApp.dir\\ /FS -c C:\\D\\Personal\\wsl-vulkan\\bindings\\imgui_impl_glfw.cpp",
+    "file": "C:/D/Personal/wsl-vulkan/bindings/imgui_impl_glfw.cpp",
+    "output": "CMakeFiles/VulkanApp.dir/bindings/imgui_impl_glfw.cpp.obj"
+  },
+  {
+    "directory": "C:\\D\\Personal\\wsl-vulkan\\build\\Debug",
+    "command": "C:\\PROGRA~1\\MIB055~1\\2022\\PROFES~1\\VC\\Tools\\MSVC\\1443~1.348\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP  -IC:\\D\\Personal\\wsl-vulkan\\bindings -IC:\\D\\Personal\\wsl-vulkan\\third_party\\vk-bootstrap\\src -external:IC:\\Vk\\1.4.309.0\\include -external:IC:\\Users\\EdwinC\\.conan2\\p\\b\\glfw35ea85bbba787\\p\\include -external:IC:\\Users\\EdwinC\\.conan2\\p\\b\\imguiff9aa0ccf724e\\p\\include -external:W0 /DWIN32 /D_WINDOWS /EHsc /Zi /Ob0 /Od /RTC1 -std:c++latest -MTd /W4 /WX /showIncludes /FoCMakeFiles\\VulkanApp.dir\\bindings\\imgui_impl_vulkan.cpp.obj /FdCMakeFiles\\VulkanApp.dir\\ /FS -c C:\\D\\Personal\\wsl-vulkan\\bindings\\imgui_impl_vulkan.cpp",
+    "file": "C:/D/Personal/wsl-vulkan/bindings/imgui_impl_vulkan.cpp",
+    "output": "CMakeFiles/VulkanApp.dir/bindings/imgui_impl_vulkan.cpp.obj"
+  },
+  {
+    "directory": "C:\\D\\Personal\\wsl-vulkan\\build\\Debug",
+    "command": "C:\\WINDOWS\\system32\\cmd.exe /C \"cd . && \"C:\\Program Files\\CMake\\bin\\cmake.exe\" -E vs_link_exe --msvc-ver=1943 --intdir=CMakeFiles\\VulkanApp.dir --rc=C:\\PROGRA~2\\WI3CF2~1\\10\\bin\\100226~1.0\\x64\\rc.exe --mt=C:\\PROGRA~2\\WI3CF2~1\\10\\bin\\100226~1.0\\x64\\mt.exe --manifests  -- C:\\PROGRA~1\\MIB055~1\\2022\\PROFES~1\\VC\\Tools\\MSVC\\1443~1.348\\bin\\Hostx64\\x64\\link.exe /nologo CMakeFiles\\VulkanApp.dir\\src\\main.cpp.obj CMakeFiles\\VulkanApp.dir\\bindings\\imgui_impl_glfw.cpp.obj CMakeFiles\\VulkanApp.dir\\bindings\\imgui_impl_vulkan.cpp.obj  /out:VulkanApp.exe /implib:VulkanApp.lib /pdb:VulkanApp.pdb /version:0.0 /machine:x64 /debug /INCREMENTAL /subsystem:console -LIBPATH:C:\\Users\\EdwinC\\.conan2\\p\\b\\glfw35ea85bbba787\\p\\lib   -LIBPATH:C:\\Users\\EdwinC\\.conan2\\p\\b\\imguiff9aa0ccf724e\\p\\lib C:\\Vk\\1.4.309.0\\Lib\\vulkan-1.lib  third_party\\vk-bootstrap\\vk-bootstrap.lib  C:\\Users\\EdwinC\\.conan2\\p\\b\\glfw35ea85bbba787\\p\\lib\\glfw3.lib  gdi32.lib  opengl32.lib  C:\\Users\\EdwinC\\.conan2\\p\\b\\imguiff9aa0ccf724e\\p\\lib\\imgui.lib  imm32.lib  kernel32.lib user32.lib gdi32.lib winspool.lib shell32.lib ole32.lib oleaut32.lib uuid.lib comdlg32.lib advapi32.lib && cd .\"",
+    "file": "CMakeFiles/VulkanApp.dir/src/main.cpp.obj",
+    "output": "VulkanApp.exe"
+  },
+  {
+    "directory": "C:\\D\\Personal\\wsl-vulkan\\build\\Debug",
+    "command": "",
+    "file": "CMakeFiles/edit_cache.util",
+    "output": "edit_cache"
+  },
+  {
+    "directory": "C:\\D\\Personal\\wsl-vulkan\\build\\Debug",
+    "command": "",
+    "file": "CMakeFiles/rebuild_cache.util",
+    "output": "rebuild_cache"
+  },
+  {
+    "directory": "C:\\D\\Personal\\wsl-vulkan\\build\\Debug",
+    "command": "",
+    "file": "third_party/CMakeFiles/edit_cache.util",
+    "output": "third_party/edit_cache"
+  },
+  {
+    "directory": "C:\\D\\Personal\\wsl-vulkan\\build\\Debug",
+    "command": "",
+    "file": "third_party/CMakeFiles/rebuild_cache.util",
+    "output": "third_party/rebuild_cache"
+  },
+  {
+    "directory": "C:\\D\\Personal\\wsl-vulkan\\build\\Debug",
+    "command": "",
+    "file": ".",
+    "output": "cmake_object_order_depends_target_vk-bootstrap"
+  },
+  {
+    "directory": "C:\\D\\Personal\\wsl-vulkan\\build\\Debug",
+    "command": "C:\\PROGRA~1\\MIB055~1\\2022\\PROFES~1\\VC\\Tools\\MSVC\\1443~1.348\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP  -IC:\\D\\Personal\\wsl-vulkan\\third_party\\vk-bootstrap\\src -external:IC:\\Vk\\1.4.309.0\\include -external:W0 /DWIN32 /D_WINDOWS /EHsc /Zi /Ob0 /Od /RTC1 -std:c++latest -MTd /W4 /showIncludes /Fothird_party\\vk-bootstrap\\CMakeFiles\\vk-bootstrap.dir\\src\\VkBootstrap.cpp.obj /Fdthird_party\\vk-bootstrap\\CMakeFiles\\vk-bootstrap.dir\\vk-bootstrap.pdb /FS -c C:\\D\\Personal\\wsl-vulkan\\third_party\\vk-bootstrap\\src\\VkBootstrap.cpp",
+    "file": "C:/D/Personal/wsl-vulkan/third_party/vk-bootstrap/src/VkBootstrap.cpp",
+    "output": "third_party/vk-bootstrap/CMakeFiles/vk-bootstrap.dir/src/VkBootstrap.cpp.obj"
+  },
+  {
+    "directory": "C:\\D\\Personal\\wsl-vulkan\\build\\Debug",
+    "command": "C:\\WINDOWS\\system32\\cmd.exe /C \"cd . && C:\\PROGRA~1\\MIB055~1\\2022\\PROFES~1\\VC\\Tools\\MSVC\\1443~1.348\\bin\\Hostx64\\x64\\lib.exe /nologo /machine:x64 /out:third_party\\vk-bootstrap\\vk-bootstrap.lib third_party\\vk-bootstrap\\CMakeFiles\\vk-bootstrap.dir\\src\\VkBootstrap.cpp.obj && cd .\"",
+    "file": "third_party/vk-bootstrap/CMakeFiles/vk-bootstrap.dir/src/VkBootstrap.cpp.obj",
+    "output": "third_party/vk-bootstrap/vk-bootstrap.lib"
+  },
+  {
+    "directory": "C:\\D\\Personal\\wsl-vulkan\\build\\Debug",
+    "command": "",
+    "file": "third_party/vk-bootstrap/CMakeFiles/edit_cache.util",
+    "output": "third_party/vk-bootstrap/edit_cache"
+  },
+  {
+    "directory": "C:\\D\\Personal\\wsl-vulkan\\build\\Debug",
+    "command": "",
+    "file": "third_party/vk-bootstrap/CMakeFiles/rebuild_cache.util",
+    "output": "third_party/vk-bootstrap/rebuild_cache"
+  },
+  {
+    "directory": "C:\\D\\Personal\\wsl-vulkan\\build\\Debug",
+    "command": "",
+    "file": "VulkanApp.exe",
+    "output": "VulkanApp"
+  },
+  {
+    "directory": "C:\\D\\Personal\\wsl-vulkan\\build\\Debug",
+    "command": "",
+    "file": "third_party/vk-bootstrap/vk-bootstrap.lib",
+    "output": "vk-bootstrap"
+  },
+  {
+    "directory": "C:\\D\\Personal\\wsl-vulkan\\build\\Debug",
+    "command": "",
+    "file": "third_party/vk-bootstrap/vk-bootstrap.lib",
+    "output": "vk-bootstrap.lib"
+  },
+  {
+    "directory": "C:\\D\\Personal\\wsl-vulkan\\build\\Debug",
+    "command": "",
+    "file": "VulkanApp.exe",
+    "output": "all"
+  },
+  {
+    "directory": "C:\\D\\Personal\\wsl-vulkan\\build\\Debug",
+    "command": "",
+    "file": "third_party/vk-bootstrap/all",
+    "output": "third_party/all"
+  },
+  {
+    "directory": "C:\\D\\Personal\\wsl-vulkan\\build\\Debug",
+    "command": "",
+    "file": "third_party/vk-bootstrap/vk-bootstrap.lib",
+    "output": "third_party/vk-bootstrap/all"
+  },
+  {
+    "directory": "C:\\D\\Personal\\wsl-vulkan\\build\\Debug",
+    "command": "\"C:\\Program Files\\CMake\\bin\\cmake.exe\" --regenerate-during-build -SC:\\D\\Personal\\wsl-vulkan -BC:\\D\\Personal\\wsl-vulkan\\build\\Debug",
+    "file": "C:/D/Personal/wsl-vulkan/CMakeLists.txt",
+    "output": "build.ninja"
+  }
+]

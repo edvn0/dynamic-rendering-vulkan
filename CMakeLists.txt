@@ -5,17 +5,17 @@ set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 find_package(Vulkan REQUIRED)
-find_package(glfw REQUIRED)
+find_package(imgui REQUIRED CONFIG)
+find_package(glfw3 REQUIRED CONFIG)
 
-include(FetchContent)
-FetchContent_Declare(
-    fetch_vk_bootstrap
-    GIT_REPOSITORY https://github.com/charles-lunarg/vk-bootstrap
-    GIT_TAG        v1.4.312
-)
-FetchContent_MakeAvailable(fetch_vk_bootstrap)
+add_subdirectory(third_party)
 
-add_executable(vulkan_app src/main.cpp)
-target_link_libraries(vulkan_app PRIVATE Vulkan::Vulkan vk-bootstrap::vk-bootstrap GLFW::glfw)
+add_executable(${PROJECT_NAME} src/main.cpp bindings/imgui_impl_glfw.cpp bindings/imgui_impl_vulkan.cpp)
+target_link_libraries(${PROJECT_NAME} PRIVATE Vulkan::Vulkan vk-bootstrap::vk-bootstrap glfw imgui::imgui)
+target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_SOURCE_DIR}/bindings)
 
-
+if(MSVC)
+    target_compile_options(${PROJECT_NAME} PRIVATE /W4 /WX)
+else()
+    target_compile_options(${PROJECT_NAME} PRIVATE -Wall -Wextra -Werror)
+endif()
