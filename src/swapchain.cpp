@@ -3,15 +3,20 @@
 #include "gui_system.hpp"
 #include "imgui.h"
 
-auto Swapchain::draw_frame(Window &w, GUISystem &gui_system) -> void {
-  vkWaitForFences(device, 1, &in_flight_fences[frame_index], VK_TRUE,
-                  UINT64_MAX);
+auto
+Swapchain::draw_frame(Window& w, GUISystem& gui_system) -> void
+{
+  vkWaitForFences(
+    device, 1, &in_flight_fences[frame_index], VK_TRUE, UINT64_MAX);
   vkResetFences(device, 1, &in_flight_fences[frame_index]);
 
   std::uint32_t image_index;
-  auto result = vkAcquireNextImageKHR(device, swapchain, UINT64_MAX,
+  auto result = vkAcquireNextImageKHR(device,
+                                      swapchain,
+                                      UINT64_MAX,
                                       image_available_semaphores[frame_index],
-                                      VK_NULL_HANDLE, &image_index);
+                                      VK_NULL_HANDLE,
+                                      &image_index);
 
   if (result == VK_ERROR_OUT_OF_DATE_KHR) {
     recreate_swapchain(w);
@@ -87,27 +92,27 @@ auto Swapchain::draw_frame(Window &w, GUISystem &gui_system) -> void {
 
   vkEndCommandBuffer(cmd);
 
-  const std::array buffers = {cmd};
+  const std::array buffers = { cmd };
   const std::array wait_semaphores = {
-      image_available_semaphores[frame_index],
+    image_available_semaphores[frame_index],
   };
   const std::array signal_semaphores = {
-      render_finished_semaphores[frame_index],
+    render_finished_semaphores[frame_index],
   };
   const std::array<VkPipelineStageFlags, 1> wait_stages = {
-      VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+    VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
   };
 
   VkSubmitInfo submit_info{};
   submit_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
   submit_info.waitSemaphoreCount =
-      static_cast<std::uint32_t>(wait_semaphores.size());
+    static_cast<std::uint32_t>(wait_semaphores.size());
   submit_info.pWaitSemaphores = wait_semaphores.data();
   submit_info.pWaitDstStageMask = wait_stages.data();
   submit_info.commandBufferCount = static_cast<std::uint32_t>(buffers.size());
   submit_info.pCommandBuffers = buffers.data();
   submit_info.signalSemaphoreCount =
-      static_cast<std::uint32_t>(signal_semaphores.size());
+    static_cast<std::uint32_t>(signal_semaphores.size());
   submit_info.pSignalSemaphores = signal_semaphores.data();
 
   vkQueueSubmit(queue, 1, &submit_info, in_flight_fences[frame_index]);

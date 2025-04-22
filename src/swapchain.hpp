@@ -11,20 +11,24 @@
 
 class GUISystem;
 
-class Swapchain {
+class Swapchain
+{
 public:
-  Swapchain(const Device &device, const Window &window)
-      : device(device.get_device()),
-        physical_device(device.get_physical_device()),
-        surface(window.surface()), queue(device.graphics_queue()),
-        queue_family_index(device.graphics_queue_family_index()) {
+  Swapchain(const Device& device, const Window& window)
+    : device(device.get_device())
+    , physical_device(device.get_physical_device())
+    , surface(window.surface())
+    , queue(device.graphics_queue())
+    , queue_family_index(device.graphics_queue_family_index())
+  {
     create_swapchain();
     create_command_pool();
     allocate_command_buffers();
     create_sync_objects();
   }
 
-  ~Swapchain() {
+  ~Swapchain()
+  {
     cleanup_swapchain();
     vkDestroyCommandPool(device, command_pool_, nullptr);
     for (std::uint32_t i = 0; i < image_count; ++i) {
@@ -34,8 +38,8 @@ public:
     }
   }
 
-  auto request_recreate(Window &w) -> void { recreate_swapchain(w); }
-  auto draw_frame(Window &w, GUISystem &gui_system) -> void;
+  auto request_recreate(Window& w) -> void { recreate_swapchain(w); }
+  auto draw_frame(Window& w, GUISystem& gui_system) -> void;
   auto get_frame_index() const -> std::uint32_t { return frame_index; }
 
 private:
@@ -46,21 +50,22 @@ private:
   std::uint32_t queue_family_index;
   std::uint32_t frame_index = 0;
 
-  VkSwapchainKHR swapchain{VK_NULL_HANDLE};
+  VkSwapchainKHR swapchain{ VK_NULL_HANDLE };
   VkFormat swapchain_format;
   VkExtent2D swapchain_extent;
 
   std::vector<VkImage> swapchain_images;
   std::vector<VkImageView> swapchain_image_views_;
 
-  VkCommandPool command_pool_{VK_NULL_HANDLE};
+  VkCommandPool command_pool_{ VK_NULL_HANDLE };
   std::array<VkCommandBuffer, image_count> command_buffers{};
 
   std::array<VkSemaphore, image_count> image_available_semaphores{};
   std::array<VkSemaphore, image_count> render_finished_semaphores{};
   std::array<VkFence, image_count> in_flight_fences{};
 
-  auto recreate_swapchain(Window &window) -> void {
+  auto recreate_swapchain(Window& window) -> void
+  {
     int width = 0;
     int height = 0;
     while (width == 0 || height == 0) {
@@ -75,14 +80,16 @@ private:
     create_swapchain();
   }
 
-  auto cleanup_swapchain() -> void {
+  auto cleanup_swapchain() -> void
+  {
     for (auto view : swapchain_image_views_) {
       vkDestroyImageView(device, view, nullptr);
     }
     vkDestroySwapchainKHR(device, swapchain, nullptr);
   }
 
-  auto create_command_pool() -> void {
+  auto create_command_pool() -> void
+  {
     VkCommandPoolCreateInfo pool_info{};
     pool_info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
     pool_info.queueFamilyIndex = queue_family_index;
@@ -90,7 +97,8 @@ private:
     vkCreateCommandPool(device, &pool_info, nullptr, &command_pool_);
   }
 
-  auto allocate_command_buffers() -> void {
+  auto allocate_command_buffers() -> void
+  {
     VkCommandBufferAllocateInfo alloc_info{};
     alloc_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
     alloc_info.commandPool = command_pool_;
@@ -99,31 +107,33 @@ private:
     vkAllocateCommandBuffers(device, &alloc_info, command_buffers.data());
   }
 
-  auto create_sync_objects() -> void {
+  auto create_sync_objects() -> void
+  {
     VkSemaphoreCreateInfo semaphore_info{
-        .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
-        .pNext = nullptr,
-        .flags = 0,
+      .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
+      .pNext = nullptr,
+      .flags = 0,
     };
     VkFenceCreateInfo fence_info{
-        .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
-        .pNext = nullptr,
-        .flags = VK_FENCE_CREATE_SIGNALED_BIT,
+      .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
+      .pNext = nullptr,
+      .flags = VK_FENCE_CREATE_SIGNALED_BIT,
     };
 
     for (std::uint32_t i = 0; i < image_count; ++i) {
-      vkCreateSemaphore(device, &semaphore_info, nullptr,
-                        &image_available_semaphores[i]);
-      vkCreateSemaphore(device, &semaphore_info, nullptr,
-                        &render_finished_semaphores[i]);
+      vkCreateSemaphore(
+        device, &semaphore_info, nullptr, &image_available_semaphores[i]);
+      vkCreateSemaphore(
+        device, &semaphore_info, nullptr, &render_finished_semaphores[i]);
       vkCreateFence(device, &fence_info, nullptr, &in_flight_fences[i]);
     }
   }
 
   auto choose_surface_format(
-      const std::vector<VkSurfaceFormatKHR> &available_formats) const
-      -> VkSurfaceFormatKHR {
-    for (auto &format : available_formats) {
+    const std::vector<VkSurfaceFormatKHR>& available_formats) const
+    -> VkSurfaceFormatKHR
+  {
+    for (auto& format : available_formats) {
       if (format.format == VK_FORMAT_B8G8R8A8_SRGB &&
           format.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
         return format;
@@ -133,9 +143,10 @@ private:
   }
 
   auto choose_present_mode(
-      const std::vector<VkPresentModeKHR> &available_present_modes) const
-      -> VkPresentModeKHR {
-    for (auto &mode : available_present_modes) {
+    const std::vector<VkPresentModeKHR>& available_present_modes) const
+    -> VkPresentModeKHR
+  {
+    for (auto& mode : available_present_modes) {
       if (mode == VK_PRESENT_MODE_MAILBOX_KHR) {
         return mode;
       }
@@ -143,22 +154,24 @@ private:
     return VK_PRESENT_MODE_FIFO_KHR;
   }
 
-  auto choose_extent(const VkSurfaceCapabilitiesKHR &capabilities) const
-      -> VkExtent2D {
+  auto choose_extent(const VkSurfaceCapabilitiesKHR& capabilities) const
+    -> VkExtent2D
+  {
     if (capabilities.currentExtent.width != UINT32_MAX) {
       return capabilities.currentExtent;
     }
     VkExtent2D actual_extent = capabilities.currentExtent;
-    actual_extent.width =
-        std::clamp(actual_extent.width, capabilities.minImageExtent.width,
-                   capabilities.maxImageExtent.width);
-    actual_extent.height =
-        std::clamp(actual_extent.height, capabilities.minImageExtent.height,
-                   capabilities.maxImageExtent.height);
+    actual_extent.width = std::clamp(actual_extent.width,
+                                     capabilities.minImageExtent.width,
+                                     capabilities.maxImageExtent.width);
+    actual_extent.height = std::clamp(actual_extent.height,
+                                      capabilities.minImageExtent.height,
+                                      capabilities.maxImageExtent.height);
     return actual_extent;
   }
 
-  void create_swapchain() {
+  void create_swapchain()
+  {
     VkSurfaceCapabilitiesKHR caps;
     vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physical_device, surface, &caps);
 
@@ -168,20 +181,20 @@ private:
               << swapchain_extent.height << std::endl;
 
     std::uint32_t format_count;
-    vkGetPhysicalDeviceSurfaceFormatsKHR(physical_device, surface,
-                                         &format_count, nullptr);
+    vkGetPhysicalDeviceSurfaceFormatsKHR(
+      physical_device, surface, &format_count, nullptr);
     std::vector<VkSurfaceFormatKHR> formats(format_count);
-    vkGetPhysicalDeviceSurfaceFormatsKHR(physical_device, surface,
-                                         &format_count, formats.data());
+    vkGetPhysicalDeviceSurfaceFormatsKHR(
+      physical_device, surface, &format_count, formats.data());
     auto surface_format = choose_surface_format(formats);
     swapchain_format = surface_format.format;
 
     std::uint32_t present_mode_count;
-    vkGetPhysicalDeviceSurfacePresentModesKHR(physical_device, surface,
-                                              &present_mode_count, nullptr);
+    vkGetPhysicalDeviceSurfacePresentModesKHR(
+      physical_device, surface, &present_mode_count, nullptr);
     std::vector<VkPresentModeKHR> present_modes(present_mode_count);
     vkGetPhysicalDeviceSurfacePresentModesKHR(
-        physical_device, surface, &present_mode_count, present_modes.data());
+      physical_device, surface, &present_mode_count, present_modes.data());
     auto present_mode = choose_present_mode(present_modes);
 
     VkSwapchainCreateInfoKHR create_info{};
@@ -217,8 +230,8 @@ private:
       view_info.subresourceRange.levelCount = 1;
       view_info.subresourceRange.layerCount = 1;
 
-      vkCreateImageView(device, &view_info, nullptr,
-                        &swapchain_image_views_[i]);
+      vkCreateImageView(
+        device, &view_info, nullptr, &swapchain_image_views_[i]);
     }
   }
 };

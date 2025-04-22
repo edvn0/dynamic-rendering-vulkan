@@ -9,7 +9,9 @@
 #include "config.hpp"
 #include <ImGuizmo.h>
 
-auto GUISystem::begin_frame() const -> void {
+auto
+GUISystem::begin_frame() const -> void
+{
   ImGui_ImplVulkan_NewFrame();
   ImGui_ImplGlfw_NewFrame();
   ImGui::NewFrame();
@@ -20,10 +22,10 @@ auto GUISystem::begin_frame() const -> void {
   ImGui::SetNextWindowSize(vp->WorkSize);
   ImGui::SetNextWindowDockID(vp->ID);
   ImGuiWindowFlags host_flags =
-      ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoCollapse |
-      ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
-      ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNavFocus |
-      ImGuiWindowFlags_NoBackground;
+    ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoCollapse |
+    ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
+    ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNavFocus |
+    ImGuiWindowFlags_NoBackground;
 
   ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
   ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
@@ -31,34 +33,44 @@ auto GUISystem::begin_frame() const -> void {
   ImGui::PopStyleVar(2);
 
   ImGuiID dockspace_id = ImGui::GetID("MainDockspace");
-  ImGui::DockSpaceOverViewport(dockspace_id, ImGui::GetMainViewport(),
+  ImGui::DockSpaceOverViewport(dockspace_id,
+                               ImGui::GetMainViewport(),
                                ImGuiDockNodeFlags_PassthruCentralNode);
 
   ImGuizmo::SetOrthographic(false);
   ImGuizmo::BeginFrame();
 }
 
-auto GUISystem::end_frame(VkCommandBuffer cmd_buf) const -> void {
+auto
+GUISystem::end_frame(VkCommandBuffer cmd_buf) const -> void
+{
   ImGui::End();
   ImGui::Render();
   ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd_buf);
 
-  const auto &io = ImGui::GetIO();
+  const auto& io = ImGui::GetIO();
   if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
     ImGui::UpdatePlatformWindows();
     ImGui::RenderPlatformWindowsDefault();
   }
 }
-GUISystem::~GUISystem() { shutdown(); }
+GUISystem::~GUISystem()
+{
+  shutdown();
+}
 
-GUISystem::GUISystem(const Core::Instance &instance, const Device &device,
-                     Window &window) {
+GUISystem::GUISystem(const Core::Instance& instance,
+                     const Device& device,
+                     Window& window)
+{
   init_for_vulkan(instance, device, window);
 }
 
-auto GUISystem::init_for_vulkan(const Core::Instance &instance,
-                                const Device &device, Window &window) const
-    -> void {
+auto
+GUISystem::init_for_vulkan(const Core::Instance& instance,
+                           const Device& device,
+                           Window& window) const -> void
+{
   ImGui::CreateContext();
   ImGui::StyleColorsDark();
 
@@ -87,10 +99,10 @@ auto GUISystem::init_for_vulkan(const Core::Instance &instance,
   info.UseDynamicRendering = true;
 
   const std::array formats = {
-      VK_FORMAT_B8G8R8A8_SRGB,
+    VK_FORMAT_B8G8R8A8_SRGB,
   };
   info.PipelineRenderingCreateInfo.sType =
-      VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR;
+    VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR;
   info.PipelineRenderingCreateInfo.viewMask = 0;
   info.PipelineRenderingCreateInfo.colorAttachmentCount = 1;
   info.PipelineRenderingCreateInfo.pColorAttachmentFormats = formats.data();
@@ -98,11 +110,13 @@ auto GUISystem::init_for_vulkan(const Core::Instance &instance,
   ImGui_ImplVulkan_Init(&info);
 
   // Need to setup dockspace and viewport
-  auto &io = ImGui::GetIO();
+  auto& io = ImGui::GetIO();
   io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
 }
 
-auto GUISystem::shutdown() const -> void {
+auto
+GUISystem::shutdown() const -> void
+{
   ImGui_ImplVulkan_Shutdown();
   ImGui_ImplGlfw_Shutdown();
   ImGui::DestroyContext();

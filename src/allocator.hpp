@@ -8,16 +8,17 @@ namespace Core {
 class Instance;
 }
 
-class Allocator {
+class Allocator
+{
 public:
-  explicit Allocator(const Core::Instance &, const Device &);
+  explicit Allocator(const Core::Instance&, const Device&);
   ~Allocator();
 
   Allocator() = delete;
-  Allocator(const Allocator &) = delete;
-  Allocator(Allocator &&) = delete;
-  auto operator=(const Allocator &) -> Allocator & = delete;
-  auto operator=(Allocator &&) -> Allocator & = delete;
+  Allocator(const Allocator&) = delete;
+  Allocator(Allocator&&) = delete;
+  auto operator=(const Allocator&) -> Allocator& = delete;
+  auto operator=(Allocator&&) -> Allocator& = delete;
 
   auto get() const -> VmaAllocator;
 

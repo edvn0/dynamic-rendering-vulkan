@@ -7,18 +7,20 @@
 #include "event_system.hpp"
 #include "instance.hpp"
 
-extern "C" {
-struct GLFWwindow;
+extern "C"
+{
+  struct GLFWwindow;
 }
 
-class Window {
+class Window
+{
 public:
   Window();
   ~Window();
 
-  auto create_surface(const Core::Instance &) -> void;
-  auto window() const -> const auto * { return glfw_window; }
-  auto window() -> auto * { return glfw_window; }
+  auto create_surface(const Core::Instance&) -> void;
+  auto window() const -> const auto* { return glfw_window; }
+  auto window() -> auto* { return glfw_window; }
   auto surface() const -> VkSurfaceKHR { return vk_surface; }
   auto framebuffer_resized() const -> bool;
   auto close() -> void;
@@ -26,11 +28,11 @@ public:
   auto should_close() const -> bool;
   auto is_iconified() const -> bool;
 
-  auto set_event_callback(std::function<void(Event &)> callback) -> void;
+  auto set_event_callback(std::function<void(Event&)> callback) -> void;
 
 private:
-  GLFWwindow *glfw_window{nullptr};
-  VkSurfaceKHR vk_surface{VK_NULL_HANDLE};
+  GLFWwindow* glfw_window{ nullptr };
+  VkSurfaceKHR vk_surface{ VK_NULL_HANDLE };
   struct WindowData;
   std::unique_ptr<WindowData> user_data;
 

@@ -7,55 +7,59 @@
 #include <bit>
 #include <cassert>
 
-struct Window::WindowData {
-  bool framebuffer_resized{false};
-  std::function<void(Event &)> event_callback = [](Event &) {};
+struct Window::WindowData
+{
+  bool framebuffer_resized{ false };
+  std::function<void(Event&)> event_callback = [](Event&) {};
 };
 
-auto Window::hookup_events() -> void {
+auto
+Window::hookup_events() -> void
+{
   glfwSetFramebufferSizeCallback(
-      glfw_window, +[](GLFWwindow *w, int width, int height) {
-        auto &d =
-            *static_cast<Window::WindowData *>(glfwGetWindowUserPointer(w));
-        WindowResizeEvent ev{width, height};
-        d.event_callback(ev);
-        d.framebuffer_resized = true;
-      });
+    glfw_window, +[](GLFWwindow* w, int width, int height) {
+      auto& d = *static_cast<Window::WindowData*>(glfwGetWindowUserPointer(w));
+      WindowResizeEvent ev{ width, height };
+      d.event_callback(ev);
+      d.framebuffer_resized = true;
+    });
   glfwSetKeyCallback(
-      glfw_window, [](GLFWwindow *w, int key, int, int action, int) {
-        auto const &d =
-            *static_cast<Window::WindowData *>(glfwGetWindowUserPointer(w));
-        auto code = static_cast<KeyCode>(key);
-        if (action == GLFW_PRESS) {
-          KeyPressedEvent ev{code};
-          d.event_callback(ev);
-        } else if (action == GLFW_RELEASE) {
-          KeyReleasedEvent ev{code};
-          d.event_callback(ev);
-        }
-      });
-  glfwSetMouseButtonCallback(
-      glfw_window, +[](GLFWwindow *w, int button, int action, int) {
-        auto const &d =
-            *static_cast<Window::WindowData *>(glfwGetWindowUserPointer(w));
-        if (action == GLFW_PRESS) {
-          MouseButtonPressedEvent ev{button};
-          d.event_callback(ev);
-        } else if (action == GLFW_RELEASE) {
-          MouseButtonReleasedEvent ev{button};
-          d.event_callback(ev);
-        }
-      });
-  glfwSetCursorPosCallback(
-      glfw_window, +[](GLFWwindow *w, double x, double y) {
-        auto const &d =
-            *static_cast<Window::WindowData *>(glfwGetWindowUserPointer(w));
-        MouseMovedEvent ev{x, y};
+    glfw_window, [](GLFWwindow* w, int key, int, int action, int) {
+      auto const& d =
+        *static_cast<Window::WindowData*>(glfwGetWindowUserPointer(w));
+      auto code = static_cast<KeyCode>(key);
+      if (action == GLFW_PRESS) {
+        KeyPressedEvent ev{ code };
         d.event_callback(ev);
-      });
+      } else if (action == GLFW_RELEASE) {
+        KeyReleasedEvent ev{ code };
+        d.event_callback(ev);
+      }
+    });
+  glfwSetMouseButtonCallback(
+    glfw_window, +[](GLFWwindow* w, int button, int action, int) {
+      auto const& d =
+        *static_cast<Window::WindowData*>(glfwGetWindowUserPointer(w));
+      if (action == GLFW_PRESS) {
+        MouseButtonPressedEvent ev{ button };
+        d.event_callback(ev);
+      } else if (action == GLFW_RELEASE) {
+        MouseButtonReleasedEvent ev{ button };
+        d.event_callback(ev);
+      }
+    });
+  glfwSetCursorPosCallback(
+    glfw_window, +[](GLFWwindow* w, double x, double y) {
+      auto const& d =
+        *static_cast<Window::WindowData*>(glfwGetWindowUserPointer(w));
+      MouseMovedEvent ev{ x, y };
+      d.event_callback(ev);
+    });
 }
 
-Window::Window() : user_data(std::make_unique<WindowData>()) {
+Window::Window()
+  : user_data(std::make_unique<WindowData>())
+{
   glfwInitHint(GLFW_PLATFORM, GLFW_PLATFORM_WIN32);
 
   if (glfwInit() == GLFW_FALSE) {
@@ -75,42 +79,57 @@ Window::Window() : user_data(std::make_unique<WindowData>()) {
   hookup_events();
 }
 
-Window::~Window() {
+Window::~Window()
+{
   if (glfw_window) {
     glfwDestroyWindow(glfw_window);
   }
   glfwTerminate();
 }
 
-auto Window::create_surface(const Core::Instance &instance) -> void {
-  if (glfwCreateWindowSurface(instance.raw(), glfw_window, nullptr,
-                              &vk_surface) != VK_SUCCESS) {
+auto
+Window::create_surface(const Core::Instance& instance) -> void
+{
+  if (glfwCreateWindowSurface(
+        instance.raw(), glfw_window, nullptr, &vk_surface) != VK_SUCCESS) {
     glfwDestroyWindow(glfw_window);
     glfwTerminate();
     assert(false && "Failed to create window surface");
   }
 }
 
-auto Window::close() -> void {
+auto
+Window::close() -> void
+{
   glfwSetWindowShouldClose(glfw_window, GLFW_TRUE);
 }
 
-auto Window::set_resize_flag(bool flag) -> void {
+auto
+Window::set_resize_flag(bool flag) -> void
+{
   user_data->framebuffer_resized = flag;
 }
 
-auto Window::framebuffer_resized() const -> bool {
+auto
+Window::framebuffer_resized() const -> bool
+{
   return user_data->framebuffer_resized;
 }
 
-auto Window::should_close() const -> bool {
+auto
+Window::should_close() const -> bool
+{
   return glfwWindowShouldClose(glfw_window);
 }
 
-auto Window::is_iconified() const -> bool {
+auto
+Window::is_iconified() const -> bool
+{
   return glfwGetWindowAttrib(glfw_window, GLFW_ICONIFIED) != 0;
 }
 
-auto Window::set_event_callback(std::function<void(Event &)> callback) -> void {
+auto
+Window::set_event_callback(std::function<void(Event&)> callback) -> void
+{
   user_data->event_callback = std::move(callback);
 }

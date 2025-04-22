@@ -9,10 +9,12 @@
 #include <memory>
 #include <utility>
 
-class Image {
+class Image
+{
 public:
-  static auto create(const Device &device, const ImageConfiguration &config)
-      -> std::unique_ptr<Image> {
+  static auto create(const Device& device, const ImageConfiguration& config)
+    -> std::unique_ptr<Image>
+  {
     VkImageCreateInfo image_info{
         .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
         .imageType = VK_IMAGE_TYPE_2D,
@@ -37,8 +39,12 @@ public:
 
     VkImage image{};
     VmaAllocation allocation{};
-    vmaCreateImage(device.get_allocator().get(), &image_info, &alloc_info,
-                   &image, &allocation, nullptr);
+    vmaCreateImage(device.get_allocator().get(),
+                   &image_info,
+                   &alloc_info,
+                   &image,
+                   &allocation,
+                   nullptr);
 
     VkImageViewCreateInfo view_info{
         .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
@@ -59,10 +65,11 @@ public:
     vkCreateImageView(device.get_device(), &view_info, nullptr, &view);
 
     return std::unique_ptr<Image>(
-        new Image(image, view, allocation, config.extent, device));
+      new Image(image, view, allocation, config.extent, device));
   }
 
-  ~Image() {
+  ~Image()
+  {
     vkDestroyImageView(device->get_device(), view, nullptr);
     vmaDestroyImage(device->get_allocator().get(), image, allocation);
   }
@@ -72,13 +79,22 @@ public:
   auto height() const -> uint32_t { return extent.height; }
 
 private:
-  Image(VkImage img, VkImageView v, VmaAllocation alloc, Extent2D ext,
-        const Device &dev)
-      : image(img), view(v), allocation(alloc), extent(ext), device(&dev) {}
+  Image(VkImage img,
+        VkImageView v,
+        VmaAllocation alloc,
+        Extent2D ext,
+        const Device& dev)
+    : image(img)
+    , view(v)
+    , allocation(alloc)
+    , extent(ext)
+    , device(&dev)
+  {
+  }
 
   VkImage image{};
   VkImageView view{};
   VmaAllocation allocation{};
   Extent2D extent{};
-  const Device *device;
+  const Device* device;
 };
