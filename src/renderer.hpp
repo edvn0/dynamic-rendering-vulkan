@@ -9,6 +9,7 @@
 #include "gpu_buffer.hpp"
 #include "image.hpp"
 #include "pipeline/blueprint_registry.hpp"
+#include "pipeline/compute_pipeline_factory.hpp"
 #include "pipeline/pipeline_factory.hpp"
 #include "window.hpp"
 
@@ -41,7 +42,9 @@ public:
   Renderer(const Device&,
            const BlueprintRegistry&,
            const PipelineFactory&,
+           const ComputePipelineFactory&,
            const Window&);
+  ~Renderer();
   auto submit(const DrawCommand&) -> void;
   auto end_frame(std::uint32_t) -> void;
   auto resize(std::uint32_t, std::uint32_t) -> void;
@@ -51,15 +54,22 @@ private:
   const Device* device{ nullptr };
   const BlueprintRegistry* blueprint_registry{ nullptr };
   const PipelineFactory* pipeline_factory{ nullptr };
+  const ComputePipelineFactory* compute_pipeline_factory{ nullptr };
   const Window* window{ nullptr };
 
   std::unique_ptr<CommandBuffer> command_buffer;
+
+  frame_array<VkSemaphore> compute_finished_semaphore{};
   std::unique_ptr<CommandBuffer> compute_command_buffer;
+
   std::unique_ptr<Material> default_geometry_material;
 
   std::unique_ptr<Image> geometry_image;
   CompiledPipeline geometry_pipeline;
+  CompiledComputePipeline test_compute_pipeline;
 
   std::unordered_map<DrawCommand, std::uint32_t, DrawCommandHasher>
     draw_commands;
+
+  auto run_compute_pass(std::uint32_t) -> void;
 };

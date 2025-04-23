@@ -146,32 +146,41 @@ struct convert<PipelineBlueprint>
   {
     rhs.name = node["name"].as<std::string>();
     rhs.shader_stages = node["shaders"].as<std::vector<ShaderStageInfo>>();
-    rhs.bindings =
-      node["vertex_input"]["bindings"].as<std::vector<VertexBinding>>();
-    rhs.attributes =
-      node["vertex_input"]["attributes"].as<std::vector<VertexAttribute>>();
+    if (node["vertex_input"]) {
+      if (node["vertex_input"]["bindings"])
+        rhs.bindings =
+          node["vertex_input"]["bindings"].as<std::vector<VertexBinding>>();
+      if (node["vertex_input"]["attributes"])
+        rhs.attributes =
+          node["vertex_input"]["attributes"].as<std::vector<VertexAttribute>>();
+    }
 
-    auto cm = node["rasterization"]["cull_mode"].as<std::string>("back");
-    rhs.cull_mode = cm == "none"    ? VK_CULL_MODE_NONE
-                    : cm == "front" ? VK_CULL_MODE_FRONT_BIT
-                                    : VK_CULL_MODE_BACK_BIT;
+    if (node["rasterization"]) {
+      auto cm = node["rasterization"]["cull_mode"].as<std::string>("back");
+      rhs.cull_mode = cm == "none"    ? VK_CULL_MODE_NONE
+                      : cm == "front" ? VK_CULL_MODE_FRONT_BIT
+                                      : VK_CULL_MODE_BACK_BIT;
 
-    auto pm = node["rasterization"]["polygon_mode"].as<std::string>("fill");
-    rhs.polygon_mode = pm == "line"    ? VK_POLYGON_MODE_LINE
-                       : pm == "point" ? VK_POLYGON_MODE_POINT
-                                       : VK_POLYGON_MODE_FILL;
+      auto pm = node["rasterization"]["polygon_mode"].as<std::string>("fill");
+      rhs.polygon_mode = pm == "line"    ? VK_POLYGON_MODE_LINE
+                         : pm == "point" ? VK_POLYGON_MODE_POINT
+                                         : VK_POLYGON_MODE_FILL;
+    }
 
-    rhs.blend_enable = node["blend"]["enable"].as<bool>(false);
-    rhs.depth_test = node["depth_stencil"]["depth_test"].as<bool>(false);
-    rhs.depth_write = node["depth_stencil"]["depth_write"].as<bool>(false);
+    if (node["blend"])
+      rhs.blend_enable = node["blend"]["enable"].as<bool>(false);
+
+    if (node["depth_stencil"]) {
+      rhs.depth_test = node["depth_stencil"]["depth_test"].as<bool>(false);
+      rhs.depth_write = node["depth_stencil"]["depth_write"].as<bool>(false);
+      if (node["depth_stencil"]["format"])
+        rhs.depth_attachment =
+          Attachment{ .format =
+                        node["depth_stencil"]["format"].as<VkFormat>() };
+    }
 
     if (node["attachments"])
       rhs.attachments = node["attachments"].as<std::vector<Attachment>>();
-
-    if (node["depth_stencil"]["format"]) {
-      const auto format = node["depth_stencil"]["format"].as<VkFormat>();
-      rhs.depth_attachment = Attachment{ .format = format };
-    }
     return true;
   }
 };

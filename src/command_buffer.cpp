@@ -77,7 +77,7 @@ CommandBuffer::create_command_pool(VkCommandPoolCreateFlags flags)
     .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
     .pNext = nullptr,
     .flags = flags,
-    .queueFamilyIndex = device->graphics_queue_family_index(),
+    .queueFamilyIndex = device->get_queue_family_index(execution_queue),
   };
   vkCreateCommandPool(device->get_device(), &info, nullptr, &command_pool);
 }

@@ -5,23 +5,24 @@
 #include "blueprint_configuration.hpp"
 
 class Device;
+class Shader;
 
-struct CompiledPipeline
+struct CompiledComputePipeline
 {
   VkPipeline pipeline{ VK_NULL_HANDLE };
   VkPipelineLayout layout{ VK_NULL_HANDLE };
-  VkPipelineBindPoint bind_point{ VK_PIPELINE_BIND_POINT_GRAPHICS };
+  VkPipelineBindPoint bind_point{ VK_PIPELINE_BIND_POINT_COMPUTE };
 };
 
-class PipelineFactory
+class ComputePipelineFactory
 {
 public:
-  explicit PipelineFactory(const Device& device);
-  auto create_pipeline(const PipelineBlueprint&) const -> CompiledPipeline;
+  explicit ComputePipelineFactory(const Device& device);
+  auto create_pipeline(const PipelineBlueprint&) const
+    -> CompiledComputePipeline;
 
 private:
   const Device* device;
-
   auto create_pipeline_layout(const PipelineBlueprint&) const
     -> VkPipelineLayout;
 };

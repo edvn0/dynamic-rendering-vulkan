@@ -1,4 +1,5 @@
 #include "device.hpp"
+#include <cassert>
 
 auto
 Device::create(const Core::Instance& instance, const VkSurfaceKHR& surface)
@@ -86,6 +87,20 @@ Device::compute_queue_family_index() const -> uint32_t
     assert(false && "Failed to get compute queue family index");
   }
   return queue_result.value();
+}
+
+auto
+Device::get_queue_family_index(VkQueue queue) const -> std::uint32_t
+{
+  if (queue == graphics_queue())
+    return graphics_queue_family_index();
+  if (queue == compute_queue())
+    return compute_queue_family_index();
+  if (queue == transfer_queue())
+    return transfer_queue_family_index();
+
+  assert(false && "Queue not found in device");
+  return std::numeric_limits<std::uint32_t>::max();
 }
 
 auto

@@ -18,6 +18,8 @@ public:
   auto transfer_queue_family_index() const -> uint32_t;
   auto compute_queue_family_index() const -> uint32_t;
 
+  auto get_queue_family_index(VkQueue) const -> std::uint32_t;
+
   auto get_allocator() -> Allocator& { return allocator; }
   auto get_allocator() const -> const Allocator& { return allocator; }
 

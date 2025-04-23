@@ -17,6 +17,7 @@
 #include "imgui_impl_vulkan.h"
 #include "instance.hpp"
 #include "pipeline/blueprint_registry.hpp"
+#include "pipeline/compute_pipeline_factory.hpp"
 #include "pipeline/pipeline_factory.hpp"
 #include "renderer.hpp"
 #include "swapchain.hpp"
@@ -181,11 +182,15 @@ main(int, char**) -> std::int32_t
   BlueprintRegistry blueprint_registry;
   blueprint_registry.load_from_directory("assets/blueprints");
   PipelineFactory pipeline_factory(device);
+  ComputePipelineFactory compute_pipeline_factory(device);
 
   GUISystem gui_system(instance, device, window);
   Swapchain swapchain(device, window);
 
-  Renderer renderer{ device, blueprint_registry, pipeline_factory, window };
+  Renderer renderer{
+    device, blueprint_registry, pipeline_factory, compute_pipeline_factory,
+    window,
+  };
 
   std::vector<std::unique_ptr<ILayer>> layers;
   layers.emplace_back(std::make_unique<Layer>(device));
@@ -240,7 +245,9 @@ main(int, char**) -> std::int32_t
       for (auto& layer : layers) {
         layer->on_resize(width, height);
       }
+      renderer.resize(width, height);
       window.set_resize_flag(false);
+      continue;
     }
 
     std::ranges::for_each(layers, [&timer](auto& layer) {

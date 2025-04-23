@@ -1,0 +1,4 @@
+name: test_compute
+shaders:
+  - stage: compute
+    path: test.comp.spv
