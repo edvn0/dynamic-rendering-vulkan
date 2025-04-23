@@ -57,6 +57,7 @@ Device::graphics_queue_family_index() const -> uint32_t
   }
   return queue_result.value();
 }
+
 auto
 Device::transfer_queue_family_index() const -> uint32_t
 {
@@ -66,6 +67,27 @@ Device::transfer_queue_family_index() const -> uint32_t
   }
   return queue_result.value();
 }
+
+auto
+Device::compute_queue() const -> VkQueue
+{
+  auto queue_result = device.get_queue(vkb::QueueType::compute);
+  if (!queue_result) {
+    assert(false && "Failed to get compute queue");
+  }
+  return queue_result.value();
+}
+
+auto
+Device::compute_queue_family_index() const -> uint32_t
+{
+  auto queue_result = device.get_queue_index(vkb::QueueType::compute);
+  if (!queue_result) {
+    assert(false && "Failed to get compute queue family index");
+  }
+  return queue_result.value();
+}
+
 auto
 Device::create_one_time_command_buffer() const
   -> std::tuple<VkCommandBuffer, VkCommandPool>

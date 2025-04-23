@@ -11,20 +11,20 @@ struct CompiledPipeline
 {
   VkPipeline pipeline{ VK_NULL_HANDLE };
   VkPipelineLayout layout{ VK_NULL_HANDLE };
+  VkPipelineBindPoint bind_point{ VK_PIPELINE_BIND_POINT_GRAPHICS };
 };
 
 class PipelineFactory
 {
 public:
   explicit PipelineFactory(const Device& device);
-  auto create_pipeline(const PipelineBlueprint& blueprint) -> CompiledPipeline;
+  auto create_pipeline(const PipelineBlueprint&) const -> CompiledPipeline;
 
 private:
   const Device* device;
 
-  auto create_pipeline_layout(const PipelineBlueprint& blueprint)
+  auto create_pipeline_layout(const PipelineBlueprint&) const
     -> VkPipelineLayout;
-  auto create_shader_module(const std::string& path) -> VkShaderModule;
 
   std::unordered_map<std::size_t, CompiledPipeline> pipelines;
 };

@@ -4,13 +4,33 @@
 
 #include <array>
 
+static auto to_vk_stage = [](ShaderStage stage) -> VkShaderStageFlagBits {
+  switch (stage) {
+    case ShaderStage::vertex:
+      return VK_SHADER_STAGE_VERTEX_BIT;
+    case ShaderStage::fragment:
+      return VK_SHADER_STAGE_FRAGMENT_BIT;
+    case ShaderStage::compute:
+      return VK_SHADER_STAGE_COMPUTE_BIT;
+    case ShaderStage::raygen:
+      return VK_SHADER_STAGE_RAYGEN_BIT_KHR;
+    case ShaderStage::closest_hit:
+      return VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
+    case ShaderStage::miss:
+      return VK_SHADER_STAGE_MISS_BIT_KHR;
+    default:
+      assert(false && "Unsupported shader stage");
+      return VK_SHADER_STAGE_ALL; // fallback
+  }
+};
+
 PipelineFactory::PipelineFactory(const Device& dev)
   : device(&dev)
 {
 }
 
 auto
-PipelineFactory::create_pipeline_layout(const PipelineBlueprint&)
+PipelineFactory::create_pipeline_layout(const PipelineBlueprint&) const
   -> VkPipelineLayout
 {
   VkPipelineLayoutCreateInfo layout_info{
@@ -28,27 +48,8 @@ PipelineFactory::create_pipeline_layout(const PipelineBlueprint&)
   return layout;
 }
 
-static auto to_vk_stage = [](ShaderStage stage) -> VkShaderStageFlagBits {
-  switch (stage) {
-    case ShaderStage::vertex:
-      return VK_SHADER_STAGE_VERTEX_BIT;
-    case ShaderStage::fragment:
-      return VK_SHADER_STAGE_FRAGMENT_BIT;
-    case ShaderStage::compute:
-      return VK_SHADER_STAGE_COMPUTE_BIT;
-    case ShaderStage::raygen:
-      return VK_SHADER_STAGE_RAYGEN_BIT_KHR;
-    case ShaderStage::closest_hit:
-      return VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
-    case ShaderStage::miss:
-      return VK_SHADER_STAGE_MISS_BIT_KHR;
-    default:
-      throw std::runtime_error("Invalid shader stage");
-  }
-};
-
 auto
-PipelineFactory::create_pipeline(const PipelineBlueprint& blueprint)
+PipelineFactory::create_pipeline(const PipelineBlueprint& blueprint) const
   -> CompiledPipeline
 {
   auto shader = Shader::create(device->get_device(), blueprint.shader_stages);

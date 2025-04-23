@@ -13,3 +13,5 @@ build
 .cache
 bindings
 imgui.ini
+
+compile_commands.json

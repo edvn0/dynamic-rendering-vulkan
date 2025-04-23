@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <iostream>
 #include <memory>
+#include <ranges>
 #include <thread>
 #include <vulkan/vulkan_core.h>
 
@@ -17,6 +18,7 @@
 #include "instance.hpp"
 #include "pipeline/blueprint_registry.hpp"
 #include "pipeline/pipeline_factory.hpp"
+#include "renderer.hpp"
 #include "swapchain.hpp"
 #include "window.hpp"
 
@@ -45,11 +47,11 @@ private:
 struct ILayer
 {
   virtual ~ILayer() = default;
-  virtual auto on_event(Event& event) -> bool = 0;
+  virtual auto on_event(Event&) -> bool = 0;
   virtual auto on_interface() -> void = 0;
-  virtual auto on_update(double delta_time) -> void = 0;
-  virtual auto on_render(std::uint32_t frame_index) -> void = 0;
-  virtual auto on_resize(std::uint32_t width, std::uint32_t height) -> void = 0;
+  virtual auto on_update(double) -> void = 0;
+  virtual auto on_render(Renderer&) -> void = 0;
+  virtual auto on_resize(std::uint32_t, std::uint32_t) -> void = 0;
 };
 
 struct Vertex
@@ -73,24 +75,14 @@ struct Vertex
 struct Layer final : public ILayer
 {
   std::unique_ptr<CommandBuffer> command_buffer;
-  std::unique_ptr<Image> offscreen_image;
   std::unique_ptr<GPUBuffer> vertex_buffer;
   std::unique_ptr<IndexBuffer> index_buffer;
-  CompiledPipeline pipeline;
 
-  explicit Layer(const Device& dev, const Window& window, CompiledPipeline p)
+  explicit Layer(const Device& dev)
     : command_buffer(
         CommandBuffer::create(dev,
                               VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT))
-    , pipeline(std::move(p))
   {
-
-    offscreen_image = Image::create(dev,
-                                    ImageConfiguration{
-                                      .extent = window.framebuffer_size(),
-                                      .format = VK_FORMAT_B8G8R8A8_UNORM,
-                                    });
-
     vertex_buffer = std::make_unique<GPUBuffer>(
       dev,
       VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
@@ -144,21 +136,12 @@ struct Layer final : public ILayer
       ImGui::End();
     };
 
-    static bool show_demo = true;
-    ImGui::ShowDemoWindow(&show_demo);
-
     static float f = 0.0f;
     static ImVec4 clr = { 0.2f, 0.3f, 0.4f, 1.0f };
     window("Controls", [] {
       ImGui::Text("Adjust settings:");
-      ImGui::Checkbox("Demo Window", &show_demo);
       ImGui::SliderFloat("Float", &f, 0.0f, 1.0f);
       ImGui::ColorEdit3("Clear Color", std::bit_cast<float*>(&clr));
-    });
-
-    window("Offscreen Pass", [&offscreen_image = *offscreen_image] {
-      auto size = ImGui::GetContentRegionAvail();
-      ImGui::Image(offscreen_image.get_texture_id<ImTextureID>(), size);
     });
 
     window("GPU Timers", [&cmd = *command_buffer] {
@@ -172,100 +155,18 @@ struct Layer final : public ILayer
     });
   }
   auto on_update(double) -> void override {}
-  auto on_render(std::uint32_t frame_index) -> void override
+  auto on_render(Renderer& renderer) -> void override
   {
-    command_buffer->begin_frame(frame_index);
-    command_buffer->begin_timer(frame_index, "geometry_pass");
-
-    {
-      const VkCommandBuffer cmd = command_buffer->get(frame_index);
-      CoreUtils::cmd_transition_to_color_attachment(
-        cmd, offscreen_image->get_image());
-
-      VkClearValue clear_value = { .color = { { 0.f, 0.f, 0.f, 0.f } } };
-
-      VkRenderingAttachmentInfo color_attachment{
-        .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
-        .pNext = nullptr,
-        .imageView = offscreen_image->get_view(),
-        .imageLayout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
-        .resolveMode = VK_RESOLVE_MODE_NONE,
-        .resolveImageView = VK_NULL_HANDLE,
-        .resolveImageLayout = VK_IMAGE_LAYOUT_UNDEFINED,
-        .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
-        .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
-        .clearValue = clear_value,
-      };
-
-      VkRenderingInfo render_info{
-            .sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
-            .pNext = nullptr,
-            .flags = 0,
-            .renderArea =
-                {
-                    .offset = {0, 0},
-                    .extent =
-                        {
-                            offscreen_image->width(),
-                            offscreen_image->height(),
-                        },
-                },
-            .layerCount = 1,
-            .viewMask = 0,
-            .colorAttachmentCount = 1,
-            .pColorAttachments = &color_attachment,
-            .pDepthAttachment = nullptr,
-            .pStencilAttachment = nullptr,
-        };
-
-      vkCmdBeginRendering(cmd, &render_info);
-      vkCmdBindPipeline(
-        cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.pipeline);
-      auto offsets = std::array<VkDeviceSize, 1>{
-        0,
-      };
-      const std::array<VkBuffer, 1> vertex_buffers{
-        vertex_buffer->get(),
-      };
-      VkViewport viewport{
-        .x = 0.f,
-        .y = static_cast<float>(offscreen_image->height()),
-        .width = static_cast<float>(offscreen_image->width()),
-        .height = -static_cast<float>(offscreen_image->height()),
-        .minDepth = 0.f,
-        .maxDepth = 1.f,
-      };
-      vkCmdSetViewport(cmd, 0, 1, &viewport);
-      vkCmdSetScissor(cmd, 0, 1, &render_info.renderArea);
-      vkCmdBindVertexBuffers(cmd,
-                             0,
-                             static_cast<std::uint32_t>(vertex_buffers.size()),
-                             vertex_buffers.data(),
-                             offsets.data());
-
-      vkCmdBindIndexBuffer(
-        cmd, index_buffer->get(), 0, index_buffer->get_index_type());
-      vkCmdDrawIndexed(
-        cmd, static_cast<std::uint32_t>(index_buffer->get_count()), 1, 0, 0, 0);
-      vkCmdEndRendering(cmd);
-
-      CoreUtils::cmd_transition_to_shader_read(cmd,
-                                               offscreen_image->get_image());
+    for (const auto i : std::views::iota(0, 100)) {
+      (void)i;
+      renderer.submit(DrawCommand{
+        .vertex_buffer = vertex_buffer.get(),
+        .index_buffer = index_buffer.get(),
+      });
     }
-
-    command_buffer->end_timer(frame_index, "geometry_pass");
-    command_buffer->begin_timer(frame_index, "gui_pass");
-
-    // ...record GUI draw calls
-
-    command_buffer->end_timer(frame_index, "gui_pass");
-    command_buffer->submit_and_end(frame_index);
   }
 
-  auto on_resize(std::uint32_t width, std::uint32_t height) -> void override
-  {
-    offscreen_image->resize(width, height);
-  }
+  auto on_resize(std::uint32_t, std::uint32_t) -> void override {}
 };
 
 auto
@@ -284,11 +185,10 @@ main(int, char**) -> std::int32_t
   GUISystem gui_system(instance, device, window);
   Swapchain swapchain(device, window);
 
+  Renderer renderer{ device, blueprint_registry, pipeline_factory, window };
+
   std::vector<std::unique_ptr<ILayer>> layers;
-  layers.emplace_back(std::make_unique<Layer>(
-    device,
-    window,
-    pipeline_factory.create_pipeline(blueprint_registry.get("main_geometry"))));
+  layers.emplace_back(std::make_unique<Layer>(device));
 
   auto event_callback = [&w = window, &layer_stack = layers](Event& event) {
     EventDispatcher dispatcher(event);
@@ -346,12 +246,19 @@ main(int, char**) -> std::int32_t
     std::ranges::for_each(layers, [&timer](auto& layer) {
       layer->on_update(timer.end_and_get_delta_ms());
     });
-    std::ranges::for_each(layers, [&sc = swapchain](auto& layer) {
-      layer->on_render(sc.get_frame_index());
-    });
+    std::ranges::for_each(
+      layers, [&r = renderer](auto& layer) { layer->on_render(r); });
+    renderer.end_frame(swapchain.get_frame_index());
 
     gui_system.begin_frame();
     std::ranges::for_each(layers, [](auto& layer) { layer->on_interface(); });
+
+    if (ImGui::Begin("Renderer output")) {
+      ImGui::Image(renderer.get_output_image().get_texture_id<ImTextureID>(),
+                   ImGui::GetContentRegionAvail());
+      ImGui::End();
+    }
+
     swapchain.draw_frame(window, gui_system);
   }
 

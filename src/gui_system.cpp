@@ -16,26 +16,33 @@ GUISystem::begin_frame() const -> void
   ImGui_ImplGlfw_NewFrame();
   ImGui::NewFrame();
 
-  // auto &io = ImGui::GetIO();
-  const auto vp = ImGui::GetMainViewport();
-  ImGui::SetNextWindowPos(vp->WorkPos);
-  ImGui::SetNextWindowSize(vp->WorkSize);
-  ImGui::SetNextWindowDockID(vp->ID);
+  const auto* vp = ImGui::GetMainViewport();
+
+  ImGui::SetNextWindowPos(vp->Pos);
+  ImGui::SetNextWindowSize(vp->Size);
+  ImGui::SetNextWindowViewport(vp->ID);
+  ImGui::SetNextWindowBgAlpha(0.0f);
+
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+  ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0.0f, 0.0f));
+
   ImGuiWindowFlags host_flags =
     ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoCollapse |
     ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
     ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNavFocus |
-    ImGuiWindowFlags_NoBackground;
+    ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoDecoration |
+    ImGuiWindowFlags_NoDocking;
 
-  ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
-  ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
   ImGui::Begin("DockSpaceHost", nullptr, host_flags);
-  ImGui::PopStyleVar(2);
+
+  ImGui::PopStyleVar(4);
 
   ImGuiID dockspace_id = ImGui::GetID("MainDockspace");
-  ImGui::DockSpaceOverViewport(dockspace_id,
-                               ImGui::GetMainViewport(),
-                               ImGuiDockNodeFlags_PassthruCentralNode);
+  ImGuiDockNodeFlags dockspace_flags = ImGuiDockNodeFlags_PassthruCentralNode;
+
+  ImGui::DockSpace(dockspace_id, ImVec2(0.0f, 0.0f), dockspace_flags);
 
   ImGuizmo::SetOrthographic(false);
   ImGuizmo::BeginFrame();

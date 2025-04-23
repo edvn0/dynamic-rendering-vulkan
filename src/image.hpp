@@ -51,7 +51,6 @@ public:
     return mip_layer_views[layer * mip_levels + mip];
   }
   auto get_image() const -> VkImage { return image; }
-
   auto width() const -> uint32_t { return extent.width; }
   auto height() const -> uint32_t { return extent.height; }
   auto layers() const -> uint32_t { return array_layers; }

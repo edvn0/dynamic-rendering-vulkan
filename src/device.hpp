@@ -13,8 +13,10 @@ public:
 
   auto graphics_queue() const -> VkQueue;
   auto transfer_queue() const -> VkQueue;
+  auto compute_queue() const -> VkQueue;
   auto graphics_queue_family_index() const -> uint32_t;
   auto transfer_queue_family_index() const -> uint32_t;
+  auto compute_queue_family_index() const -> uint32_t;
 
   auto get_allocator() -> Allocator& { return allocator; }
   auto get_allocator() const -> const Allocator& { return allocator; }
