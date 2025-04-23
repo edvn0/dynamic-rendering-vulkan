@@ -1,0 +1,222 @@
+#include "pipeline_factory.hpp"
+
+#include "device.hpp"
+
+#include <array>
+
+PipelineFactory::PipelineFactory(const Device& dev)
+  : device(&dev)
+{
+}
+
+auto
+PipelineFactory::create_pipeline_layout(const PipelineBlueprint&)
+  -> VkPipelineLayout
+{
+  VkPipelineLayoutCreateInfo layout_info{
+    .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+    .pNext = nullptr,
+    .flags = 0,
+    .setLayoutCount = 0,
+    .pSetLayouts = nullptr,
+    .pushConstantRangeCount = 0,
+    .pPushConstantRanges = nullptr,
+  };
+
+  VkPipelineLayout layout{};
+  vkCreatePipelineLayout(device->get_device(), &layout_info, nullptr, &layout);
+  return layout;
+}
+
+static auto to_vk_stage = [](ShaderStage stage) -> VkShaderStageFlagBits {
+  switch (stage) {
+    case ShaderStage::vertex:
+      return VK_SHADER_STAGE_VERTEX_BIT;
+    case ShaderStage::fragment:
+      return VK_SHADER_STAGE_FRAGMENT_BIT;
+    case ShaderStage::compute:
+      return VK_SHADER_STAGE_COMPUTE_BIT;
+    case ShaderStage::raygen:
+      return VK_SHADER_STAGE_RAYGEN_BIT_KHR;
+    case ShaderStage::closest_hit:
+      return VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
+    case ShaderStage::miss:
+      return VK_SHADER_STAGE_MISS_BIT_KHR;
+    default:
+      throw std::runtime_error("Invalid shader stage");
+  }
+};
+
+auto
+PipelineFactory::create_pipeline(const PipelineBlueprint& blueprint)
+  -> CompiledPipeline
+{
+  auto shader = Shader::create(device->get_device(), blueprint.shader_stages);
+
+  std::vector<VkPipelineShaderStageCreateInfo> shader_infos;
+  for (const auto& info : blueprint.shader_stages) {
+    shader_infos.push_back({
+      .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+      .pNext = nullptr,
+      .flags = 0,
+      .stage = to_vk_stage(info.stage),
+      .module = shader->get_module(info.stage),
+      .pName = "main",
+      .pSpecializationInfo = nullptr,
+    });
+  }
+
+  std::vector<VkVertexInputBindingDescription> bindings;
+  for (const auto& b : blueprint.bindings) {
+    bindings.push_back({
+      .binding = b.binding,
+      .stride = b.stride,
+      .inputRate = b.input_rate,
+    });
+  }
+
+  std::vector<VkVertexInputAttributeDescription> attributes;
+  for (const auto& a : blueprint.attributes) {
+    attributes.push_back({
+      .location = a.location,
+      .binding = a.binding,
+      .format = a.format,
+      .offset = a.offset,
+    });
+  }
+
+  VkPipelineVertexInputStateCreateInfo vertex_input{
+    .sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
+    .pNext = nullptr,
+    .flags = 0,
+    .vertexBindingDescriptionCount = static_cast<uint32_t>(bindings.size()),
+    .pVertexBindingDescriptions = bindings.data(),
+    .vertexAttributeDescriptionCount = static_cast<uint32_t>(attributes.size()),
+    .pVertexAttributeDescriptions = attributes.data(),
+  };
+
+  VkPipelineInputAssemblyStateCreateInfo input_assembly{
+    .sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
+    .pNext = nullptr,
+    .flags = 0,
+    .topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
+    .primitiveRestartEnable = VK_FALSE,
+  };
+
+  VkPipelineRasterizationStateCreateInfo rasterizer{
+    .sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
+    .pNext = nullptr,
+    .flags = 0,
+    .depthClampEnable = VK_FALSE,
+    .rasterizerDiscardEnable = VK_FALSE,
+    .polygonMode = blueprint.polygon_mode,
+    .cullMode = blueprint.cull_mode,
+    .frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE,
+    .depthBiasEnable = VK_FALSE,
+    .depthBiasConstantFactor = 0.0f,
+    .depthBiasClamp = 0.0f,
+    .depthBiasSlopeFactor = 0.0f,
+    .lineWidth = 1.0f,
+  };
+
+  VkPipelineColorBlendAttachmentState color_blend_attachment{
+    .blendEnable = blueprint.blend_enable,
+    .srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA,
+    .dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
+    .colorBlendOp = VK_BLEND_OP_ADD,
+    .srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE,
+    .dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO,
+    .alphaBlendOp = VK_BLEND_OP_ADD,
+    .colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+                      VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT,
+  };
+
+  VkPipelineColorBlendStateCreateInfo color_blend{
+    .sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
+    .pNext = nullptr,
+    .flags = 0,
+    .logicOpEnable = VK_FALSE,
+    .logicOp = VK_LOGIC_OP_COPY,
+    .attachmentCount = 1,
+    .pAttachments = &color_blend_attachment,
+    .blendConstants = { 0.0f, 0.0f, 0.0f, 0.0f },
+  };
+
+  VkPipelineDepthStencilStateCreateInfo depth_stencil{
+    .sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
+    .pNext = nullptr,
+    .flags = 0,
+    .depthTestEnable = blueprint.depth_test,
+    .depthWriteEnable = blueprint.depth_write,
+    .depthCompareOp = VK_COMPARE_OP_LESS,
+    .depthBoundsTestEnable = VK_FALSE,
+    .stencilTestEnable = VK_FALSE,
+    .front = { 
+        .failOp = VK_STENCIL_OP_KEEP,
+        .passOp = VK_STENCIL_OP_KEEP,
+        .depthFailOp = VK_STENCIL_OP_KEEP,
+        .compareOp = VK_COMPARE_OP_ALWAYS,
+        .compareMask = 0,
+        .writeMask = 0,
+        .reference = 0,
+    },
+    .back = { 
+        .failOp = VK_STENCIL_OP_KEEP,
+        .passOp = VK_STENCIL_OP_KEEP,
+        .depthFailOp = VK_STENCIL_OP_KEEP,
+        .compareOp = VK_COMPARE_OP_ALWAYS,
+        .compareMask = 0,
+        .writeMask = 0,
+        .reference = 0,
+    },
+    .minDepthBounds = 0.0f,
+    .maxDepthBounds = 1.0f,
+  };
+
+  // Dynamic state viewport, scissor
+  const std::array<VkDynamicState, 2> dynamic_states{
+    VK_DYNAMIC_STATE_VIEWPORT,
+    VK_DYNAMIC_STATE_SCISSOR,
+  };
+  VkPipelineDynamicStateCreateInfo dynamic_state{
+    .sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
+    .pNext = nullptr,
+    .flags = 0,
+    .dynamicStateCount = static_cast<uint32_t>(dynamic_states.size()),
+    .pDynamicStates = dynamic_states.data(),
+  };
+
+  VkPipelineLayout layout = create_pipeline_layout(blueprint);
+
+  VkGraphicsPipelineCreateInfo pipeline_info{
+    .sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
+    .pNext = nullptr,
+    .flags = 0,
+    .stageCount = static_cast<uint32_t>(shader_infos.size()),
+    .pStages = shader_infos.data(),
+    .pVertexInputState = &vertex_input,
+    .pInputAssemblyState = &input_assembly,
+    .pTessellationState = nullptr,
+    .pViewportState = nullptr,
+    .pRasterizationState = &rasterizer,
+    .pMultisampleState = nullptr,
+    .pDepthStencilState = &depth_stencil,
+    .pColorBlendState = &color_blend,
+    .pDynamicState = &dynamic_state,
+    .layout = layout,
+    .renderPass = VK_NULL_HANDLE,
+    .subpass = 0,
+    .basePipelineHandle = VK_NULL_HANDLE,
+    .basePipelineIndex = -1,
+  };
+
+  VkPipeline pipeline;
+  vkCreateGraphicsPipelines(device->get_device(),
+                            VK_NULL_HANDLE,
+                            1,
+                            &pipeline_info,
+                            nullptr,
+                            &pipeline);
+
+  return { pipeline, layout };
+}

@@ -5,10 +5,10 @@
 
 #include <span>
 
-class GpuBuffer
+class GPUBuffer
 {
 public:
-  GpuBuffer(const Device& device,
+  GPUBuffer(const Device& device,
             VkBufferUsageFlags usage,
             bool mapped_on_create = false)
     : device(device)
@@ -17,8 +17,31 @@ public:
   {
   }
 
-  template<typename T>
-  void upload(const std::span<const T> data)
+  template<typename T, std::size_t N = std::dynamic_extent>
+  auto upload(std::span<const T, N> data) -> void
+    requires(std::is_trivially_copyable_v<T> &&
+             std::is_trivially_destructible_v<T>)
+  {
+    const auto required_size = data.size_bytes();
+
+    if (required_size > current_size)
+      recreate(required_size);
+
+    void* mapped = nullptr;
+    if (mapped_on_create && persistent_ptr) {
+      mapped = persistent_ptr;
+    } else {
+      vmaMapMemory(device.get_allocator().get(), allocation, &mapped);
+    }
+
+    std::memcpy(mapped, data.data(), required_size);
+
+    if (!mapped_on_create)
+      vmaUnmapMemory(device.get_allocator().get(), allocation);
+  }
+
+  template<typename T, std::size_t N = std::dynamic_extent>
+  auto upload(std::span<T, N> data) -> void
     requires(std::is_trivially_copyable_v<T> &&
              std::is_trivially_destructible_v<T>)
   {
@@ -42,7 +65,7 @@ public:
 
   auto get() const -> const auto& { return buffer; }
 
-  ~GpuBuffer()
+  ~GPUBuffer()
   {
     if (mapped_on_create && persistent_ptr)
       vmaUnmapMemory(device.get_allocator().get(), allocation);

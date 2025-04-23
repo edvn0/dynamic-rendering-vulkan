@@ -1,0 +1,36 @@
+name: main_geometry
+shaders:
+  - stage: vertex
+    path: geometry.vert.spv
+  - stage: fragment
+    path: geometry.frag.spv
+
+rasterization:
+  cull_mode: "back"
+  polygon_mode: "fill"
+
+depth_stencil:
+  depth_test: true
+  depth_write: true
+
+blend:
+  enable: false
+
+vertex_input:
+  bindings:
+    - binding: 0
+      stride: 32
+      input_rate: vertex
+  attributes:
+    - location: 0
+      binding: 0
+      format: vec3
+      offset: 0
+    - location: 1
+      binding: 0
+      format: vec3
+      offset: 12
+    - location: 2
+      binding: 0
+      format: vec2
+      offset: 24

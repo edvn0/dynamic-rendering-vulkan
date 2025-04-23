@@ -13,6 +13,8 @@
 #include "image.hpp"
 #include "image_transition.hpp"
 #include "instance.hpp"
+#include "pipeline/blueprint_registry.hpp"
+#include "pipeline/pipeline_factory.hpp"
 #include "swapchain.hpp"
 #include "window.hpp"
 
@@ -47,6 +49,24 @@ struct ILayer
   virtual auto on_render(std::uint32_t frame_index) -> void = 0;
 };
 
+struct Vertex
+{
+  std::array<float, 3> pos{
+    0.f,
+    0.f,
+    0.f,
+  };
+  std::array<float, 3> normal{
+    0.f,
+    0.f,
+    1.f,
+  };
+  std::array<float, 2> uv{
+    0.f,
+    0.f,
+  };
+};
+
 auto
 main(int, char**) -> std::int32_t
 {
@@ -55,6 +75,10 @@ main(int, char**) -> std::int32_t
   window.create_surface(instance);
   auto device = Device::create(instance, window.surface());
 
+  BlueprintRegistry blueprint_registry;
+  blueprint_registry.load_from_directory("assets/blueprints");
+  PipelineFactory pipeline_factory(device);
+
   GUISystem gui_system(instance, device, window);
   Swapchain swapchain(device, window);
 
@@ -62,10 +86,12 @@ main(int, char**) -> std::int32_t
   {
     std::unique_ptr<CommandBuffer> command_buffer;
     std::unique_ptr<Image> offscreen_image;
-    std::unique_ptr<GpuBuffer> vertex_buffer;
+    std::unique_ptr<GPUBuffer> vertex_buffer;
+    CompiledPipeline pipeline;
 
-    explicit Layer(const Device& dev)
+    explicit Layer(const Device& dev, CompiledPipeline p)
       : command_buffer(CommandBuffer::create(dev))
+      , pipeline(std::move(p))
     {
 
       offscreen_image = Image::create(dev,
@@ -74,35 +100,17 @@ main(int, char**) -> std::int32_t
                                         .format = VK_FORMAT_B8G8R8A8_SRGB,
                                       });
 
-      vertex_buffer = std::make_unique<GpuBuffer>(
+      vertex_buffer = std::make_unique<GPUBuffer>(
         dev,
         VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
         true);
-
-      struct Vertex
-      {
-        std::array<float, 3> pos{
-          0.f,
-          0.f,
-          0.f,
-        };
-        std::array<float, 3> normal{
-          0.f,
-          0.f,
-          1.f,
-        };
-        std::array<float, 2> uv{
-          0.f,
-          0.f,
-        };
-      };
 
       std::array<Vertex, 3> vertices = {
         Vertex{ { 0.f, 0.f, 0.f }, { 0.f, 0.f, 1.f }, { 0.f, 0.f } },
         Vertex{ { 1.f, 0.f, 0.f }, { 0.f, 0.f, 1.f }, { 1.f, 0.f } },
         Vertex{ { 0.5f, 1.f, 0.f }, { 0.f, 0.f, 1.f }, { 0.5f, 1.f } },
       };
-      vertex_buffer->upload<Vertex>(std::span(vertices));
+      vertex_buffer->upload(std::span(vertices));
     }
 
     auto on_event(Event& event) -> bool override
@@ -158,8 +166,12 @@ main(int, char**) -> std::int32_t
 
         VkRenderingAttachmentInfo color_attachment{
           .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+          .pNext = nullptr,
           .imageView = offscreen_image->get_view(),
           .imageLayout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
+          .resolveMode = VK_RESOLVE_MODE_NONE,
+          .resolveImageView = VK_NULL_HANDLE,
+          .resolveImageLayout = VK_IMAGE_LAYOUT_UNDEFINED,
           .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
           .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
           .clearValue = clear_value,
@@ -167,6 +179,8 @@ main(int, char**) -> std::int32_t
 
         VkRenderingInfo render_info{
             .sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
+            .pNext = nullptr,
+            .flags = 0,
             .renderArea =
                 {
                     .offset = {0, 0},
@@ -177,13 +191,16 @@ main(int, char**) -> std::int32_t
                         },
                 },
             .layerCount = 1,
+            .viewMask = 0,
             .colorAttachmentCount = 1,
             .pColorAttachments = &color_attachment,
+            .pDepthAttachment = nullptr,
+            .pStencilAttachment = nullptr,
         };
 
         vkCmdBeginRendering(cmd, &render_info);
-        //         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
-        //         pipeline);
+        vkCmdBindPipeline(
+          cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.pipeline);
         auto offsets = std::array<VkDeviceSize, 1>{ 0 };
         const std::array<VkBuffer, 1> vertex_buffers{
           vertex_buffer->get(),
@@ -209,7 +226,9 @@ main(int, char**) -> std::int32_t
   };
 
   std::vector<std::unique_ptr<ILayer>> layers;
-  layers.emplace_back(std::make_unique<Layer>(device));
+  layers.emplace_back(std::make_unique<Layer>(
+    device,
+    pipeline_factory.create_pipeline(blueprint_registry.get("main_geometry"))));
 
   auto event_callback = [&w = window, &layer_stack = layers](Event& event) {
     EventDispatcher dispatcher(event);
@@ -274,6 +293,7 @@ main(int, char**) -> std::int32_t
   }
 
   vkDeviceWaitIdle(device.get_device());
+  layers.clear();
 
   return 0;
 }
