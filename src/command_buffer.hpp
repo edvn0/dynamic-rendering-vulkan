@@ -27,11 +27,18 @@ struct TimedSection
   }
 };
 
+enum class CommandBufferType : std::uint8_t
+{
+  Graphics,
+  Compute,
+};
+
 class CommandBuffer
 {
 public:
   CommandBuffer(const Device& device,
                 VkQueue execution_queue,
+                CommandBufferType command_buffer_type,
                 VkCommandPoolCreateFlags pool_flags = 0);
   ~CommandBuffer();
 
@@ -94,13 +101,12 @@ private:
   frame_array<VkFence> fences{};
   VkQueue execution_queue{ VK_NULL_HANDLE };
   const Device* device{ nullptr };
+  CommandBufferType command_buffer_type;
 
   auto create_command_pool(VkCommandPoolCreateFlags flags) -> void;
   auto allocate_command_buffers() -> void;
   auto create_query_pools() -> void;
   auto create_fences() -> void;
 
-  auto write_timestamp(std::uint32_t,
-                       VkPipelineStageFlagBits,
-                       std::uint32_t) const -> void;
+  auto write_timestamp(std::uint32_t, std::uint32_t) const -> void;
 };

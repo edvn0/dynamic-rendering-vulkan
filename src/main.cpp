@@ -75,14 +75,10 @@ struct Vertex
 
 struct Layer final : public ILayer
 {
-  std::unique_ptr<CommandBuffer> command_buffer;
   std::unique_ptr<GPUBuffer> vertex_buffer;
   std::unique_ptr<IndexBuffer> index_buffer;
 
   explicit Layer(const Device& dev)
-    : command_buffer(
-        CommandBuffer::create(dev,
-                              VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT))
   {
     vertex_buffer = std::make_unique<GPUBuffer>(
       dev,
@@ -143,16 +139,6 @@ struct Layer final : public ILayer
       ImGui::Text("Adjust settings:");
       ImGui::SliderFloat("Float", &f, 0.0f, 1.0f);
       ImGui::ColorEdit3("Clear Color", std::bit_cast<float*>(&clr));
-    });
-
-    window("GPU Timers", [&cmd = *command_buffer] {
-      auto timers = cmd.resolve_timers(0);
-      ImGui::Text("GPU Timers");
-      for (const auto& timer : timers) {
-        ImGui::Text("%s: %.3d ns",
-                    timer.name.c_str(),
-                    static_cast<std::int32_t>(timer.duration_ns()));
-      }
     });
   }
   auto on_update(double) -> void override {}
@@ -263,6 +249,46 @@ main(int, char**) -> std::int32_t
     if (ImGui::Begin("Renderer output")) {
       ImGui::Image(renderer.get_output_image().get_texture_id<ImTextureID>(),
                    ImGui::GetContentRegionAvail());
+      ImGui::End();
+    }
+
+    if (ImGui::Begin("GPU Timers")) {
+      auto& command_buffer = renderer.get_command_buffer();
+      auto& compute_command_buffer = renderer.get_compute_command_buffer();
+
+      auto raster_timings =
+        command_buffer.resolve_timers(swapchain.get_frame_index());
+      auto compute_timings =
+        compute_command_buffer.resolve_timers(swapchain.get_frame_index());
+
+      // Create a table
+      ImGui::BeginTable("GPU Timings", 3);
+      ImGui::TableSetupColumn("Name");
+      ImGui::TableSetupColumn("Duration (ms)");
+      ImGui::TableSetupColumn("Command Buffer");
+      ImGui::TableHeadersRow();
+      // Fill the table with data
+      for (const auto& section : raster_timings) {
+        ImGui::TableNextRow();
+        ImGui::TableNextColumn();
+        ImGui::Text("%s", section.name.c_str());
+        ImGui::TableNextColumn();
+        ImGui::Text("%.2f", section.duration_ms);
+        ImGui::TableNextColumn();
+        ImGui::Text("Raster");
+      }
+      for (const auto& section : compute_timings) {
+        ImGui::TableNextRow();
+        ImGui::TableNextColumn();
+        ImGui::Text("%s", section.name.c_str());
+        ImGui::TableNextColumn();
+        ImGui::Text("%.2f", section.duration_ms);
+        ImGui::TableNextColumn();
+        ImGui::Text("Compute");
+      }
+      // End the table
+      ImGui::EndTable();
+
       ImGui::End();
     }
 

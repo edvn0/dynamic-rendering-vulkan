@@ -49,6 +49,11 @@ public:
   auto end_frame(std::uint32_t) -> void;
   auto resize(std::uint32_t, std::uint32_t) -> void;
   auto get_output_image() const -> const Image&;
+  auto get_command_buffer() const -> CommandBuffer& { return *command_buffer; }
+  auto get_compute_command_buffer() const -> CommandBuffer&
+  {
+    return *compute_command_buffer;
+  }
 
 private:
   const Device* device{ nullptr };

@@ -6,15 +6,17 @@ CommandBuffer::create(const Device& device, VkCommandPoolCreateFlags pool_flags)
   -> std::unique_ptr<CommandBuffer>
 {
   return std::make_unique<CommandBuffer>(
-    device, device.graphics_queue(), pool_flags);
+    device, device.graphics_queue(), CommandBufferType::Graphics, pool_flags);
 }
 
 CommandBuffer::CommandBuffer(const Device& dev,
                              VkQueue q,
+                             CommandBufferType command_buffer_type,
                              VkCommandPoolCreateFlags pool_flags)
   : timestamp_period(dev.get_timestamp_period())
   , execution_queue(q)
   , device(&dev)
+  , command_buffer_type(command_buffer_type)
 {
   create_command_pool(pool_flags);
   allocate_command_buffers();
@@ -262,12 +264,28 @@ CommandBuffer::resolve_timers(uint32_t frame_index) const
 }
 
 void
-CommandBuffer::write_timestamp(std::uint32_t frame_index,
-                               VkPipelineStageFlagBits stage,
-                               std::uint32_t query_index) const
+CommandBuffer::write_timestamp(uint32_t frame_index, uint32_t query_index) const
 {
+  VkPipelineStageFlagBits stage =
+    command_buffer_type == CommandBufferType::Compute
+      ? VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT
+      : VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
+
   vkCmdWriteTimestamp(
     command_buffers[frame_index], stage, query_pools[frame_index], query_index);
+}
+
+void
+CommandBuffer::begin_timer(uint32_t frame_index, std::string_view name)
+{
+  auto& index = next_query_index[frame_index];
+  auto begin_idx = index++;
+  write_timestamp(frame_index, begin_idx);
+
+  auto key = std::string(name);
+  auto& section = timer_sections[frame_index][key];
+  section.name = key;
+  section.begin_query = begin_idx;
 }
 
 void
@@ -275,27 +293,10 @@ CommandBuffer::end_timer(uint32_t frame_index, std::string_view name)
 {
   auto& index = next_query_index[frame_index];
   auto end_idx = index++;
-  write_timestamp(frame_index, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, end_idx);
+  write_timestamp(frame_index, end_idx);
 
   if (auto it = timer_sections[frame_index].find(name);
       it != timer_sections[frame_index].end()) {
     it->second.end_query = end_idx;
-  }
-}
-void
-CommandBuffer::begin_timer(uint32_t frame_index, std::string_view name)
-{
-  auto& index = next_query_index[frame_index];
-  auto begin_idx = index++;
-  write_timestamp(frame_index, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, begin_idx);
-
-  if (auto it = timer_sections[frame_index].find(name);
-      it != timer_sections[frame_index].end()) {
-    it->second.begin_query = begin_idx;
-  } else {
-    auto key = std::string(name);
-    auto& section = timer_sections[frame_index][key];
-    section.name = key;
-    section.begin_query = begin_idx;
   }
 }

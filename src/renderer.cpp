@@ -17,7 +17,10 @@ Renderer::Renderer(const Device& dev,
   command_buffer =
     CommandBuffer::create(dev, VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT);
   compute_command_buffer = std::make_unique<CommandBuffer>(
-    dev, dev.compute_queue(), VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT);
+    dev,
+    dev.compute_queue(),
+    CommandBufferType::Compute,
+    VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT);
   VkSemaphoreCreateInfo sem_info{
     .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
     .pNext = nullptr,
@@ -150,6 +153,7 @@ auto
 Renderer::run_compute_pass(std::uint32_t frame_index) -> void
 {
   compute_command_buffer->begin_frame(frame_index);
+  compute_command_buffer->begin_timer(frame_index, "test_compute_pass");
 
   const VkCommandBuffer cmd = compute_command_buffer->get(frame_index);
   (void)cmd;
@@ -173,6 +177,8 @@ main()
                 1,  // x
                 1,  // y
                 1); // z
+
+  compute_command_buffer->end_timer(frame_index, "test_compute_pass");
 
   compute_command_buffer->submit_and_end(
     frame_index,
