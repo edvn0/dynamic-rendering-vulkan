@@ -2,9 +2,48 @@
 
 #include "blueprint_configuration.hpp"
 
+#include <cassert>
 #include <yaml-cpp/yaml.h>
 
 namespace YAML {
+
+template<>
+struct convert<VkFormat>
+{
+  static Node encode(const VkFormat& rhs)
+  {
+    switch (rhs) {
+      case VK_FORMAT_B8G8R8A8_SRGB:
+        return Node("b8g8r8a8_srgb");
+      case VK_FORMAT_R8G8B8A8_UNORM:
+        return Node("r8g8b8a8_unorm");
+      case VK_FORMAT_D32_SFLOAT:
+        return Node("d32_sfloat");
+      case VK_FORMAT_D24_UNORM_S8_UINT:
+        return Node("d24_unorm_s8");
+      default:
+        assert(false && "Unsupported format");
+    }
+    return Node{};
+  }
+
+  static bool decode(const Node& node, VkFormat& rhs)
+  {
+    const auto format_str = node.as<std::string>();
+    if (format_str == "b8g8r8a8_srgb")
+      rhs = VK_FORMAT_B8G8R8A8_SRGB;
+    else if (format_str == "r8g8b8a8_unorm")
+      rhs = VK_FORMAT_R8G8B8A8_UNORM;
+    else if (format_str == "d32_sfloat")
+      rhs = VK_FORMAT_D32_SFLOAT;
+    else if (format_str == "d24_unorm_s8")
+      rhs = VK_FORMAT_D24_UNORM_S8_UINT;
+    else
+      assert(false && "Unsupported format");
+
+    return true;
+  }
+};
 
 template<>
 struct convert<ShaderStageInfo>
@@ -28,6 +67,35 @@ struct convert<ShaderStageInfo>
       info.stage = ShaderStage::miss;
     else
       throw std::runtime_error("Invalid shader stage: " + stage);
+
+    return true;
+  }
+};
+
+template<>
+struct convert<Attachment>
+{
+  static bool decode(const Node& node, Attachment& out)
+  {
+    const auto format_str = node["format"].as<std::string>();
+    if (format_str == "b8g8r8a8_srgb")
+      out.format = VK_FORMAT_B8G8R8A8_SRGB;
+    if (format_str == "b8g8r8a8_unorm")
+      out.format = VK_FORMAT_B8G8R8A8_UNORM;
+    else if (format_str == "r8g8b8a8_unorm")
+      out.format = VK_FORMAT_R8G8B8A8_UNORM;
+    else if (format_str == "d32_sfloat")
+      out.format = VK_FORMAT_D32_SFLOAT;
+    else if (format_str == "d24_unorm_s8")
+      out.format = VK_FORMAT_D24_UNORM_S8_UINT;
+    else
+      assert(false && "Unsupported format");
+
+    if (node["blend_enable"])
+      out.blend_enable = node["blend_enable"].as<bool>();
+
+    if (node["write_mask_rgba"])
+      out.write_mask_rgba = node["write_mask_rgba"].as<bool>();
 
     return true;
   }
@@ -65,7 +133,7 @@ struct convert<VertexAttribute>
     else if (fmt == "vec4")
       rhs.format = VK_FORMAT_R32G32B32A32_SFLOAT;
     else
-      throw std::runtime_error("Unsupported format: " + fmt);
+      assert(false && "Unsupported format");
 
     return true;
   }
@@ -83,19 +151,27 @@ struct convert<PipelineBlueprint>
     rhs.attributes =
       node["vertex_input"]["attributes"].as<std::vector<VertexAttribute>>();
 
-    auto cm = node["rasterization"]["cull_mode"].as<std::string>();
+    auto cm = node["rasterization"]["cull_mode"].as<std::string>("back");
     rhs.cull_mode = cm == "none"    ? VK_CULL_MODE_NONE
                     : cm == "front" ? VK_CULL_MODE_FRONT_BIT
                                     : VK_CULL_MODE_BACK_BIT;
 
-    auto pm = node["rasterization"]["polygon_mode"].as<std::string>();
+    auto pm = node["rasterization"]["polygon_mode"].as<std::string>("fill");
     rhs.polygon_mode = pm == "line"    ? VK_POLYGON_MODE_LINE
                        : pm == "point" ? VK_POLYGON_MODE_POINT
                                        : VK_POLYGON_MODE_FILL;
 
-    rhs.blend_enable = node["blend"]["enable"].as<bool>();
-    rhs.depth_test = node["depth_stencil"]["depth_test"].as<bool>();
-    rhs.depth_write = node["depth_stencil"]["depth_write"].as<bool>();
+    rhs.blend_enable = node["blend"]["enable"].as<bool>(false);
+    rhs.depth_test = node["depth_stencil"]["depth_test"].as<bool>(false);
+    rhs.depth_write = node["depth_stencil"]["depth_write"].as<bool>(false);
+
+    if (node["attachments"])
+      rhs.attachments = node["attachments"].as<std::vector<Attachment>>();
+
+    if (node["depth_stencil"]["format"]) {
+      const auto format = node["depth_stencil"]["format"].as<VkFormat>();
+      rhs.depth_attachment = Attachment{ .format = format };
+    }
     return true;
   }
 };

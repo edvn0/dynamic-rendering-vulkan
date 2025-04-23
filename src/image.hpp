@@ -5,96 +5,101 @@
 #include "image_configuration.hpp"
 
 #include "allocator.hpp"
+#include "sampler_manager.hpp"
 
+#include <bit>
 #include <memory>
-#include <utility>
+#include <vector>
+#include <vulkan/vulkan_core.h>
 
 class Image
 {
+  static inline SamplerManager sampler_manager;
+
 public:
+  static auto init_sampler_cache(const Device& device) -> void
+  {
+    sampler_manager.initialize(device);
+  }
+  static auto destroy_samplers() -> void { sampler_manager.destroy_all(); }
+
   static auto create(const Device& device, const ImageConfiguration& config)
     -> std::unique_ptr<Image>
   {
-    VkImageCreateInfo image_info{
-        .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
-        .imageType = VK_IMAGE_TYPE_2D,
-        .format = config.format,
-        .extent =
-            {
-                config.extent.width,
-                config.extent.height,
-                1,
-            },
-        .mipLevels = 1,
-        .arrayLayers = 1,
-        .samples = VK_SAMPLE_COUNT_1_BIT,
-        .tiling = VK_IMAGE_TILING_OPTIMAL,
-        .usage =
-            VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-        .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
-    };
-
-    VmaAllocationCreateInfo alloc_info{};
-    alloc_info.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
-
-    VkImage image{};
-    VmaAllocation allocation{};
-    vmaCreateImage(device.get_allocator().get(),
-                   &image_info,
-                   &alloc_info,
-                   &image,
-                   &allocation,
-                   nullptr);
-
-    VkImageViewCreateInfo view_info{
-        .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
-        .image = image,
-        .viewType = VK_IMAGE_VIEW_TYPE_2D,
-        .format = config.format,
-        .subresourceRange =
-            {
-                .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-                .baseMipLevel = 0,
-                .levelCount = 1,
-                .baseArrayLayer = 0,
-                .layerCount = 1,
-            },
-    };
-
-    VkImageView view{};
-    vkCreateImageView(device.get_device(), &view_info, nullptr, &view);
-
-    return std::unique_ptr<Image>(
-      new Image(image, view, allocation, config.extent, device));
+    auto img = std::unique_ptr<Image>(new Image(device,
+                                                config.format,
+                                                config.extent,
+                                                config.mip_levels,
+                                                config.array_layers,
+                                                config.usage,
+                                                config.aspect));
+    img->recreate();
+    return img;
   }
 
-  ~Image()
+  ~Image() { destroy(); }
+
+  auto get_view() const -> VkImageView { return default_view; }
+  auto get_sampler() const -> const VkSampler&;
+  template<typename T>
+  auto get_texture_id() const -> T
   {
-    vkDestroyImageView(device->get_device(), view, nullptr);
-    vmaDestroyImage(device->get_allocator().get(), image, allocation);
+    return std::bit_cast<T>(texture_implementation_pointer);
   }
+  auto get_mip_layer_view(uint32_t mip, uint32_t layer) const -> VkImageView
+  {
+    return mip_layer_views[layer * mip_levels + mip];
+  }
+  auto get_image() const -> VkImage { return image; }
 
-  auto get_view() const -> VkImageView { return view; }
   auto width() const -> uint32_t { return extent.width; }
   auto height() const -> uint32_t { return extent.height; }
+  auto layers() const -> uint32_t { return array_layers; }
+  auto mips() const -> uint32_t { return mip_levels; }
+
+  void resize(uint32_t new_width, uint32_t new_height)
+  {
+    extent.width = new_width;
+    extent.height = new_height;
+    std::cout << "Resizing image to: " << new_width << "x" << new_height
+              << std::endl;
+    recreate();
+  }
 
 private:
-  Image(VkImage img,
-        VkImageView v,
-        VmaAllocation alloc,
+  Image(const Device& dev,
+        VkFormat fmt,
         Extent2D ext,
-        const Device& dev)
-    : image(img)
-    , view(v)
-    , allocation(alloc)
-    , extent(ext)
+        uint32_t mips,
+        uint32_t layers,
+        VkImageUsageFlags usage_flags,
+        VkImageAspectFlags aspect_flags)
+    : extent(ext)
+    , mip_levels(mips)
+    , array_layers(layers)
     , device(&dev)
+    , format(fmt)
+    , usage(usage_flags)
+    , aspect(aspect_flags)
   {
   }
 
+  auto recreate() -> void;
+  auto destroy() -> void;
+
   VkImage image{};
-  VkImageView view{};
+  VkImageView default_view{};
+  VkSampler sampler{};
+  std::vector<VkImageView> mip_layer_views{};
   VmaAllocation allocation{};
   Extent2D extent{};
-  const Device* device;
+  uint32_t mip_levels{};
+  uint32_t array_layers{};
+  const Device* device{};
+  VkFormat format{};
+  VkImageUsageFlags usage{};
+  VkImageAspectFlags aspect{};
+
+  // For UI systems.
+  std::uint64_t texture_implementation_pointer{};
 };

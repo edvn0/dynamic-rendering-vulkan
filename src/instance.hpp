@@ -5,6 +5,7 @@
 
 namespace Core {
 
+#ifndef NDEBUG
 static auto
 debug_callback(VkDebugUtilsMessageSeverityFlagBitsEXT,
                VkDebugUtilsMessageTypeFlagsEXT,
@@ -14,6 +15,7 @@ debug_callback(VkDebugUtilsMessageSeverityFlagBitsEXT,
   std::cerr << "Validation layer: " << callback_data->pMessage << "\n";
   return VK_FALSE;
 }
+#endif
 
 class Instance
 {
@@ -21,12 +23,18 @@ public:
   static auto create()
   {
     vkb::InstanceBuilder builder;
+#ifndef NDEBUG
     auto result = builder.set_app_name("Example Vulkan Application")
                     .request_validation_layers()
                     .require_api_version(1, 3)
                     .use_default_debug_messenger()
                     .set_debug_callback(debug_callback)
                     .build();
+#else
+    auto result = builder.set_app_name("Example Vulkan Application")
+                    .require_api_version(1, 3)
+                    .build();
+#endif
     if (!result) {
       std::cerr << "Failed to create Vulkan instance: "
                 << result.error().message() << "\n";

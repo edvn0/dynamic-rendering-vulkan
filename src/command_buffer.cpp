@@ -210,12 +210,6 @@ CommandBuffer::reset_pool() const
   vkResetCommandPool(device->get_device(), command_pool, 0);
 }
 
-void
-CommandBuffer::reset_command_buffer(uint32_t frame_index) const
-{
-  vkResetCommandBuffer(command_buffers[frame_index], 0);
-}
-
 VkFence
 CommandBuffer::get_fence(uint32_t frame_index) const
 {

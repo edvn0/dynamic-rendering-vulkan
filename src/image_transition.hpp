@@ -55,13 +55,15 @@ cmd_transition_to_color_attachment(
     VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT) noexcept -> void
 {
   cmd_transition_image(cmd,
-                       { image,
+                       {
+                         image,
                          VK_IMAGE_LAYOUT_UNDEFINED,
                          VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
                          0u,
                          VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
                          src_stage,
-                         dst_stage });
+                         dst_stage,
+                       });
 }
 
 inline auto
@@ -74,13 +76,36 @@ cmd_transition_to_present(VkCommandBuffer cmd,
   -> void
 {
   cmd_transition_image(cmd,
-                       { image,
+                       {
+                         image,
                          VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
                          VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
                          VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
                          VK_ACCESS_MEMORY_READ_BIT,
                          src_stage,
-                         dst_stage });
+                         dst_stage,
+                       });
+}
+
+inline auto
+cmd_transition_to_shader_read(VkCommandBuffer cmd,
+                              VkImage image,
+                              VkPipelineStageFlags src_stage =
+                                VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                              VkPipelineStageFlags dst_stage =
+                                VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT) noexcept
+  -> void
+{
+  cmd_transition_image(cmd,
+                       {
+                         image,
+                         VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                         VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                         VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+                         VK_ACCESS_SHADER_READ_BIT,
+                         src_stage,
+                         dst_stage,
+                       });
 }
 
 } // namespace CoreUtils

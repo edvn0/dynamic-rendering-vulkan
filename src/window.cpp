@@ -117,6 +117,17 @@ Window::framebuffer_resized() const -> bool
 }
 
 auto
+Window::framebuffer_size() const -> std::pair<std::uint32_t, std::uint32_t>
+{
+  int width, height;
+  glfwGetFramebufferSize(glfw_window, &width, &height);
+  return {
+    static_cast<std::uint32_t>(width),
+    static_cast<std::uint32_t>(height),
+  };
+}
+
+auto
 Window::should_close() const -> bool
 {
   return glfwWindowShouldClose(glfw_window);

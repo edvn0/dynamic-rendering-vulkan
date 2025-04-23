@@ -186,20 +186,62 @@ PipelineFactory::create_pipeline(const PipelineBlueprint& blueprint)
     .pDynamicStates = dynamic_states.data(),
   };
 
+  VkPipelineViewportStateCreateInfo viewport_state{
+    .sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO,
+    .pNext = nullptr,
+    .flags = 0,
+    .viewportCount = 1,
+    .pViewports = nullptr,
+    .scissorCount = 1,
+    .pScissors = nullptr,
+  };
+
+  VkPipelineMultisampleStateCreateInfo multisample_state{
+    .sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
+    .pNext = nullptr,
+    .flags = 0,
+    .rasterizationSamples = VK_SAMPLE_COUNT_1_BIT,
+    .sampleShadingEnable = VK_FALSE,
+    .minSampleShading = 0.0f,
+    .pSampleMask = nullptr,
+    .alphaToCoverageEnable = VK_FALSE,
+    .alphaToOneEnable = VK_FALSE,
+  };
+
+  std::vector<VkFormat> color_attachment_formats;
+  for (const auto& attachment : blueprint.attachments)
+    if (attachment.is_color())
+      color_attachment_formats.push_back(attachment.format);
+
+  VkFormat depth_format = VK_FORMAT_UNDEFINED;
+  if (blueprint.depth_attachment.has_value())
+    depth_format = blueprint.depth_attachment->format;
+
+  VkPipelineRenderingCreateInfo rendering_info{
+    .sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO,
+    .pNext = nullptr,
+    .viewMask = 0,
+    .colorAttachmentCount =
+      static_cast<uint32_t>(color_attachment_formats.size()),
+    .pColorAttachmentFormats = color_attachment_formats.data(),
+    .depthAttachmentFormat = depth_format,
+    .stencilAttachmentFormat = VK_FORMAT_UNDEFINED,
+  };
+
   VkPipelineLayout layout = create_pipeline_layout(blueprint);
 
   VkGraphicsPipelineCreateInfo pipeline_info{
     .sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
-    .pNext = nullptr,
+    .pNext = &rendering_info,
     .flags = 0,
     .stageCount = static_cast<uint32_t>(shader_infos.size()),
     .pStages = shader_infos.data(),
     .pVertexInputState = &vertex_input,
     .pInputAssemblyState = &input_assembly,
     .pTessellationState = nullptr,
-    .pViewportState = nullptr,
+    .pViewportState = &viewport_state,
     .pRasterizationState = &rasterizer,
-    .pMultisampleState = nullptr,
+    .pMultisampleState = &multisample_state,
     .pDepthStencilState = &depth_stencil,
     .pColorBlendState = &color_blend,
     .pDynamicState = &dynamic_state,

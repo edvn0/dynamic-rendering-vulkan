@@ -53,7 +53,6 @@ public:
   VkCommandBuffer get(std::uint32_t frame_index) const;
   VkQueryPool get_query_pool(std::uint32_t frame_index) const;
   auto reset_pool() const -> void;
-  auto reset_command_buffer(std::uint32_t frame_index) const -> void;
   VkFence get_fence(std::uint32_t frame_index) const;
   auto wait_for_fence(std::uint32_t frame_index) const -> void;
   auto reset_fence(std::uint32_t frame_index) const -> void;
@@ -62,7 +61,7 @@ public:
   {
     wait_for_fence(frame_index);
     reset_fence(frame_index);
-    reset_pool();
+    vkResetCommandBuffer(get(frame_index), 0);
     begin(frame_index);
     reset_query_pool(frame_index);
     timer_sections[frame_index].clear();

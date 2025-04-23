@@ -2,8 +2,8 @@
     "files.associations": {
         "*.frag": "hlsl",
         "*.vert": "hlsl",
-        "*.glsl": "c",
         "*.shd": "glsl",
+        "*.glsl": "c",
         "algorithm": "cpp",
         "chrono": "cpp",
         "vector": "cpp",
@@ -77,7 +77,13 @@
         "shared_mutex": "cpp",
         "span": "cpp",
         "unordered_set": "cpp",
-        "filesystem": "cpp"
+        "filesystem": "cpp",
+        "codecvt": "cpp",
+        "expected": "cpp",
+        "map": "cpp",
+        "set": "cpp",
+        "valarray": "cpp",
+        "xtree": "cpp"
     },
     "sonarlint.pathToCompileCommands": "${workspaceFolder}\\compile_commands.json"
 }

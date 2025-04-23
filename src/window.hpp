@@ -23,6 +23,7 @@ public:
   auto window() -> auto* { return glfw_window; }
   auto surface() const -> VkSurfaceKHR { return vk_surface; }
   auto framebuffer_resized() const -> bool;
+  auto framebuffer_size() const -> std::pair<std::uint32_t, std::uint32_t>;
   auto close() -> void;
   auto set_resize_flag(bool flag) -> void;
   auto should_close() const -> bool;

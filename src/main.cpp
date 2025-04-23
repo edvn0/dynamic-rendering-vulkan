@@ -5,6 +5,7 @@
 #include <iostream>
 #include <memory>
 #include <thread>
+#include <vulkan/vulkan_core.h>
 
 #include "command_buffer.hpp"
 #include "device.hpp"
@@ -12,6 +13,7 @@
 #include "gui_system.hpp"
 #include "image.hpp"
 #include "image_transition.hpp"
+#include "imgui_impl_vulkan.h"
 #include "instance.hpp"
 #include "pipeline/blueprint_registry.hpp"
 #include "pipeline/pipeline_factory.hpp"
@@ -47,6 +49,7 @@ struct ILayer
   virtual auto on_interface() -> void = 0;
   virtual auto on_update(double delta_time) -> void = 0;
   virtual auto on_render(std::uint32_t frame_index) -> void = 0;
+  virtual auto on_resize(std::uint32_t width, std::uint32_t height) -> void = 0;
 };
 
 struct Vertex
@@ -67,117 +70,134 @@ struct Vertex
   };
 };
 
-auto
-main(int, char**) -> std::int32_t
+struct Layer final : public ILayer
 {
-  auto instance = Core::Instance::create();
-  Window window;
-  window.create_surface(instance);
-  auto device = Device::create(instance, window.surface());
+  std::unique_ptr<CommandBuffer> command_buffer;
+  std::unique_ptr<Image> offscreen_image;
+  std::unique_ptr<GPUBuffer> vertex_buffer;
+  std::unique_ptr<IndexBuffer> index_buffer;
+  CompiledPipeline pipeline;
 
-  BlueprintRegistry blueprint_registry;
-  blueprint_registry.load_from_directory("assets/blueprints");
-  PipelineFactory pipeline_factory(device);
-
-  GUISystem gui_system(instance, device, window);
-  Swapchain swapchain(device, window);
-
-  struct Layer final : public ILayer
+  explicit Layer(const Device& dev, const Window& window, CompiledPipeline p)
+    : command_buffer(
+        CommandBuffer::create(dev,
+                              VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT))
+    , pipeline(std::move(p))
   {
-    std::unique_ptr<CommandBuffer> command_buffer;
-    std::unique_ptr<Image> offscreen_image;
-    std::unique_ptr<GPUBuffer> vertex_buffer;
-    CompiledPipeline pipeline;
 
-    explicit Layer(const Device& dev, CompiledPipeline p)
-      : command_buffer(CommandBuffer::create(dev))
-      , pipeline(std::move(p))
+    offscreen_image = Image::create(dev,
+                                    ImageConfiguration{
+                                      .extent = window.framebuffer_size(),
+                                      .format = VK_FORMAT_B8G8R8A8_UNORM,
+                                    });
+
+    vertex_buffer = std::make_unique<GPUBuffer>(
+      dev,
+      VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+      true);
+
+    std::array<Vertex, 4> square_vertices = {
+      Vertex{
+        .pos = { -0.5f, -0.5f, 0.f },
+        .normal = { 0.f, 0.f, 1.f },
+        .uv = { 0.f, 0.f },
+      },
+      Vertex{
+        .pos = { 0.5f, -0.5f, 0.f },
+        .normal = { 0.f, 0.f, 1.f },
+        .uv = { 1.f, 0.f },
+      },
+      Vertex{
+        .pos = { 0.5f, 0.5f, 0.f },
+        .normal = { 0.f, 0.f, 1.f },
+        .uv = { 1.f, 1.f },
+      },
+      Vertex{
+        .pos = { -0.5f, 0.5f, 0.f },
+        .normal = { 0.f, 0.f, 1.f },
+        .uv = { 0.f, 1.f },
+      },
+    };
+    vertex_buffer->upload(std::span(square_vertices));
+
+    index_buffer = std::make_unique<IndexBuffer>(dev);
+    std::array<std::uint32_t, 6> square_indices = {
+      0, 1, 2, 2, 3, 0,
+    };
+    index_buffer->upload(std::span(square_indices));
+  }
+
+  auto on_event(Event& event) -> bool override
+  {
+    EventDispatcher dispatch(event);
+    dispatch.dispatch<MouseButtonPressedEvent>([](auto&) { return true; });
+    dispatch.dispatch<KeyPressedEvent>([](auto&) { return true; });
+    dispatch.dispatch<WindowCloseEvent>([](auto&) { return true; });
+    return false;
+  }
+
+  auto on_interface() -> void override
+  {
+    static constexpr auto window = [](const std::string_view name, auto&& fn) {
+      ImGui::Begin(name.data());
+      fn();
+      ImGui::End();
+    };
+
+    static bool show_demo = true;
+    ImGui::ShowDemoWindow(&show_demo);
+
+    static float f = 0.0f;
+    static ImVec4 clr = { 0.2f, 0.3f, 0.4f, 1.0f };
+    window("Controls", [] {
+      ImGui::Text("Adjust settings:");
+      ImGui::Checkbox("Demo Window", &show_demo);
+      ImGui::SliderFloat("Float", &f, 0.0f, 1.0f);
+      ImGui::ColorEdit3("Clear Color", std::bit_cast<float*>(&clr));
+    });
+
+    window("Offscreen Pass", [&offscreen_image = *offscreen_image] {
+      auto size = ImGui::GetContentRegionAvail();
+      ImGui::Image(offscreen_image.get_texture_id<ImTextureID>(), size);
+    });
+
+    window("GPU Timers", [&cmd = *command_buffer] {
+      auto timers = cmd.resolve_timers(0);
+      ImGui::Text("GPU Timers");
+      for (const auto& timer : timers) {
+        ImGui::Text("%s: %.3d ns",
+                    timer.name.c_str(),
+                    static_cast<std::int32_t>(timer.duration_ns()));
+      }
+    });
+  }
+  auto on_update(double) -> void override {}
+  auto on_render(std::uint32_t frame_index) -> void override
+  {
+    command_buffer->begin_frame(frame_index);
+    command_buffer->begin_timer(frame_index, "geometry_pass");
+
     {
+      const VkCommandBuffer cmd = command_buffer->get(frame_index);
+      CoreUtils::cmd_transition_to_color_attachment(
+        cmd, offscreen_image->get_image());
 
-      offscreen_image = Image::create(dev,
-                                      ImageConfiguration{
-                                        .extent = { 800, 600 },
-                                        .format = VK_FORMAT_B8G8R8A8_SRGB,
-                                      });
+      VkClearValue clear_value = { .color = { { 0.f, 0.f, 0.f, 0.f } } };
 
-      vertex_buffer = std::make_unique<GPUBuffer>(
-        dev,
-        VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-        true);
-
-      std::array<Vertex, 3> vertices = {
-        Vertex{ { 0.f, 0.f, 0.f }, { 0.f, 0.f, 1.f }, { 0.f, 0.f } },
-        Vertex{ { 1.f, 0.f, 0.f }, { 0.f, 0.f, 1.f }, { 1.f, 0.f } },
-        Vertex{ { 0.5f, 1.f, 0.f }, { 0.f, 0.f, 1.f }, { 0.5f, 1.f } },
+      VkRenderingAttachmentInfo color_attachment{
+        .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+        .pNext = nullptr,
+        .imageView = offscreen_image->get_view(),
+        .imageLayout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
+        .resolveMode = VK_RESOLVE_MODE_NONE,
+        .resolveImageView = VK_NULL_HANDLE,
+        .resolveImageLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+        .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+        .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+        .clearValue = clear_value,
       };
-      vertex_buffer->upload(std::span(vertices));
-    }
 
-    auto on_event(Event& event) -> bool override
-    {
-      EventDispatcher dispatch(event);
-      dispatch.dispatch<MouseButtonPressedEvent>([](auto&) { return true; });
-      dispatch.dispatch<KeyPressedEvent>([](auto&) { return true; });
-      dispatch.dispatch<WindowCloseEvent>([](auto&) { return true; });
-      return false;
-    }
-
-    auto on_interface() -> void override
-    {
-      static constexpr auto window = [](const std::string_view name,
-                                        auto&& fn) {
-        ImGui::Begin(name.data());
-        fn();
-        ImGui::End();
-      };
-
-      static bool show_demo = true;
-      ImGui::ShowDemoWindow(&show_demo);
-
-      static float f = 0.0f;
-      static ImVec4 clr = { 0.2f, 0.3f, 0.4f, 1.0f };
-      window("Controls", [] {
-        ImGui::Text("Adjust settings:");
-        ImGui::Checkbox("Demo Window", &show_demo);
-        ImGui::SliderFloat("Float", &f, 0.0f, 1.0f);
-        ImGui::ColorEdit3("Clear Color", std::bit_cast<float*>(&clr));
-      });
-
-      window("GPU Timers", [&cmd = *command_buffer] {
-        auto timers = cmd.resolve_timers(0);
-        ImGui::Text("GPU Timers");
-        for (const auto& timer : timers) {
-          ImGui::Text("%s: %.3d ns",
-                      timer.name.c_str(),
-                      static_cast<std::int32_t>(timer.duration_ns()));
-        }
-      });
-    }
-    auto on_update(double) -> void override {}
-    auto on_render(std::uint32_t frame_index) -> void override
-    {
-      command_buffer->begin_frame(frame_index);
-      command_buffer->begin_timer(frame_index, "geometry_pass");
-
-      {
-        const VkCommandBuffer cmd = command_buffer->get(frame_index);
-
-        VkClearValue clear_value = { .color = { { 0.f, 0.f, 0.f, 1.f } } };
-
-        VkRenderingAttachmentInfo color_attachment{
-          .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
-          .pNext = nullptr,
-          .imageView = offscreen_image->get_view(),
-          .imageLayout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
-          .resolveMode = VK_RESOLVE_MODE_NONE,
-          .resolveImageView = VK_NULL_HANDLE,
-          .resolveImageLayout = VK_IMAGE_LAYOUT_UNDEFINED,
-          .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
-          .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
-          .clearValue = clear_value,
-        };
-
-        VkRenderingInfo render_info{
+      VkRenderingInfo render_info{
             .sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
             .pNext = nullptr,
             .flags = 0,
@@ -198,36 +218,76 @@ main(int, char**) -> std::int32_t
             .pStencilAttachment = nullptr,
         };
 
-        vkCmdBeginRendering(cmd, &render_info);
-        vkCmdBindPipeline(
-          cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.pipeline);
-        auto offsets = std::array<VkDeviceSize, 1>{ 0 };
-        const std::array<VkBuffer, 1> vertex_buffers{
-          vertex_buffer->get(),
-        };
-        vkCmdBindVertexBuffers(
-          cmd,
-          0,
-          static_cast<std::uint32_t>(vertex_buffers.size()),
-          vertex_buffers.data(),
-          offsets.data());
-        vkCmdDraw(cmd, 3, 1, 0, 0);
-        vkCmdEndRendering(cmd);
-      }
+      vkCmdBeginRendering(cmd, &render_info);
+      vkCmdBindPipeline(
+        cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.pipeline);
+      auto offsets = std::array<VkDeviceSize, 1>{
+        0,
+      };
+      const std::array<VkBuffer, 1> vertex_buffers{
+        vertex_buffer->get(),
+      };
+      VkViewport viewport{
+        .x = 0.f,
+        .y = static_cast<float>(offscreen_image->height()),
+        .width = static_cast<float>(offscreen_image->width()),
+        .height = -static_cast<float>(offscreen_image->height()),
+        .minDepth = 0.f,
+        .maxDepth = 1.f,
+      };
+      vkCmdSetViewport(cmd, 0, 1, &viewport);
+      vkCmdSetScissor(cmd, 0, 1, &render_info.renderArea);
+      vkCmdBindVertexBuffers(cmd,
+                             0,
+                             static_cast<std::uint32_t>(vertex_buffers.size()),
+                             vertex_buffers.data(),
+                             offsets.data());
 
-      command_buffer->end_timer(frame_index, "geometry_pass");
-      command_buffer->begin_timer(frame_index, "gui_pass");
+      vkCmdBindIndexBuffer(
+        cmd, index_buffer->get(), 0, index_buffer->get_index_type());
+      vkCmdDrawIndexed(
+        cmd, static_cast<std::uint32_t>(index_buffer->get_count()), 1, 0, 0, 0);
+      vkCmdEndRendering(cmd);
 
-      // ...record GUI draw calls
-
-      command_buffer->end_timer(frame_index, "gui_pass");
-      command_buffer->submit_and_end(frame_index);
+      CoreUtils::cmd_transition_to_shader_read(cmd,
+                                               offscreen_image->get_image());
     }
-  };
+
+    command_buffer->end_timer(frame_index, "geometry_pass");
+    command_buffer->begin_timer(frame_index, "gui_pass");
+
+    // ...record GUI draw calls
+
+    command_buffer->end_timer(frame_index, "gui_pass");
+    command_buffer->submit_and_end(frame_index);
+  }
+
+  auto on_resize(std::uint32_t width, std::uint32_t height) -> void override
+  {
+    offscreen_image->resize(width, height);
+  }
+};
+
+auto
+main(int, char**) -> std::int32_t
+{
+  auto instance = Core::Instance::create();
+  Window window;
+  window.create_surface(instance);
+  auto device = Device::create(instance, window.surface());
+  Image::init_sampler_cache(device);
+
+  BlueprintRegistry blueprint_registry;
+  blueprint_registry.load_from_directory("assets/blueprints");
+  PipelineFactory pipeline_factory(device);
+
+  GUISystem gui_system(instance, device, window);
+  Swapchain swapchain(device, window);
 
   std::vector<std::unique_ptr<ILayer>> layers;
   layers.emplace_back(std::make_unique<Layer>(
     device,
+    window,
     pipeline_factory.create_pipeline(blueprint_registry.get("main_geometry"))));
 
   auto event_callback = [&w = window, &layer_stack = layers](Event& event) {
@@ -263,7 +323,6 @@ main(int, char**) -> std::int32_t
         break;
     } */
   };
-
   window.set_event_callback(std::move(event_callback));
 
   FrametimeCalculator timer;
@@ -277,6 +336,10 @@ main(int, char**) -> std::int32_t
     timer.start();
     if (window.framebuffer_resized()) {
       swapchain.request_recreate(window);
+      auto&& [width, height] = window.framebuffer_size();
+      for (auto& layer : layers) {
+        layer->on_resize(width, height);
+      }
       window.set_resize_flag(false);
     }
 
@@ -293,6 +356,7 @@ main(int, char**) -> std::int32_t
   }
 
   vkDeviceWaitIdle(device.get_device());
+  Image::destroy_samplers();
   layers.clear();
 
   return 0;

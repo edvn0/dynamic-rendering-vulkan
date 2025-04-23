@@ -6,12 +6,12 @@ shaders:
     path: geometry.frag.spv
 
 rasterization:
-  cull_mode: "back"
-  polygon_mode: "fill"
+  cull_mode: back
 
 depth_stencil:
   depth_test: true
   depth_write: true
+  format: d32_sfloat
 
 blend:
   enable: false
@@ -34,3 +34,8 @@ vertex_input:
       binding: 0
       format: vec2
       offset: 24
+
+attachments:
+  - format: b8g8r8a8_unorm
+    blend_enable: false
+    write_mask_rgba: true
