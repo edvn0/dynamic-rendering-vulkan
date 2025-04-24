@@ -28,3 +28,52 @@ if(MSVC)
 else()
     target_compile_options(${PROJECT_NAME} PRIVATE -Wall -Wextra -Werror)
 endif()
+
+function(GENERATE_SHADERS)
+    set(SHADER_SOURCE_DIR ${CMAKE_SOURCE_DIR}/assets/shaders)
+    set(SHADER_BINARY_DIR ${CMAKE_BINARY_DIR}/assets/shaders)
+
+    file(GLOB_RECURSE GLSL_SHADERS
+      ${SHADER_SOURCE_DIR}/*.vert
+      ${SHADER_SOURCE_DIR}/*.frag
+      ${SHADER_SOURCE_DIR}/*.comp
+    )
+
+    set(COMPILED_SHADERS "")
+    foreach(GLSL ${GLSL_SHADERS})
+      get_filename_component(FILE_NAME ${GLSL} NAME)
+      set(SPIRV ${SHADER_BINARY_DIR}/${FILE_NAME}.spv)
+      add_custom_command(
+        OUTPUT ${SPIRV}
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${SHADER_BINARY_DIR}
+        COMMAND glslangValidator -V ${GLSL} -o ${SPIRV} -gVS
+        DEPENDS ${GLSL}
+        COMMENT "Compiling shader ${FILE_NAME}"
+        VERBATIM
+      )
+      list(APPEND COMPILED_SHADERS ${SPIRV})
+    endforeach()
+
+    add_custom_target(CompileShaders ALL DEPENDS ${COMPILED_SHADERS})
+    add_dependencies(${PROJECT_NAME} CompileShaders)
+endfunction(GENERATE_SHADERS)
+
+function (COPY_BLUEPRINTS)
+    set(BLUEPRINT_SOURCE_DIR ${CMAKE_SOURCE_DIR}/assets/blueprints)
+    set(BLUEPRINT_BINARY_DIR ${CMAKE_BINARY_DIR}/assets/blueprints)
+
+    add_custom_command(
+      OUTPUT ${BLUEPRINT_BINARY_DIR}/.copied_marker
+      COMMAND ${CMAKE_COMMAND} -E copy_directory ${BLUEPRINT_SOURCE_DIR} ${BLUEPRINT_BINARY_DIR}
+      COMMAND ${CMAKE_COMMAND} -E touch ${BLUEPRINT_BINARY_DIR}/.copied_marker
+      DEPENDS ${BLUEPRINT_SOURCE_DIR}
+      COMMENT "Copying blueprint YAMLs to output directory"
+    )
+
+    add_custom_target(CopyBlueprints ALL DEPENDS ${BLUEPRINT_BINARY_DIR}/.copied_marker)
+    add_dependencies(${PROJECT_NAME} CopyBlueprints)
+endfunction(COPY_BLUEPRINTS)
+
+GENERATE_SHADERS()
+COPY_BLUEPRINTS()
+

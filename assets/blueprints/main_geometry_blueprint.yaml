@@ -6,7 +6,7 @@ shaders:
     path: geometry.frag.spv
 
 rasterization:
-  cull_mode: back
+  cull_mode: none
 
 depth_stencil:
   depth_test: true
@@ -15,40 +15,6 @@ depth_stencil:
 
 blend:
   enable: false
-
-vertex_input:
-  bindings:
-    - binding: 0
-      stride: 32
-      input_rate: vertex
-    - binding: 1
-      stride: 48
-      input_rate: instance
-  attributes:
-    - location: 0
-      binding: 0
-      format: vec3
-      offset: 0
-    - location: 1
-      binding: 0
-      format: vec3
-      offset: 12
-    - location: 2
-      binding: 0
-      format: vec2
-      offset: 24
-    - location: 3
-      binding: 1
-      format: vec4
-      offset: 0
-    - location: 4
-      binding: 1
-      format: vec4
-      offset: 16
-    - location: 5
-      binding: 1
-      format: vec4
-      offset: 32
 
 attachments:
   - format: b8g8r8a8_unorm

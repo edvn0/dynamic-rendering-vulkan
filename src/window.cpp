@@ -49,6 +49,8 @@ Window::hookup_events() -> void
         d.event_callback(ev);
       }
     });
+
+#ifdef DISABLE_PERFORMANCE
   glfwSetCursorPosCallback(
     glfw_window, +[](GLFWwindow* w, double x, double y) {
       auto const& d =
@@ -56,6 +58,7 @@ Window::hookup_events() -> void
       MouseMovedEvent ev{ x, y };
       d.event_callback(ev);
     });
+#endif
 }
 
 Window::Window()

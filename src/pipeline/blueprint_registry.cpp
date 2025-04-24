@@ -9,7 +9,8 @@ auto
 BlueprintRegistry::load_from_directory(const std::filesystem::path& path)
   -> void
 {
-  for (const auto& entry : std::filesystem::directory_iterator(path)) {
+  const auto assets_path = std::filesystem::current_path() / path;
+  for (const auto& entry : std::filesystem::directory_iterator(assets_path)) {
     if (entry.is_regular_file() && entry.path().extension() == ".yaml") {
       YAML::Node yaml = YAML::LoadFile(entry.path().string());
       PipelineBlueprint blueprint = yaml.as<PipelineBlueprint>();

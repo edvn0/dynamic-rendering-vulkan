@@ -7,6 +7,42 @@
 
 namespace YAML {
 
+inline void
+set_default_vertex_input(PipelineBlueprint& rhs)
+{
+  rhs.bindings = {
+    { .binding = 0, .stride = 32, .input_rate = VK_VERTEX_INPUT_RATE_VERTEX },
+    { .binding = 1, .stride = 48, .input_rate = VK_VERTEX_INPUT_RATE_INSTANCE },
+  };
+
+  rhs.attributes = {
+    { .location = 0,
+      .binding = 0,
+      .format = VK_FORMAT_R32G32B32_SFLOAT,
+      .offset = 0 },
+    { .location = 1,
+      .binding = 0,
+      .format = VK_FORMAT_R32G32B32_SFLOAT,
+      .offset = 12 },
+    { .location = 2,
+      .binding = 0,
+      .format = VK_FORMAT_R32G32_SFLOAT,
+      .offset = 24 },
+    { .location = 3,
+      .binding = 1,
+      .format = VK_FORMAT_R32G32B32A32_SFLOAT,
+      .offset = 0 },
+    { .location = 4,
+      .binding = 1,
+      .format = VK_FORMAT_R32G32B32A32_SFLOAT,
+      .offset = 16 },
+    { .location = 5,
+      .binding = 1,
+      .format = VK_FORMAT_R32G32B32A32_SFLOAT,
+      .offset = 32 },
+  };
+}
+
 template<>
 struct convert<VkFormat>
 {
@@ -153,6 +189,8 @@ struct convert<PipelineBlueprint>
       if (node["vertex_input"]["attributes"])
         rhs.attributes =
           node["vertex_input"]["attributes"].as<std::vector<VertexAttribute>>();
+    } else {
+      set_default_vertex_input(rhs);
     }
 
     if (node["rasterization"]) {

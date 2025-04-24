@@ -8,6 +8,9 @@
 #include <ranges>
 #include <thread>
 #include <vulkan/vulkan.h>
+#include <execution>
+#include <numeric>
+
 
 #include "allocator.hpp"
 #include "camera.hpp"
@@ -29,6 +32,87 @@
 #include "GLFW/glfw3.h"
 #include "VkBootstrap.h"
 #include "imgui.h"
+
+struct Vertex
+{
+  std::array<float, 3> pos{
+    0.f,
+    0.f,
+    0.f,
+  };
+  std::array<float, 3> normal{
+    0.f,
+    0.f,
+    1.f,
+  };
+  std::array<float, 2> uv{
+    0.f,
+    0.f,
+  };
+};
+
+inline auto
+generate_cube(const Device& device)
+  -> std::tuple<std::unique_ptr<GPUBuffer>, std::unique_ptr<IndexBuffer>>
+{
+  std::array<Vertex, 24> vertices = {
+    // Front face (+Z)
+    Vertex{ { -0.5f, -0.5f, 0.5f }, { 0.f, 0.f, 1.f }, { 0.f, 0.f } },
+    Vertex{ { 0.5f, -0.5f, 0.5f }, { 0.f, 0.f, 1.f }, { 1.f, 0.f } },
+    Vertex{ { 0.5f, 0.5f, 0.5f }, { 0.f, 0.f, 1.f }, { 1.f, 1.f } },
+    Vertex{ { -0.5f, 0.5f, 0.5f }, { 0.f, 0.f, 1.f }, { 0.f, 1.f } },
+
+    // Back face (−Z)
+    Vertex{ { 0.5f, -0.5f, -0.5f }, { 0.f, 0.f, -1.f }, { 0.f, 0.f } },
+    Vertex{ { -0.5f, -0.5f, -0.5f }, { 0.f, 0.f, -1.f }, { 1.f, 0.f } },
+    Vertex{ { -0.5f, 0.5f, -0.5f }, { 0.f, 0.f, -1.f }, { 1.f, 1.f } },
+    Vertex{ { 0.5f, 0.5f, -0.5f }, { 0.f, 0.f, -1.f }, { 0.f, 1.f } },
+
+    // Left face (−X)
+    Vertex{ { -0.5f, -0.5f, -0.5f }, { -1.f, 0.f, 0.f }, { 0.f, 0.f } },
+    Vertex{ { -0.5f, -0.5f, 0.5f }, { -1.f, 0.f, 0.f }, { 1.f, 0.f } },
+    Vertex{ { -0.5f, 0.5f, 0.5f }, { -1.f, 0.f, 0.f }, { 1.f, 1.f } },
+    Vertex{ { -0.5f, 0.5f, -0.5f }, { -1.f, 0.f, 0.f }, { 0.f, 1.f } },
+
+    // Right face (+X)
+    Vertex{ { 0.5f, -0.5f, 0.5f }, { 1.f, 0.f, 0.f }, { 0.f, 0.f } },
+    Vertex{ { 0.5f, -0.5f, -0.5f }, { 1.f, 0.f, 0.f }, { 1.f, 0.f } },
+    Vertex{ { 0.5f, 0.5f, -0.5f }, { 1.f, 0.f, 0.f }, { 1.f, 1.f } },
+    Vertex{ { 0.5f, 0.5f, 0.5f }, { 1.f, 0.f, 0.f }, { 0.f, 1.f } },
+
+    // Top face (+Y)
+    Vertex{ { -0.5f, 0.5f, 0.5f }, { 0.f, 1.f, 0.f }, { 0.f, 0.f } },
+    Vertex{ { 0.5f, 0.5f, 0.5f }, { 0.f, 1.f, 0.f }, { 1.f, 0.f } },
+    Vertex{ { 0.5f, 0.5f, -0.5f }, { 0.f, 1.f, 0.f }, { 1.f, 1.f } },
+    Vertex{ { -0.5f, 0.5f, -0.5f }, { 0.f, 1.f, 0.f }, { 0.f, 1.f } },
+
+    // Bottom face (−Y)
+    Vertex{ { -0.5f, -0.5f, -0.5f }, { 0.f, -1.f, 0.f }, { 0.f, 0.f } },
+    Vertex{ { 0.5f, -0.5f, -0.5f }, { 0.f, -1.f, 0.f }, { 1.f, 0.f } },
+    Vertex{ { 0.5f, -0.5f, 0.5f }, { 0.f, -1.f, 0.f }, { 1.f, 1.f } },
+    Vertex{ { -0.5f, -0.5f, 0.5f }, { 0.f, -1.f, 0.f }, { 0.f, 1.f } },
+  };
+
+  std::array<std::uint32_t, 36> indices = {
+    0,  1,  2,  2,  3,  0,  // front
+    4,  5,  6,  6,  7,  4,  // back
+    8,  9,  10, 10, 11, 8,  // left
+    12, 13, 14, 14, 15, 12, // right
+    16, 17, 18, 18, 19, 16, // top
+    20, 21, 22, 22, 23, 20  // bottom
+  };
+
+  auto vertex_buffer = std::make_unique<GPUBuffer>(
+    device,
+    VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+    true);
+  vertex_buffer->upload(std::span(vertices));
+
+  auto index_buffer = std::make_unique<IndexBuffer>(device);
+  index_buffer->upload(std::span(indices));
+
+  return { std::move(vertex_buffer), std::move(index_buffer) };
+}
 
 struct FrametimeCalculator
 {
@@ -59,30 +143,15 @@ struct ILayer
   virtual auto on_resize(std::uint32_t, std::uint32_t) -> void = 0;
 };
 
-struct Vertex
-{
-  std::array<float, 3> pos{
-    0.f,
-    0.f,
-    0.f,
-  };
-  std::array<float, 3> normal{
-    0.f,
-    0.f,
-    1.f,
-  };
-  std::array<float, 2> uv{
-    0.f,
-    0.f,
-  };
-};
-
 struct Layer final : public ILayer
 {
   std::unique_ptr<GPUBuffer> vertex_buffer;
   std::unique_ptr<IndexBuffer> index_buffer;
+  std::unique_ptr<GPUBuffer> cube_vertex_buffer;
+  std::unique_ptr<IndexBuffer> cube_index_buffer;
   std::vector<glm::mat4> transforms{};
   glm::vec2 bounds{ 0.F };
+  float rotation_speed = 3.6f;
 
   auto on_destroy() -> void override
   {
@@ -128,6 +197,10 @@ struct Layer final : public ILayer
     index_buffer->upload(std::span(square_indices));
 
     transforms.resize(100'000);
+
+    auto&& [cube_vertex, cube_index] = generate_cube(dev);
+    cube_vertex_buffer = std::move(cube_vertex);
+    cube_index_buffer = std::move(cube_index);
   }
 
   auto on_event(Event& event) -> bool override
@@ -147,27 +220,33 @@ struct Layer final : public ILayer
       ImGui::End();
     };
 
-    static float f = 0.0f;
     static ImVec4 clr = { 0.2f, 0.3f, 0.4f, 1.0f };
-    window("Controls", [] {
+    window("Controls", [&rs = rotation_speed] {
       ImGui::Text("Adjust settings:");
-      ImGui::SliderFloat("Float", &f, 0.0f, 1.0f);
       ImGui::ColorEdit3("Clear Color", std::bit_cast<float*>(&clr));
+      ImGui::SliderFloat("Rotation Speed", &rs, 0.1f, 150.0f);
     });
   }
   auto on_update(double ts) -> void override
   {
     static float angle = 0.f;
-    angle += 30.0f * static_cast<float>(ts);
+    angle += rotation_speed * static_cast<float>(ts);
+    angle = std::fmod(angle, 360.f);
 
-    for (std::size_t i = 0; i < transforms.size(); ++i) {
-      const float x = static_cast<float>(i % 10) - 5.f;
-      const float y = static_cast<float>(i) / 10.F - 5.f;
-      transforms[i] =
-        glm::translate(glm::mat4(1.f), { x * 2.f, y * 2.f, 0.f }) *
-        glm::rotate(glm::mat4(1.f), glm::radians(angle), { 0.f, 0.f, 1.f });
-    }
+    std::for_each(
+      std::execution::par_unseq,
+      transforms.begin(),
+      transforms.end(),
+      [root = transforms.data()](glm::mat4& mat) {
+        const std::size_t i = &mat - root;
+        const float x = static_cast<float>(i % 10) - 5.f;
+        const float y = static_cast<float>(i) / 10.F - 5.f;
+        mat =
+          glm::translate(glm::mat4(1.f), { x * 2.f, y * 2.f, 0.f }) *
+          glm::rotate(glm::mat4(1.f), glm::radians(angle), { 0.f, 0.f, 1.f });
+      });
   }
+
   auto on_render(Renderer& renderer) -> void override
   {
     for (const auto& transform : transforms) {
@@ -178,6 +257,13 @@ struct Layer final : public ILayer
         },
         transform);
     }
+
+    renderer.submit(
+      {
+        .vertex_buffer = cube_vertex_buffer.get(),
+        .index_buffer = cube_index_buffer.get(),
+      },
+      transforms.at(0));
   }
 
   auto on_resize(std::uint32_t w, std::uint32_t h) -> void override
@@ -197,7 +283,11 @@ main(int, char**) -> std::int32_t
   Image::init_sampler_cache(device);
 
   BlueprintRegistry blueprint_registry;
-  blueprint_registry.load_from_directory("assets/blueprints");
+  {
+      using fs = std::filesystem::path;
+    blueprint_registry.load_from_directory(fs{ "assets" } /
+                                           fs{ "blueprints" });
+  }
   PipelineFactory pipeline_factory(device);
   ComputePipelineFactory compute_pipeline_factory(device);
 
@@ -210,7 +300,7 @@ main(int, char**) -> std::int32_t
   };
 
   Camera camera;
-  const auto [w, h] = window.framebuffer_size();
+  auto&& [w, h] = window.framebuffer_size();
   camera.set_perspective(60.f, static_cast<float>(w) / h, 0.1f);
   camera.set_view(glm::vec3(0.f, 3.f, -2.f),
                   glm::vec3(0.f, 0.f, 0.f),
@@ -295,8 +385,9 @@ main(int, char**) -> std::int32_t
     }
 
     if (ImGui::Begin("GPU Timers")) {
-      auto& command_buffer = renderer.get_command_buffer();
-      auto& compute_command_buffer = renderer.get_compute_command_buffer();
+      const auto& command_buffer = renderer.get_command_buffer();
+      const auto& compute_command_buffer =
+        renderer.get_compute_command_buffer();
 
       auto raster_timings =
         command_buffer.resolve_timers(swapchain.get_frame_index());
