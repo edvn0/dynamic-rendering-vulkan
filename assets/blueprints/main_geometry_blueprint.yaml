@@ -21,6 +21,9 @@ vertex_input:
     - binding: 0
       stride: 32
       input_rate: vertex
+    - binding: 1
+      stride: 48
+      input_rate: instance
   attributes:
     - location: 0
       binding: 0
@@ -34,6 +37,18 @@ vertex_input:
       binding: 0
       format: vec2
       offset: 24
+    - location: 3
+      binding: 1
+      format: vec4
+      offset: 0
+    - location: 4
+      binding: 1
+      format: vec4
+      offset: 16
+    - location: 5
+      binding: 1
+      format: vec4
+      offset: 32
 
 attachments:
   - format: b8g8r8a8_unorm

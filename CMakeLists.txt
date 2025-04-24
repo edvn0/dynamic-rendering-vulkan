@@ -8,6 +8,7 @@ find_package(Vulkan REQUIRED)
 find_package(glfw3 REQUIRED CONFIG)
 find_package(imguizmo REQUIRED CONFIG)
 find_package(yaml-cpp REQUIRED CONFIG)
+find_package(glm REQUIRED CONFIG)
 
 add_subdirectory(third_party)
 
@@ -15,7 +16,7 @@ add_executable(${PROJECT_NAME} src/main.cpp src/window.cpp src/swapchain.cpp src
     src/pipeline/blueprint_configuration.cpp src/pipeline/blueprint_registry.cpp src/pipeline/shader.cpp src/pipeline/pipeline_factory.cpp
     src/image.cpp src/device.cpp src/gpu_buffer.cpp src/renderer.cpp src/pipeline/compute_pipeline_factory.cpp
 )
-target_link_libraries(${PROJECT_NAME} PRIVATE Vulkan::Vulkan vk-bootstrap::vk-bootstrap glfw imgui imguizmo::imguizmo VulkanMemoryAllocator yaml-cpp)
+target_link_libraries(${PROJECT_NAME} PRIVATE Vulkan::Vulkan glm::glm vk-bootstrap::vk-bootstrap glfw imgui imguizmo::imguizmo VulkanMemoryAllocator yaml-cpp)
 target_include_directories(${PROJECT_NAME} PRIVATE src)
 
 if(MSVC)

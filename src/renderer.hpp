@@ -1,5 +1,6 @@
 #pragma once
 
+#include <glm/glm.hpp>
 #include <memory>
 #include <vector>
 #include <vulkan/vulkan.h>
@@ -15,6 +16,13 @@
 
 class Material
 {};
+
+struct InstanceData
+{
+  glm::vec4 row0;
+  glm::vec4 row1;
+  glm::vec4 row2;
+};
 
 struct DrawCommand
 {
@@ -45,7 +53,7 @@ public:
            const ComputePipelineFactory&,
            const Window&);
   ~Renderer();
-  auto submit(const DrawCommand&) -> void;
+  auto submit(const DrawCommand&, const glm::mat4& = glm::mat4{ 1.0F }) -> void;
   auto end_frame(std::uint32_t) -> void;
   auto resize(std::uint32_t, std::uint32_t) -> void;
   auto get_output_image() const -> const Image&;
@@ -63,6 +71,7 @@ private:
   const Window* window{ nullptr };
 
   std::unique_ptr<CommandBuffer> command_buffer;
+  std::unique_ptr<GPUBuffer> instance_vertex_buffer;
 
   frame_array<VkSemaphore> compute_finished_semaphore{};
   std::unique_ptr<CommandBuffer> compute_command_buffer;
@@ -73,8 +82,8 @@ private:
   CompiledPipeline geometry_pipeline;
   CompiledComputePipeline test_compute_pipeline;
 
-  std::unordered_map<DrawCommand, std::uint32_t, DrawCommandHasher>
-    draw_commands;
+  std::unordered_map<DrawCommand, std::vector<InstanceData>, DrawCommandHasher>
+    draw_commands{};
 
   auto run_compute_pass(std::uint32_t) -> void;
 };

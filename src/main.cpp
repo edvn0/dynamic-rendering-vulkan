@@ -146,10 +146,32 @@ struct Layer final : public ILayer
   {
     for (const auto i : std::views::iota(0, 100)) {
       (void)i;
-      renderer.submit(DrawCommand{
-        .vertex_buffer = vertex_buffer.get(),
-        .index_buffer = index_buffer.get(),
-      });
+
+      const auto small_random_change_mat4_transform = glm::mat4{
+        1.f,
+        0.f,
+        0.f,
+        0.f,
+        0.f,
+        1.f,
+        0.f,
+        0.f,
+        0.f,
+        0.f,
+        1.f,
+        0.f,
+        static_cast<float>(rand() % 100) / 100.0f - 0.5f,
+        static_cast<float>(rand() % 100) / 100.0f - 0.5f,
+        static_cast<float>(rand() % 100) / 100.0f - 0.5f,
+        1.f,
+      };
+
+      renderer.submit(
+        DrawCommand{
+          .vertex_buffer = vertex_buffer.get(),
+          .index_buffer = index_buffer.get(),
+        },
+        small_random_change_mat4_transform);
     }
   }
 

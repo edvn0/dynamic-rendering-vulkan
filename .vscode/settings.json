@@ -2,8 +2,8 @@
     "files.associations": {
         "*.frag": "hlsl",
         "*.vert": "hlsl",
-        "*.shd": "glsl",
         "*.glsl": "c",
+        "*.shd": "glsl",
         "algorithm": "cpp",
         "chrono": "cpp",
         "vector": "cpp",
@@ -83,7 +83,8 @@
         "map": "cpp",
         "set": "cpp",
         "valarray": "cpp",
-        "xtree": "cpp"
+        "xtree": "cpp",
+        "ranges": "cpp"
     },
     "sonarlint.pathToCompileCommands": "${workspaceFolder}\\compile_commands.json"
 }

@@ -3,6 +3,8 @@
 #include <functional>
 #include <memory>
 
+#include <glm/glm.hpp>
+
 Renderer::Renderer(const Device& dev,
                    const BlueprintRegistry& registry,
                    const PipelineFactory& factory,
@@ -40,6 +42,16 @@ Renderer::Renderer(const Device& dev,
     pipeline_factory->create_pipeline(blueprint_registry->get("main_geometry"));
   test_compute_pipeline = compute_pipeline_factory->create_pipeline(
     blueprint_registry->get("test_compute"));
+
+  instance_vertex_buffer =
+    std::make_unique<GPUBuffer>(dev, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, true);
+  // Size this to 48bytes (3 glm::vec4s) * 10000 instances
+  static constexpr auto instance_size = sizeof(glm::vec4) * 3;
+  static constexpr auto instance_count = 10000;
+  static constexpr auto instance_size_bytes = instance_size * instance_count;
+  const auto bytes = std::make_unique<std::byte[]>(instance_size_bytes);
+  instance_vertex_buffer->upload(
+    std::span<std::byte>{ bytes.get(), instance_size_bytes });
 }
 
 Renderer::~Renderer()
@@ -53,9 +65,29 @@ Renderer::~Renderer()
 }
 
 auto
-Renderer::submit(const DrawCommand& command) -> void
+Renderer::submit(const DrawCommand& cmd, const glm::mat4& transform) -> void
 {
-  draw_commands[command]++;
+  draw_commands[cmd].emplace_back(transform[0], transform[1], transform[2]);
+}
+
+static auto
+upload_instance_vertex_data(GPUBuffer& buffer, const auto& draw_commands)
+  -> std::vector<std::pair<DrawCommand, std::uint32_t>>
+{
+  std::vector<InstanceData> flattened_instances;
+  std::vector<std::pair<DrawCommand, std::uint32_t>> flat_draw_commands;
+
+  for (const auto& [cmd, instances] : draw_commands) {
+    flat_draw_commands.emplace_back(
+      cmd, static_cast<std::uint32_t>(flattened_instances.size()));
+    flattened_instances.insert(
+      flattened_instances.end(), instances.begin(), instances.end());
+  }
+
+  buffer.upload(
+    std::span{ flattened_instances.data(), flattened_instances.size() });
+
+  return flat_draw_commands;
 }
 
 auto
@@ -65,6 +97,9 @@ Renderer::end_frame(std::uint32_t frame_index) -> void
     return;
 
   run_compute_pass(frame_index);
+
+  auto flat_draw_commands =
+    upload_instance_vertex_data(*instance_vertex_buffer, draw_commands);
 
   command_buffer->begin_frame(frame_index);
   command_buffer->begin_timer(frame_index, "geometry_pass");
@@ -87,7 +122,7 @@ Renderer::end_frame(std::uint32_t frame_index) -> void
     .sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
     .renderArea = { .offset = { 0, 0 },
                     .extent = { geometry_image->width(),
-                                geometry_image->height() } },
+                                geometry_image->height(), }, },
     .layerCount = 1,
     .colorAttachmentCount = 1,
     .pColorAttachments = &color_attachment
@@ -106,25 +141,42 @@ Renderer::end_frame(std::uint32_t frame_index) -> void
   vkCmdSetViewport(cmd, 0, 1, &viewport);
   vkCmdSetScissor(cmd, 0, 1, &render_info.renderArea);
 
-  for (const auto& [draw, count] : draw_commands) {
-    /* Material* material = draw.override_material
-                           ? draw.override_material
-                           : default_geometry_material.get();
- */
+  for (const auto& [command, offset] : flat_draw_commands) {
+    const auto& geometry_material = command.override_material
+                                      ? command.override_material
+                                      : default_geometry_material.get();
+    (void)geometry_material;
+
+    const auto instance_count =
+      static_cast<std::uint32_t>(draw_commands[command].size());
+
+    const std::array vertex_buffers = {
+      command.vertex_buffer->get(),
+      instance_vertex_buffer->get(),
+    };
+    constexpr std::array<VkDeviceSize, 2> offsets = {
+      0ULL,
+      0ULL,
+    };
+    vkCmdBindVertexBuffers(cmd,
+                           0,
+                           static_cast<std::uint32_t>(vertex_buffers.size()),
+                           vertex_buffers.data(),
+                           offsets.data());
+    vkCmdBindIndexBuffer(cmd,
+                         command.index_buffer->get(),
+                         0,
+                         command.index_buffer->get_index_type());
     vkCmdBindPipeline(
       cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, geometry_pipeline.pipeline);
 
-    const VkBuffer vertex_buffers[] = { draw.vertex_buffer->get() };
-    const VkDeviceSize offsets[] = { 0 };
-    vkCmdBindVertexBuffers(cmd, 0, 1, vertex_buffers, offsets);
-    vkCmdBindIndexBuffer(
-      cmd, draw.index_buffer->get(), 0, draw.index_buffer->get_index_type());
-    vkCmdDrawIndexed(cmd,
-                     static_cast<std::uint32_t>(draw.index_buffer->get_count()),
-                     count,
-                     0,
-                     0,
-                     0);
+    vkCmdDrawIndexed(
+      cmd,
+      static_cast<std::uint32_t>(command.index_buffer->get_count()),
+      instance_count,
+      0,
+      0,
+      offset);
   }
 
   vkCmdEndRendering(cmd);

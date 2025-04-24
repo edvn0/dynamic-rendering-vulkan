@@ -19,7 +19,8 @@ class VulkanAppConan(ConanFile):
         self.requires("glfw/3.4")
         self.requires("imguizmo/1.83")
         self.requires("yaml-cpp/0.8.0")
-
+        self.requires("glm/1.0.1")
+        
     def build(self):
         cmake = CMake(self)
         cmake.configure()
