@@ -88,39 +88,43 @@ main(int, char**) -> std::int32_t
   std::vector<std::unique_ptr<ILayer>> layers;
   layers.emplace_back(std::make_unique<Layer>(device));
 
-  auto event_callback = [&w = window, &layer_stack = layers](Event& event) {
-    EventDispatcher dispatcher(event);
-    if (dispatcher.dispatch<WindowResizeEvent>([&w](auto&) {
-          w.set_resize_flag(true);
-          return true;
-        }))
-      return;
-    if (dispatcher.dispatch<WindowCloseEvent>([&w](auto&) {
-          w.close();
-          return true;
-        }))
-      return;
-    if (dispatcher.dispatch<KeyReleasedEvent>([&w](auto& e) {
-          if (e.key == KeyCode::Escape)
+  auto event_callback =
+    [&w = window, &layer_stack = layers, &camera](Event& event) {
+      EventDispatcher dispatcher(event);
+      if (dispatcher.dispatch<WindowResizeEvent>([&w](auto&) {
+            w.set_resize_flag(true);
+            return true;
+          }))
+        return;
+      if (dispatcher.dispatch<WindowCloseEvent>([&w](auto&) {
             w.close();
-          return true;
-        }))
-      return;
+            return true;
+          }))
+        return;
+      if (dispatcher.dispatch<KeyReleasedEvent>([&w](auto& e) {
+            if (e.key == KeyCode::Escape)
+              w.close();
+            return true;
+          }))
+        return;
 
-    for (auto it = layer_stack.end(); it != layer_stack.begin();) {
-      if ((*--it)->on_event(event))
-        break;
-    }
-    if (event.handled)
-      return;
+      if (camera.on_event(event))
+        return;
 
-    // 3) Any other ad‑hoc callbacks you’ve registered
-    /* for (auto &cb : event_callbacks_) {
-      cb(event);
+      for (auto it = layer_stack.end(); it != layer_stack.begin();) {
+        if ((*--it)->on_event(event))
+          break;
+      }
       if (event.handled)
-        break;
-    } */
-  };
+        return;
+
+      // 3) Any other ad‑hoc callbacks you’ve registered
+      /* for (auto &cb : event_callbacks_) {
+        cb(event);
+        if (event.handled)
+          break;
+      } */
+    };
   window.set_event_callback(std::move(event_callback));
 
   FrametimeCalculator timer;
@@ -145,9 +149,10 @@ main(int, char**) -> std::int32_t
       continue;
     }
 
-    std::ranges::for_each(layers, [&timer](auto& layer) {
-      layer->on_update(timer.end_and_get_delta_ms());
-    });
+    const auto dt = timer.end_and_get_delta_ms();
+
+    camera.on_update(dt);
+    std::ranges::for_each(layers, [&dt](auto& layer) { layer->on_update(dt); });
     std::ranges::for_each(
       layers, [&r = renderer](auto& layer) { layer->on_render(r); });
     renderer.end_frame(
@@ -220,6 +225,8 @@ main(int, char**) -> std::int32_t
   window.destroy(instance);
   device.destroy();
   instance.destroy();
+
+  std::cout << "System could be closed safely" << std::endl;
 
   return 0;
 }

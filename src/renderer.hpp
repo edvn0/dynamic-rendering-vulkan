@@ -127,11 +127,10 @@ private:
 
     auto intersects(const glm::vec3& center, float radius) const -> bool
     {
-      for (const auto& p : planes) {
-        if (glm::dot(glm::vec3(p), center) + p.w + radius < 0.0f)
-          return false;
-      }
-      return true;
+      return std::ranges::none_of(
+        planes, [&c = center, &r = radius](const auto& p) {
+          return glm::dot(glm::vec3(p), c) + p.w + r < 0.0f;
+        });
     }
   };
 

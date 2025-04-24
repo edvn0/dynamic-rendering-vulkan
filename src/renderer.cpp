@@ -208,10 +208,9 @@ Renderer::submit(const DrawCommand& cmd, const glm::mat4& transform) -> void
     return;
 
   glm::quat rotation = glm::quat_cast(transform);
-  glm::vec4 rotation_vec =
-    glm::vec4(rotation.x, rotation.y, rotation.z, rotation.w);
+  auto rotation_vec = glm::vec4(rotation.x, rotation.y, rotation.z, rotation.w);
 
-  glm::vec3 translation = glm::vec3(transform[3]);
+  auto translation = glm::vec3(transform[3]);
   glm::vec3 scale(glm::length(glm::vec3(transform[0])),
                   glm::length(glm::vec3(transform[1])),
                   glm::length(glm::vec3(transform[2])));
@@ -246,7 +245,8 @@ upload_instance_vertex_data(GPUBuffer& buffer, const auto& draw_commands)
 auto
 Renderer::update_uniform_buffers(const glm::mat4& vp) -> void
 {
-  static CameraBuffer buffer{ vp };
+  static CameraBuffer buffer;
+  buffer.vp = vp;
   const std::array buffers{ buffer, buffer, buffer };
   camera_uniform_buffer->upload(std::span(buffers));
 }
@@ -283,6 +283,9 @@ Renderer::end_frame(std::uint32_t frame_index,
     .pNext = nullptr,
     .imageView = geometry_image->get_view(),
     .imageLayout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
+    .resolveMode = VK_RESOLVE_MODE_NONE,
+    .resolveImageView = VK_NULL_HANDLE,
+    .resolveImageLayout = VK_IMAGE_LAYOUT_UNDEFINED,
     .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
     .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
     .clearValue = clear_value
@@ -296,6 +299,9 @@ Renderer::end_frame(std::uint32_t frame_index,
     .pNext = nullptr,
     .imageView = geometry_depth_image->get_view(),
     .imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+    .resolveMode = VK_RESOLVE_MODE_NONE,
+    .resolveImageView = VK_NULL_HANDLE,
+    .resolveImageLayout = VK_IMAGE_LAYOUT_UNDEFINED,
     .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
     .storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
     .clearValue = depth_clear_value
@@ -309,9 +315,11 @@ Renderer::end_frame(std::uint32_t frame_index,
                     .extent = { geometry_image->width(),
                                 geometry_image->height(), }, },
     .layerCount = 1,
+    .viewMask = 0,
     .colorAttachmentCount = 1,
     .pColorAttachments = &color_attachment,
-    .pDepthAttachment = &depth_attachment
+    .pDepthAttachment = &depth_attachment,
+    .pStencilAttachment = nullptr,
   };
 
   vkCmdBeginRendering(cmd, &render_info);

@@ -7,7 +7,7 @@ layout(location = 3) in vec4 transform_rotation;
 layout(location = 4) in vec4 transform_translation_and_scale;
 layout(location = 5) in vec4 transform_non_uniform_scale;
 
-mat3 quaternion_to_matrix(vec4 q);
+mat3 quaternion_to_matrix(vec4);
 mat4 reconstruct_transform_matrix();
 
 layout(location = 0) out vec3 v_normal;
