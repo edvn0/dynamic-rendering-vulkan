@@ -64,3 +64,8 @@ struct PipelineBlueprint
 
   auto hash() const -> std::size_t;
 };
+
+struct PipelineLayoutInfo
+{
+  VkDescriptorSetLayout renderer_set_layout{};
+};

@@ -1,4 +1,6 @@
 #include "device.hpp"
+#include "VkBootstrap.h"
+#include "allocator.hpp"
 #include <cassert>
 
 auto
@@ -169,4 +171,11 @@ Device::transfer_queue() const -> VkQueue
     assert(false && "Failed to get transfer queue");
   }
   return queue_result.value();
+}
+
+auto
+Device::destroy() -> void
+{
+  allocator.reset();
+  vkb::destroy_device(device);
 }

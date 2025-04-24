@@ -29,6 +29,8 @@ public:
   auto should_close() const -> bool;
   auto is_iconified() const -> bool;
 
+  auto destroy(const Core::Instance&) -> void;
+
   auto set_event_callback(std::function<void(Event&)> callback) -> void;
 
 private:

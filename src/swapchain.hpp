@@ -27,10 +27,10 @@ public:
     create_sync_objects();
   }
 
-  ~Swapchain()
+  auto destroy() -> void
   {
     cleanup_swapchain();
-    vkDestroyCommandPool(device, command_pool_, nullptr);
+    vkDestroyCommandPool(device, command_pool, nullptr);
     for (std::uint32_t i = 0; i < image_count; ++i) {
       vkDestroySemaphore(device, render_finished_semaphores[i], nullptr);
       vkDestroySemaphore(device, image_available_semaphores[i], nullptr);
@@ -57,7 +57,7 @@ private:
   std::vector<VkImage> swapchain_images;
   std::vector<VkImageView> swapchain_image_views_;
 
-  VkCommandPool command_pool_{ VK_NULL_HANDLE };
+  VkCommandPool command_pool{ VK_NULL_HANDLE };
   std::array<VkCommandBuffer, image_count> command_buffers{};
 
   std::array<VkSemaphore, image_count> image_available_semaphores{};
@@ -94,14 +94,14 @@ private:
     pool_info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
     pool_info.queueFamilyIndex = queue_family_index;
     pool_info.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
-    vkCreateCommandPool(device, &pool_info, nullptr, &command_pool_);
+    vkCreateCommandPool(device, &pool_info, nullptr, &command_pool);
   }
 
   auto allocate_command_buffers() -> void
   {
     VkCommandBufferAllocateInfo alloc_info{};
     alloc_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-    alloc_info.commandPool = command_pool_;
+    alloc_info.commandPool = command_pool;
     alloc_info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
     alloc_info.commandBufferCount = image_count;
     vkAllocateCommandBuffers(device, &alloc_info, command_buffers.data());

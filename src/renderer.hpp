@@ -1,11 +1,13 @@
 #pragma once
 
+#include <concepts>
 #include <glm/glm.hpp>
 #include <memory>
 #include <vector>
 #include <vulkan/vulkan.h>
 
 #include "command_buffer.hpp"
+#include "config.hpp"
 #include "device.hpp"
 #include "gpu_buffer.hpp"
 #include "image.hpp"
@@ -14,7 +16,6 @@
 #include "pipeline/compute_pipeline_factory.hpp"
 #include "pipeline/pipeline_factory.hpp"
 #include "window.hpp"
-
 
 struct InstanceData
 {
@@ -52,14 +53,22 @@ public:
            const ComputePipelineFactory&,
            const Window&);
   ~Renderer();
+  auto destroy() -> void;
+
   auto submit(const DrawCommand&, const glm::mat4& = glm::mat4{ 1.0F }) -> void;
-  auto end_frame(std::uint32_t) -> void;
+  auto end_frame(std::uint32_t,
+                 const glm::mat4& projection,
+                 const glm::mat4& view) -> void;
   auto resize(std::uint32_t, std::uint32_t) -> void;
   auto get_output_image() const -> const Image&;
   auto get_command_buffer() const -> CommandBuffer& { return *command_buffer; }
   auto get_compute_command_buffer() const -> CommandBuffer&
   {
     return *compute_command_buffer;
+  }
+  auto update_frustum(const glm::mat4& vp) -> void
+  {
+    current_frustum = Frustum::from_matrix(vp);
   }
 
 private:
@@ -79,11 +88,54 @@ private:
 
   std::unique_ptr<Image> geometry_image;
   std::unique_ptr<Image> geometry_depth_image;
-  CompiledPipeline geometry_pipeline;
-  CompiledComputePipeline test_compute_pipeline;
+  std::unique_ptr<CompiledPipeline> geometry_pipeline;
+  std::unique_ptr<CompiledComputePipeline> test_compute_pipeline;
 
   std::unordered_map<DrawCommand, std::vector<InstanceData>, DrawCommandHasher>
     draw_commands{};
 
   auto run_compute_pass(std::uint32_t) -> void;
+  auto update_uniform_buffers(const glm::mat4&) -> void;
+
+  std::unique_ptr<GPUBuffer> camera_uniform_buffer;
+  frame_array<VkDescriptorSet> renderer_descriptor_sets{};
+  VkDescriptorSetLayout renderer_descriptor_set_layout{};
+  VkDescriptorPool descriptor_pool{};
+  auto create_descriptor_set_layout() -> void;
+
+  struct Frustum
+  {
+    std::array<glm::vec4, 6> planes{};
+
+    static auto from_matrix(const glm::mat4& vp) -> Frustum
+    {
+      Frustum f;
+      const glm::mat4 m = glm::transpose(vp);
+
+      f.planes[0] = m[3] + m[0];
+      f.planes[1] = m[3] - m[0];
+      f.planes[2] = m[3] + m[1];
+      f.planes[3] = m[3] - m[1];
+      f.planes[4] = m[3] + m[2];
+      f.planes[5] = m[3] - m[2];
+
+      for (auto& plane : f.planes)
+        plane /= glm::length(glm::vec3(plane));
+
+      return f;
+    }
+
+    auto intersects(const glm::vec3& center, float radius) const -> bool
+    {
+      for (const auto& p : planes) {
+        if (glm::dot(glm::vec3(p), center) + p.w + radius < 0.0f)
+          return false;
+      }
+      return true;
+    }
+  };
+
+  Frustum current_frustum;
+
+  bool destroyed{ false };
 };

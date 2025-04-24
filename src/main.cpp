@@ -9,6 +9,8 @@
 #include <thread>
 #include <vulkan/vulkan.h>
 
+#include "allocator.hpp"
+#include "camera.hpp"
 #include "command_buffer.hpp"
 #include "device.hpp"
 #include "gpu_buffer.hpp"
@@ -49,6 +51,7 @@ private:
 struct ILayer
 {
   virtual ~ILayer() = default;
+  virtual auto on_destroy() -> void {};
   virtual auto on_event(Event&) -> bool = 0;
   virtual auto on_interface() -> void = 0;
   virtual auto on_update(double) -> void = 0;
@@ -78,8 +81,14 @@ struct Layer final : public ILayer
 {
   std::unique_ptr<GPUBuffer> vertex_buffer;
   std::unique_ptr<IndexBuffer> index_buffer;
-  glm::mat4 transform{ 1.f };
+  std::vector<glm::mat4> transforms{};
   glm::vec2 bounds{ 0.F };
+
+  auto on_destroy() -> void override
+  {
+    vertex_buffer.reset();
+    index_buffer.reset();
+  }
 
   explicit Layer(const Device& dev)
   {
@@ -117,6 +126,8 @@ struct Layer final : public ILayer
       0, 1, 2, 2, 3, 0,
     };
     index_buffer->upload(std::span(square_indices));
+
+    transforms.resize(100'000);
   }
 
   auto on_event(Event& event) -> bool override
@@ -147,22 +158,26 @@ struct Layer final : public ILayer
   auto on_update(double ts) -> void override
   {
     static float angle = 0.f;
-    angle += 10.0f * static_cast<float>(ts);
+    angle += 30.0f * static_cast<float>(ts);
 
-    transform =
-      glm::translate(glm::mat4(1.f), { 0.f, 0.f, 0.f }) *
-      glm::rotate(glm::mat4(1.f), glm::radians(angle), { 0.f, 0.f, 1.f }) *
-      glm::scale(glm::mat4(1.f), { 1.f, 1.f, 1.f });
+    for (std::size_t i = 0; i < transforms.size(); ++i) {
+      const float x = static_cast<float>(i % 10) - 5.f;
+      const float y = static_cast<float>(i) / 10.F - 5.f;
+      transforms[i] =
+        glm::translate(glm::mat4(1.f), { x * 2.f, y * 2.f, 0.f }) *
+        glm::rotate(glm::mat4(1.f), glm::radians(angle), { 0.f, 0.f, 1.f });
+    }
   }
   auto on_render(Renderer& renderer) -> void override
   {
-
-    renderer.submit(
-      {
-        .vertex_buffer = vertex_buffer.get(),
-        .index_buffer = index_buffer.get(),
-      },
-      transform);
+    for (const auto& transform : transforms) {
+      renderer.submit(
+        {
+          .vertex_buffer = vertex_buffer.get(),
+          .index_buffer = index_buffer.get(),
+        },
+        transform);
+    }
   }
 
   auto on_resize(std::uint32_t w, std::uint32_t h) -> void override
@@ -193,6 +208,14 @@ main(int, char**) -> std::int32_t
     device, blueprint_registry, pipeline_factory, compute_pipeline_factory,
     window,
   };
+
+  Camera camera;
+  const auto [w, h] = window.framebuffer_size();
+  camera.set_perspective(60.f, static_cast<float>(w) / h, 0.1f);
+  camera.set_view(glm::vec3(0.f, 3.f, -2.f),
+                  glm::vec3(0.f, 0.f, 0.f),
+                  glm::vec3(0.f, 1.f, 0.f));
+  renderer.update_frustum(camera.get_projection() * camera.get_view());
 
   std::vector<std::unique_ptr<ILayer>> layers;
   layers.emplace_back(std::make_unique<Layer>(device));
@@ -247,7 +270,9 @@ main(int, char**) -> std::int32_t
       for (auto& layer : layers) {
         layer->on_resize(width, height);
       }
+      camera.resize(width, height);
       renderer.resize(width, height);
+      renderer.update_frustum(camera.get_projection() * camera.get_view());
       window.set_resize_flag(false);
       continue;
     }
@@ -257,7 +282,8 @@ main(int, char**) -> std::int32_t
     });
     std::ranges::for_each(
       layers, [&r = renderer](auto& layer) { layer->on_render(r); });
-    renderer.end_frame(swapchain.get_frame_index());
+    renderer.end_frame(
+      swapchain.get_frame_index(), camera.get_projection(), camera.get_view());
 
     gui_system.begin_frame();
     std::ranges::for_each(layers, [](auto& layer) { layer->on_interface(); });
@@ -313,7 +339,18 @@ main(int, char**) -> std::int32_t
 
   vkDeviceWaitIdle(device.get_device());
   Image::destroy_samplers();
+  std::ranges::for_each(layers, [](auto& layer) { layer->on_destroy(); });
   layers.clear();
+
+  renderer.destroy();
+  // GUI system after renderer, renderer has internal images that depend on the
+  // ImTextureID system
+  gui_system.shutdown();
+
+  swapchain.destroy();
+  window.destroy(instance);
+  device.destroy();
+  instance.destroy();
 
   return 0;
 }

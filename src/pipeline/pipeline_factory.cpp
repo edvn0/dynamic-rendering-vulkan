@@ -3,6 +3,15 @@
 #include "device.hpp"
 
 #include <array>
+#include <vulkan/vulkan_core.h>
+
+CompiledPipeline::~CompiledPipeline()
+{
+  if (layout)
+    vkDestroyPipelineLayout(device->get_device(), layout, nullptr);
+  if (pipeline)
+    vkDestroyPipeline(device->get_device(), pipeline, nullptr);
+}
 
 static auto to_vk_stage = [](ShaderStage stage) -> VkShaderStageFlagBits {
   switch (stage) {
@@ -30,15 +39,16 @@ PipelineFactory::PipelineFactory(const Device& dev)
 }
 
 auto
-PipelineFactory::create_pipeline_layout(const PipelineBlueprint&) const
-  -> VkPipelineLayout
+PipelineFactory::create_pipeline_layout(
+  const PipelineBlueprint&,
+  std::span<const VkDescriptorSetLayout> layouts) const -> VkPipelineLayout
 {
   VkPipelineLayoutCreateInfo layout_info{
     .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
     .pNext = nullptr,
     .flags = 0,
-    .setLayoutCount = 0,
-    .pSetLayouts = nullptr,
+    .setLayoutCount = static_cast<std::uint32_t>(layouts.size()),
+    .pSetLayouts = layouts.data(),
     .pushConstantRangeCount = 0,
     .pPushConstantRanges = nullptr,
   };
@@ -49,8 +59,9 @@ PipelineFactory::create_pipeline_layout(const PipelineBlueprint&) const
 }
 
 auto
-PipelineFactory::create_pipeline(const PipelineBlueprint& blueprint) const
-  -> CompiledPipeline
+PipelineFactory::create_pipeline(const PipelineBlueprint& blueprint,
+                                 const PipelineLayoutInfo& layout_info) const
+  -> std::unique_ptr<CompiledPipeline>
 {
   auto shader = Shader::create(device->get_device(), blueprint.shader_stages);
 
@@ -229,7 +240,8 @@ PipelineFactory::create_pipeline(const PipelineBlueprint& blueprint) const
     .stencilAttachmentFormat = VK_FORMAT_UNDEFINED,
   };
 
-  VkPipelineLayout layout = create_pipeline_layout(blueprint);
+  const std::array layouts{ layout_info.renderer_set_layout };
+  VkPipelineLayout layout = create_pipeline_layout(blueprint, layouts);
 
   VkGraphicsPipelineCreateInfo pipeline_info{
     .sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
@@ -254,12 +266,16 @@ PipelineFactory::create_pipeline(const PipelineBlueprint& blueprint) const
   };
 
   VkPipeline pipeline;
-  vkCreateGraphicsPipelines(device->get_device(),
-                            VK_NULL_HANDLE,
-                            1,
-                            &pipeline_info,
-                            nullptr,
-                            &pipeline);
+  if (vkCreateGraphicsPipelines(device->get_device(),
+                                VK_NULL_HANDLE,
+                                1,
+                                &pipeline_info,
+                                nullptr,
+                                &pipeline) != VK_SUCCESS) {
+    std::cerr << "What" << std::endl;
+    assert(false && "Could not create pipeline");
+  }
 
-  return { pipeline, layout };
+  return std::make_unique<CompiledPipeline>(
+    pipeline, layout, VK_PIPELINE_BIND_POINT_GRAPHICS, device);
 }

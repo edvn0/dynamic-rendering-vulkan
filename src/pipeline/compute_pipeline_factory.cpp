@@ -2,6 +2,14 @@
 #include "device.hpp"
 #include "shader.hpp"
 
+CompiledComputePipeline::~CompiledComputePipeline()
+{
+  if (layout)
+    vkDestroyPipelineLayout(device->get_device(), layout, nullptr);
+  if (pipeline)
+    vkDestroyPipeline(device->get_device(), pipeline, nullptr);
+}
+
 ComputePipelineFactory::ComputePipelineFactory(const Device& dev)
   : device(&dev)
 {
@@ -27,8 +35,8 @@ ComputePipelineFactory::create_pipeline_layout(const PipelineBlueprint&) const
 }
 
 auto
-ComputePipelineFactory::create_pipeline(
-  const PipelineBlueprint& blueprint) const -> CompiledComputePipeline
+ComputePipelineFactory::create_pipeline(const PipelineBlueprint& blueprint)
+  const -> std::unique_ptr<CompiledComputePipeline>
 {
   auto shader = Shader::create(device->get_device(), blueprint.shader_stages);
   const auto& stage_info = blueprint.shader_stages.front();
@@ -63,6 +71,6 @@ ComputePipelineFactory::create_pipeline(
                            nullptr,
                            &pipeline);
 
-  CompiledComputePipeline compiled{ pipeline, layout };
-  return compiled;
+  return std::make_unique<CompiledComputePipeline>(
+    pipeline, layout, VK_PIPELINE_BIND_POINT_COMPUTE, device);
 }

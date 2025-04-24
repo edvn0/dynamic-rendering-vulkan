@@ -1,5 +1,6 @@
 #include "window.hpp"
 
+#include "VkBootstrap.h"
 #include "event_system.hpp"
 #include "instance.hpp"
 
@@ -77,6 +78,16 @@ Window::Window()
 
   glfwSetWindowUserPointer(glfw_window, user_data.get());
   hookup_events();
+}
+
+auto
+Window ::destroy(const Core::Instance& instance) -> void
+{
+  vkb::destroy_surface(instance.vkb(), vk_surface);
+  if (glfw_window) {
+    glfwDestroyWindow(glfw_window);
+  }
+  glfwTerminate();
 }
 
 Window::~Window()

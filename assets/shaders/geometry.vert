@@ -12,9 +12,15 @@ mat4 reconstruct_transform_matrix();
 
 layout(location = 0) out vec3 v_normal;
 
+layout(set = 0, binding = 0, std140) uniform UniformBufferObject {
+  mat4 model_view_projection;
+}
+ubo;
+
 void main() {
   mat4 model_matrix = reconstruct_transform_matrix();
-  gl_Position = model_matrix * vec4(a_position, 1.0);
+  gl_Position =
+      ubo.model_view_projection * model_matrix * vec4(a_position, 1.0);
 
   v_normal = mat3(model_matrix) * a_normal;
 }

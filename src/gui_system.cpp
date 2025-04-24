@@ -61,9 +61,12 @@ GUISystem::end_frame(VkCommandBuffer cmd_buf) const -> void
     ImGui::RenderPlatformWindowsDefault();
   }
 }
+
 GUISystem::~GUISystem()
 {
-  shutdown();
+  if (!destroyed) {
+    shutdown();
+  }
 }
 
 GUISystem::GUISystem(const Core::Instance& instance,
@@ -122,9 +125,11 @@ GUISystem::init_for_vulkan(const Core::Instance& instance,
 }
 
 auto
-GUISystem::shutdown() const -> void
+GUISystem::shutdown() -> void
 {
   ImGui_ImplVulkan_Shutdown();
   ImGui_ImplGlfw_Shutdown();
   ImGui::DestroyContext();
+
+  destroyed = true;
 }

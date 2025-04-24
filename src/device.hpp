@@ -20,8 +20,8 @@ public:
 
   auto get_queue_family_index(VkQueue) const -> std::uint32_t;
 
-  auto get_allocator() -> Allocator& { return allocator; }
-  auto get_allocator() const -> const Allocator& { return allocator; }
+  auto get_allocator() -> Allocator& { return *allocator; }
+  auto get_allocator() const -> const Allocator& { return *allocator; }
 
   auto get_device() const -> VkDevice { return device.device; }
   auto get_physical_device() const -> VkPhysicalDevice
@@ -34,13 +34,15 @@ public:
     -> std::tuple<VkCommandBuffer, VkCommandPool>;
   auto flush(VkCommandBuffer, VkCommandPool) const -> void;
 
+  auto destroy() -> void;
+
 private:
   explicit Device(const Core::Instance& instance, const vkb::Device& dev)
     : device(dev)
-    , allocator(instance, *this)
+    , allocator(std::make_unique<Allocator>(instance, *this))
   {
   }
 
   vkb::Device device;
-  Allocator allocator;
+  std::unique_ptr<Allocator> allocator;
 };

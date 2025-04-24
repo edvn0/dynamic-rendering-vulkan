@@ -4,8 +4,104 @@
 #include <memory>
 
 #include <glm/glm.hpp>
+#include <vulkan/vulkan_core.h>
 #define GLM_ENABLE_EXPERIMENTAL
 #include <glm/gtx/quaternion.hpp>
+
+struct CameraBuffer
+{
+  glm::mat4 vp;
+};
+
+auto
+Renderer::create_descriptor_set_layout() -> void
+{
+  VkDescriptorSetLayoutBinding binding{
+    .binding = 0,
+    .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+    .descriptorCount = 1,
+    .stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+    .pImmutableSamplers = nullptr,
+  };
+  VkDescriptorSetLayoutCreateInfo layout_info{
+    .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+    .pNext = nullptr,
+    .flags = 0,
+    .bindingCount = 1,
+    .pBindings = &binding,
+  };
+  vkCreateDescriptorSetLayout(device->get_device(),
+                              &layout_info,
+                              nullptr,
+                              &renderer_descriptor_set_layout);
+
+  std::array<VkDescriptorPoolSize, 1> pool_sizes{ {
+    {
+      .type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+      .descriptorCount = image_count,
+    },
+  } };
+
+  VkDescriptorPoolCreateInfo pool_info{
+    .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+    .pNext = nullptr,
+    .flags = 0,
+    .maxSets = image_count,
+    .poolSizeCount = static_cast<std::uint32_t>(pool_sizes.size()),
+    .pPoolSizes = pool_sizes.data(),
+  };
+
+  vkCreateDescriptorPool(
+    device->get_device(), &pool_info, nullptr, &descriptor_pool);
+
+  const std::array layouts{ renderer_descriptor_set_layout,
+                            renderer_descriptor_set_layout,
+                            renderer_descriptor_set_layout };
+  VkDescriptorSetAllocateInfo alloc_info{
+    .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+    .pNext = nullptr,
+    .descriptorPool = descriptor_pool,
+    .descriptorSetCount = image_count,
+    .pSetLayouts = layouts.data(),
+  };
+
+  vkAllocateDescriptorSets(
+    device->get_device(), &alloc_info, renderer_descriptor_sets.data());
+
+  {
+    camera_uniform_buffer = std::make_unique<GPUBuffer>(
+      *device, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, true);
+    const auto camera_buffer_bytes =
+      std::make_unique<std::byte[]>(sizeof(CameraBuffer) * image_count);
+    camera_uniform_buffer->upload(std::span<std::byte>{
+      camera_buffer_bytes.get(),
+      sizeof(CameraBuffer) * image_count,
+    });
+  }
+
+  for (std::size_t i = 0; i < image_count; ++i) {
+    VkDescriptorBufferInfo buffer_info{
+      .buffer = camera_uniform_buffer->get(),
+      .offset = sizeof(CameraBuffer) * i,
+      .range = sizeof(CameraBuffer),
+    };
+
+    VkWriteDescriptorSet write{
+      .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+      .pNext = nullptr,
+      .dstSet = renderer_descriptor_sets[i],
+      .dstBinding = 0,
+      .dstArrayElement = 0,
+      .descriptorCount = 1,
+      .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+      .pImageInfo = nullptr,
+      .pBufferInfo = &buffer_info,
+      .pTexelBufferView = nullptr,
+    };
+
+    vkUpdateDescriptorSets(device->get_device(), 1, &write, 0, nullptr);
+  }
+}
 
 Renderer::Renderer(const Device& dev,
                    const BlueprintRegistry& registry,
@@ -18,6 +114,8 @@ Renderer::Renderer(const Device& dev,
   , compute_pipeline_factory(&compute_factory)
   , window(&win)
 {
+  create_descriptor_set_layout();
+
   command_buffer =
     CommandBuffer::create(dev, VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT);
   compute_command_buffer = std::make_unique<CommandBuffer>(
@@ -48,37 +146,70 @@ Renderer::Renderer(const Device& dev,
                     .aspect = VK_IMAGE_ASPECT_DEPTH_BIT,
                   });
 
-  geometry_pipeline =
-    pipeline_factory->create_pipeline(blueprint_registry->get("main_geometry"));
+  geometry_pipeline = pipeline_factory->create_pipeline(
+    blueprint_registry->get("main_geometry"),
+    {
+      .renderer_set_layout = renderer_descriptor_set_layout,
+    });
   test_compute_pipeline = compute_pipeline_factory->create_pipeline(
     blueprint_registry->get("test_compute"));
 
-  instance_vertex_buffer =
-    std::make_unique<GPUBuffer>(dev, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, true);
-  // Size this to 48bytes (3 glm::vec4s) * 10000 instances
-  static constexpr auto instance_size = sizeof(glm::vec4) * 3;
-  static constexpr auto instance_count = 10000;
-  static constexpr auto instance_size_bytes = instance_size * instance_count;
-  const auto bytes = std::make_unique<std::byte[]>(instance_size_bytes);
-  instance_vertex_buffer->upload(
-    std::span<std::byte>{ bytes.get(), instance_size_bytes });
+  {
+    instance_vertex_buffer =
+      std::make_unique<GPUBuffer>(dev, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, true);
+    // Size this to 48bytes (3 glm::vec4s) * 10000 instances
+    static constexpr auto instance_size = sizeof(glm::vec4) * 3;
+    static constexpr auto instance_count = 1'000'000;
+    static constexpr auto instance_size_bytes = instance_size * instance_count;
+    const auto bytes = std::make_unique<std::byte[]>(instance_size_bytes);
+    instance_vertex_buffer->upload(
+      std::span<std::byte>{ bytes.get(), instance_size_bytes });
+  }
 }
 
-Renderer::~Renderer()
+auto
+Renderer::destroy() -> void
 {
   for (auto& semaphore : compute_finished_semaphore) {
     vkDestroySemaphore(device->get_device(), semaphore, nullptr);
   }
-  command_buffer.reset();
-  compute_command_buffer.reset();
+  vkDestroyDescriptorPool(device->get_device(), descriptor_pool, nullptr);
+  vkDestroyDescriptorSetLayout(
+    device->get_device(), renderer_descriptor_set_layout, nullptr);
+
+  test_compute_pipeline.reset();
+  geometry_pipeline.reset();
+
+  camera_uniform_buffer.reset();
+  geometry_depth_image.reset();
   geometry_image.reset();
+  default_geometry_material.reset();
+  compute_command_buffer.reset();
+  instance_vertex_buffer.reset();
+  command_buffer.reset();
+
+  destroyed = true;
+}
+
+Renderer::~Renderer()
+{
+  if (!destroyed) {
+    destroy();
+  }
 }
 
 auto
 Renderer::submit(const DrawCommand& cmd, const glm::mat4& transform) -> void
 {
+  const glm::vec3 center_ws = glm::vec3(transform[3]);
+  const float radius_ws = 1.0f * glm::length(glm::vec3(transform[0]));
+
+  if (!current_frustum.intersects(center_ws, radius_ws))
+    return;
+
   glm::quat rotation = glm::quat_cast(transform);
-  glm::vec4 rotationVec(rotation.x, rotation.y, rotation.z, rotation.w);
+  glm::vec4 rotation_vec =
+    glm::vec4(rotation.x, rotation.y, rotation.z, rotation.w);
 
   glm::vec3 translation = glm::vec3(transform[3]);
   glm::vec3 scale(glm::length(glm::vec3(transform[0])),
@@ -89,7 +220,7 @@ Renderer::submit(const DrawCommand& cmd, const glm::mat4& transform) -> void
   glm::vec4 non_uniform_scale(scale, 0.0f);
 
   draw_commands[cmd].emplace_back(
-    rotationVec, translation_and_scale, non_uniform_scale);
+    rotation_vec, translation_and_scale, non_uniform_scale);
 }
 
 static auto
@@ -113,10 +244,24 @@ upload_instance_vertex_data(GPUBuffer& buffer, const auto& draw_commands)
 }
 
 auto
-Renderer::end_frame(std::uint32_t frame_index) -> void
+Renderer::update_uniform_buffers(const glm::mat4& vp) -> void
 {
+  static CameraBuffer buffer{ vp };
+  const std::array buffers{ buffer, buffer, buffer };
+  camera_uniform_buffer->upload(std::span(buffers));
+}
+
+auto
+Renderer::end_frame(std::uint32_t frame_index,
+                    const glm::mat4& projection,
+                    const glm::mat4& view) -> void
+{
+
   if (draw_commands.empty())
     return;
+
+  const auto view_projection = projection * view;
+  update_uniform_buffers(view_projection);
 
   run_compute_pass(frame_index);
 
@@ -209,8 +354,15 @@ Renderer::end_frame(std::uint32_t frame_index) -> void
                          0,
                          command.index_buffer->get_index_type());
     vkCmdBindPipeline(
-      cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, geometry_pipeline.pipeline);
-
+      cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, geometry_pipeline->pipeline);
+    vkCmdBindDescriptorSets(cmd,
+                            VK_PIPELINE_BIND_POINT_GRAPHICS,
+                            geometry_pipeline->layout,
+                            0,
+                            1,
+                            &renderer_descriptor_sets[frame_index],
+                            0,
+                            nullptr);
     vkCmdDrawIndexed(
       cmd,
       static_cast<std::uint32_t>(command.index_buffer->get_count()),
@@ -256,7 +408,7 @@ Renderer::run_compute_pass(std::uint32_t frame_index) -> void
   // vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, ...)
 
   vkCmdBindPipeline(
-    cmd, test_compute_pipeline.bind_point, test_compute_pipeline.pipeline);
+    cmd, test_compute_pipeline->bind_point, test_compute_pipeline->pipeline);
   vkCmdDispatch(cmd,
                 1,  // x
                 1,  // y

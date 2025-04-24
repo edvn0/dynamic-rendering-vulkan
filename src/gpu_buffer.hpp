@@ -145,6 +145,8 @@ public:
   {
   }
 
+  ~IndexBuffer() = default;
+
   template<AdmitsGPUBuffer T, std::size_t N = std::dynamic_extent>
   auto upload(std::span<const T, N> data) -> void
   {

@@ -5,11 +5,10 @@
 
 Allocator::Allocator(const Core::Instance& instance, const Device& device)
 {
-  VmaAllocatorCreateInfo allocator_info{
-    .physicalDevice = device.get_physical_device(),
-    .device = device.get_device(),
-    .instance = instance.raw(),
-  };
+  VmaAllocatorCreateInfo allocator_info{};
+  allocator_info.instance = instance.raw();
+  allocator_info.device = device.get_device();
+  allocator_info.physicalDevice = device.get_physical_device();
 
   vmaCreateAllocator(&allocator_info, &allocator);
 }
