@@ -3,9 +3,15 @@
 #include <VkBootstrap.h>
 #include <iostream>
 
+#ifdef IS_DEBUG
+static constexpr bool is_debug = true;
+#else
+static constexpr bool is_debug = false;
+#endif
+
 namespace Core {
 
-#ifndef NDEBUG
+#ifdef IS_DEBUG
 static auto
 debug_callback(VkDebugUtilsMessageSeverityFlagBitsEXT,
                VkDebugUtilsMessageTypeFlagsEXT,
@@ -23,7 +29,7 @@ public:
   static auto create()
   {
     vkb::InstanceBuilder builder;
-#ifndef NDEBUG
+#ifdef IS_DEBUG
     auto result = builder.set_app_name("Example Vulkan Application")
                     .request_validation_layers()
                     .require_api_version(1, 3)
