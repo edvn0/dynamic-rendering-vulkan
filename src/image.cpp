@@ -1,5 +1,6 @@
 #include "image.hpp"
 #include "imgui_impl_vulkan.h"
+#include "pipeline/blueprint_configuration.hpp"
 
 auto
 Image::recreate() -> void
@@ -115,9 +116,14 @@ Image::recreate() -> void
 
   sampler = sampler_manager.get_sampler(sampler_info);
 
-  texture_implementation_pointer =
-    std::bit_cast<std::uint64_t>(ImGui_ImplVulkan_AddTexture(
-      sampler, default_view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL));
+  Attachment attachment{
+    .format = format,
+  };
+  if (!attachment.is_depth()) {
+    texture_implementation_pointer =
+      std::bit_cast<std::uint64_t>(ImGui_ImplVulkan_AddTexture(
+        sampler, default_view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL));
+  }
 }
 
 auto
@@ -129,7 +135,7 @@ Image::get_sampler() const -> const VkSampler&
 auto
 Image::destroy() -> void
 {
-  if (texture_implementation_pointer) {
+  if (texture_implementation_pointer != 0) {
     ImGui_ImplVulkan_RemoveTexture(
       std::bit_cast<VkDescriptorSet>(texture_implementation_pointer));
     texture_implementation_pointer = 0;

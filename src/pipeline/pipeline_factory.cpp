@@ -149,7 +149,7 @@ PipelineFactory::create_pipeline(const PipelineBlueprint& blueprint) const
     .flags = 0,
     .depthTestEnable = blueprint.depth_test,
     .depthWriteEnable = blueprint.depth_write,
-    .depthCompareOp = VK_COMPARE_OP_LESS,
+    .depthCompareOp = blueprint.depth_compare_op,
     .depthBoundsTestEnable = VK_FALSE,
     .stencilTestEnable = VK_FALSE,
     .front = { 

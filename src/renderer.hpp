@@ -9,19 +9,18 @@
 #include "device.hpp"
 #include "gpu_buffer.hpp"
 #include "image.hpp"
+#include "material.hpp"
 #include "pipeline/blueprint_registry.hpp"
 #include "pipeline/compute_pipeline_factory.hpp"
 #include "pipeline/pipeline_factory.hpp"
 #include "window.hpp"
 
-class Material
-{};
 
 struct InstanceData
 {
-  glm::vec4 row0;
-  glm::vec4 row1;
-  glm::vec4 row2;
+  glm::vec4 rotation{};              // Quaternion
+  glm::vec4 translation_and_scale{}; // Translation and scale
+  glm::vec4 non_uniform_scale{};     // Non-uniform scale
 };
 
 struct DrawCommand
@@ -79,6 +78,7 @@ private:
   std::unique_ptr<Material> default_geometry_material;
 
   std::unique_ptr<Image> geometry_image;
+  std::unique_ptr<Image> geometry_depth_image;
   CompiledPipeline geometry_pipeline;
   CompiledComputePipeline test_compute_pipeline;
 

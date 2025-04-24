@@ -108,4 +108,31 @@ cmd_transition_to_shader_read(VkCommandBuffer cmd,
                        });
 }
 
+inline auto
+cmd_transition_to_depth_attachment(
+  VkCommandBuffer cmd,
+  VkImage image,
+  VkPipelineStageFlags src_stage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+  VkPipelineStageFlags dst_stage =
+    VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT) noexcept -> void
+{
+  cmd_transition_image(cmd,
+                       {
+                         image,
+                         VK_IMAGE_LAYOUT_UNDEFINED,
+                         VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+                         0u,
+                         VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+                         src_stage,
+                         dst_stage,
+                         {
+                           VK_IMAGE_ASPECT_DEPTH_BIT,
+                           0,
+                           1,
+                           0,
+                           1,
+                         },
+                       });
+}
+
 } // namespace CoreUtils

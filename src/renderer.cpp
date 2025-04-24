@@ -4,6 +4,8 @@
 #include <memory>
 
 #include <glm/glm.hpp>
+#define GLM_ENABLE_EXPERIMENTAL
+#include <glm/gtx/quaternion.hpp>
 
 Renderer::Renderer(const Device& dev,
                    const BlueprintRegistry& registry,
@@ -37,6 +39,14 @@ Renderer::Renderer(const Device& dev,
                                    .extent = win.framebuffer_size(),
                                    .format = VK_FORMAT_B8G8R8A8_UNORM,
                                  });
+  geometry_depth_image =
+    Image::create(dev,
+                  ImageConfiguration{
+                    .extent = win.framebuffer_size(),
+                    .format = VK_FORMAT_D32_SFLOAT,
+                    .usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+                    .aspect = VK_IMAGE_ASPECT_DEPTH_BIT,
+                  });
 
   geometry_pipeline =
     pipeline_factory->create_pipeline(blueprint_registry->get("main_geometry"));
@@ -67,7 +77,19 @@ Renderer::~Renderer()
 auto
 Renderer::submit(const DrawCommand& cmd, const glm::mat4& transform) -> void
 {
-  draw_commands[cmd].emplace_back(transform[0], transform[1], transform[2]);
+  glm::quat rotation = glm::quat_cast(transform);
+  glm::vec4 rotationVec(rotation.x, rotation.y, rotation.z, rotation.w);
+
+  glm::vec3 translation = glm::vec3(transform[3]);
+  glm::vec3 scale(glm::length(glm::vec3(transform[0])),
+                  glm::length(glm::vec3(transform[1])),
+                  glm::length(glm::vec3(transform[2])));
+
+  glm::vec4 translation_and_scale(translation, 1.0f);
+  glm::vec4 non_uniform_scale(scale, 0.0f);
+
+  draw_commands[cmd].emplace_back(
+    rotationVec, translation_and_scale, non_uniform_scale);
 }
 
 static auto
@@ -107,10 +129,13 @@ Renderer::end_frame(std::uint32_t frame_index) -> void
   const VkCommandBuffer cmd = command_buffer->get(frame_index);
   CoreUtils::cmd_transition_to_color_attachment(cmd,
                                                 geometry_image->get_image());
+  CoreUtils::cmd_transition_to_depth_attachment(
+    cmd, geometry_depth_image->get_image());
 
   VkClearValue clear_value = { .color = { { 0.f, 0.f, 0.f, 0.f } } };
   VkRenderingAttachmentInfo color_attachment = {
     .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+    .pNext = nullptr,
     .imageView = geometry_image->get_view(),
     .imageLayout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
     .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
@@ -118,14 +143,30 @@ Renderer::end_frame(std::uint32_t frame_index) -> void
     .clearValue = clear_value
   };
 
+  // Reverse the depth clear value to 1.0f for depth testing
+  VkClearValue depth_clear_value = { .depthStencil = { 0.0f, 0 } };
+
+  VkRenderingAttachmentInfo depth_attachment = {
+    .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+    .pNext = nullptr,
+    .imageView = geometry_depth_image->get_view(),
+    .imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+    .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+    .storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+    .clearValue = depth_clear_value
+  };
+
   VkRenderingInfo render_info = {
     .sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
+    .pNext = nullptr,
+    .flags = 0,
     .renderArea = { .offset = { 0, 0 },
                     .extent = { geometry_image->width(),
                                 geometry_image->height(), }, },
     .layerCount = 1,
     .colorAttachmentCount = 1,
-    .pColorAttachments = &color_attachment
+    .pColorAttachments = &color_attachment,
+    .pDepthAttachment = &depth_attachment
   };
 
   vkCmdBeginRendering(cmd, &render_info);
@@ -193,6 +234,7 @@ auto
 Renderer::resize(std::uint32_t width, std::uint32_t height) -> void
 {
   geometry_image->resize(width, height);
+  geometry_depth_image->resize(width, height);
 }
 
 auto
@@ -213,16 +255,6 @@ Renderer::run_compute_pass(std::uint32_t frame_index) -> void
   // Optional: insert debug marker or timestamp
   // vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, ...)
 
-  /**
-   * @brief #version 460
-
-layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
-void
-main()
-{
-}
-   *
-   */
   vkCmdBindPipeline(
     cmd, test_compute_pipeline.bind_point, test_compute_pipeline.pipeline);
   vkCmdDispatch(cmd,

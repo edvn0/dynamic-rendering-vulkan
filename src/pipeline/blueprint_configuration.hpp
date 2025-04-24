@@ -59,5 +59,8 @@ struct PipelineBlueprint
   bool depth_test{ false };
   bool depth_write{ false };
 
+  // Reverse z-buffer by default
+  VkCompareOp depth_compare_op{ VK_COMPARE_OP_GREATER };
+
   auto hash() const -> std::size_t;
 };

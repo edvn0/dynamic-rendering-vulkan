@@ -171,12 +171,50 @@ struct convert<PipelineBlueprint>
       rhs.blend_enable = node["blend"]["enable"].as<bool>(false);
 
     if (node["depth_stencil"]) {
-      rhs.depth_test = node["depth_stencil"]["depth_test"].as<bool>(false);
-      rhs.depth_write = node["depth_stencil"]["depth_write"].as<bool>(false);
-      if (node["depth_stencil"]["format"])
+      auto& depth_stencil = node["depth_stencil"];
+      rhs.depth_test = depth_stencil["depth_test"].as<bool>(false);
+      rhs.depth_write = depth_stencil["depth_write"].as<bool>(false);
+
+      if (depth_stencil["format"])
         rhs.depth_attachment =
-          Attachment{ .format =
-                        node["depth_stencil"]["format"].as<VkFormat>() };
+          Attachment{ .format = depth_stencil["format"].as<VkFormat>() };
+
+      if (depth_stencil["compare_op"]) {
+        const auto cmp = depth_stencil["compare_op"].as<std::string>();
+        if (cmp == "less")
+          rhs.depth_compare_op = VK_COMPARE_OP_LESS;
+        else if (cmp == "less_equal")
+          rhs.depth_compare_op = VK_COMPARE_OP_LESS_OR_EQUAL;
+        else if (cmp == "greater")
+          rhs.depth_compare_op = VK_COMPARE_OP_GREATER;
+        else if (cmp == "greater_equal")
+          rhs.depth_compare_op = VK_COMPARE_OP_GREATER_OR_EQUAL;
+        else if (cmp == "always")
+          rhs.depth_compare_op = VK_COMPARE_OP_ALWAYS;
+        else if (cmp == "never")
+          rhs.depth_compare_op = VK_COMPARE_OP_NEVER;
+        else if (cmp == "equal")
+          rhs.depth_compare_op = VK_COMPARE_OP_EQUAL;
+        else if (cmp == "not_equal")
+          rhs.depth_compare_op = VK_COMPARE_OP_NOT_EQUAL;
+        else
+          throw std::runtime_error("Unsupported depth compare_op: " + cmp);
+      }
+
+      if (!rhs.depth_test && rhs.depth_write)
+        assert(false &&
+               "Invalid pipeline config: depth_write requires depth_test");
+
+      if (depth_stencil["compare_op"] && !rhs.depth_test)
+        assert(false &&
+               "Warning: Using depth compare_op without depth_test may lead to "
+               "undefined behavior");
+
+      if ((rhs.depth_compare_op == VK_COMPARE_OP_GREATER ||
+           rhs.depth_compare_op == VK_COMPARE_OP_GREATER_OR_EQUAL) &&
+          !rhs.depth_write)
+        assert(false && "Warning: Using reverse-Z compare_op without "
+                        "depth_write may lead to z-fighting");
     }
 
     if (node["attachments"])

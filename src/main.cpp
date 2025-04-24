@@ -2,11 +2,12 @@
 #include <array>
 #include <chrono>
 #include <cstdint>
+#include <glm/gtc/matrix_transform.hpp>
 #include <iostream>
 #include <memory>
 #include <ranges>
 #include <thread>
-#include <vulkan/vulkan_core.h>
+#include <vulkan/vulkan.h>
 
 #include "command_buffer.hpp"
 #include "device.hpp"
@@ -77,6 +78,8 @@ struct Layer final : public ILayer
 {
   std::unique_ptr<GPUBuffer> vertex_buffer;
   std::unique_ptr<IndexBuffer> index_buffer;
+  glm::mat4 transform{ 1.f };
+  glm::vec2 bounds{ 0.F };
 
   explicit Layer(const Device& dev)
   {
@@ -141,41 +144,32 @@ struct Layer final : public ILayer
       ImGui::ColorEdit3("Clear Color", std::bit_cast<float*>(&clr));
     });
   }
-  auto on_update(double) -> void override {}
+  auto on_update(double ts) -> void override
+  {
+    static float angle = 0.f;
+    angle += 10.0f * static_cast<float>(ts);
+
+    transform =
+      glm::translate(glm::mat4(1.f), { 0.f, 0.f, 0.f }) *
+      glm::rotate(glm::mat4(1.f), glm::radians(angle), { 0.f, 0.f, 1.f }) *
+      glm::scale(glm::mat4(1.f), { 1.f, 1.f, 1.f });
+  }
   auto on_render(Renderer& renderer) -> void override
   {
-    for (const auto i : std::views::iota(0, 100)) {
-      (void)i;
 
-      const auto small_random_change_mat4_transform = glm::mat4{
-        1.f,
-        0.f,
-        0.f,
-        0.f,
-        0.f,
-        1.f,
-        0.f,
-        0.f,
-        0.f,
-        0.f,
-        1.f,
-        0.f,
-        static_cast<float>(rand() % 100) / 100.0f - 0.5f,
-        static_cast<float>(rand() % 100) / 100.0f - 0.5f,
-        static_cast<float>(rand() % 100) / 100.0f - 0.5f,
-        1.f,
-      };
-
-      renderer.submit(
-        DrawCommand{
-          .vertex_buffer = vertex_buffer.get(),
-          .index_buffer = index_buffer.get(),
-        },
-        small_random_change_mat4_transform);
-    }
+    renderer.submit(
+      {
+        .vertex_buffer = vertex_buffer.get(),
+        .index_buffer = index_buffer.get(),
+      },
+      transform);
   }
 
-  auto on_resize(std::uint32_t, std::uint32_t) -> void override {}
+  auto on_resize(std::uint32_t w, std::uint32_t h) -> void override
+  {
+    bounds.x = static_cast<float>(w);
+    bounds.y = static_cast<float>(h);
+  }
 };
 
 auto
