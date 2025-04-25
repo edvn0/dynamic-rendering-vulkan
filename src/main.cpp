@@ -53,8 +53,18 @@ private:
 };
 
 auto
-main(int, char**) -> std::int32_t
+main(int argc, char** argv) -> std::int32_t
 {
+  if (argc > 1) {
+    try {
+      std::filesystem::current_path(argv[1]);
+    } catch (const std::filesystem::filesystem_error& e) {
+      std::cerr << "Failed to set current path to '" << argv[1]
+                << "': " << e.what() << '\n';
+      return 1;
+    }
+  }
+
   auto instance = Core::Instance::create();
   Window window;
   window.create_surface(instance);
@@ -217,8 +227,8 @@ main(int, char**) -> std::int32_t
   layers.clear();
 
   renderer.destroy();
-  // GUI system after renderer, renderer has internal images that depend on the
-  // ImTextureID system
+  // GUI system after renderer, renderer has internal images that depend on
+  // the ImTextureID system
   gui_system.shutdown();
 
   swapchain.destroy();

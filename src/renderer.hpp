@@ -89,13 +89,14 @@ private:
   std::unique_ptr<Image> geometry_image;
   std::unique_ptr<Image> geometry_depth_image;
   std::unique_ptr<CompiledPipeline> geometry_pipeline;
+  std::unique_ptr<CompiledPipeline> z_prepass_pipeline;
   std::unique_ptr<CompiledComputePipeline> test_compute_pipeline;
 
   std::unordered_map<DrawCommand, std::vector<InstanceData>, DrawCommandHasher>
     draw_commands{};
 
   auto run_compute_pass(std::uint32_t) -> void;
-  auto update_uniform_buffers(const glm::mat4&) -> void;
+  auto update_uniform_buffers(std::uint32_t, const glm::mat4&) -> void;
 
   std::unique_ptr<GPUBuffer> camera_uniform_buffer;
   frame_array<VkDescriptorSet> renderer_descriptor_sets{};
@@ -137,4 +138,8 @@ private:
   Frustum current_frustum;
 
   bool destroyed{ false };
+
+  using DrawList = std::vector<std::pair<DrawCommand, std::uint32_t>>;
+  auto run_geometry_pass(std::uint32_t, const DrawList&) -> void;
+  auto run_z_prepass(std::uint32_t, const DrawList&) -> void;
 };

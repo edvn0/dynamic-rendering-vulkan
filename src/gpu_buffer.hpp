@@ -16,7 +16,8 @@ class GPUBuffer;
 auto
 upload_to_device_buffer(const Device& device,
                         GPUBuffer& target_buffer,
-                        std::span<const std::byte> data) -> void;
+                        std::span<const std::byte> data,
+                        std::size_t offset = 0ULL) -> void;
 
 class GPUBuffer
 {
@@ -64,6 +65,45 @@ public:
     upload(std::span<const T, N>{ data });
   }
 
+  template<AdmitsGPUBuffer T, std::size_t N = std::dynamic_extent>
+  auto upload_with_offset(std::span<const T, N> data, std::size_t offset_bytes)
+    -> void
+  {
+    const auto required_size = offset_bytes + data.size_bytes();
+    if (required_size > current_size)
+      recreate(required_size);
+
+    if (!mapped_on_create) {
+      upload_to_device_buffer(
+        device,
+        *this,
+        std::span<const std::byte>{
+          std::bit_cast<const std::byte*>(data.data()), data.size_bytes() },
+        offset_bytes);
+      return;
+    }
+
+    void* mapped = persistent_ptr;
+    if (!mapped) {
+      vmaMapMemory(device.get_allocator().get(), allocation, &mapped);
+    }
+
+    std::memcpy(static_cast<std::byte*>(mapped) + offset_bytes,
+                data.data(),
+                data.size_bytes());
+
+    if (!persistent_ptr) {
+      vmaUnmapMemory(device.get_allocator().get(), allocation);
+    }
+  }
+
+  template<AdmitsGPUBuffer T, std::size_t N = std::dynamic_extent>
+  auto upload_with_offset(std::span<T, N> data, std::size_t offset_bytes)
+    -> void
+  {
+    upload_with_offset(std::span<const T, N>{ data }, offset_bytes);
+  }
+
   auto get() const -> const VkBuffer& { return buffer; }
 
   ~GPUBuffer()
@@ -73,55 +113,7 @@ public:
   }
 
 private:
-  auto recreate(size_t size) -> void
-  {
-    if (buffer) {
-      if (mapped_on_create && persistent_ptr)
-        vmaUnmapMemory(device.get_allocator().get(), allocation);
-      vmaDestroyBuffer(device.get_allocator().get(), buffer, allocation);
-    }
-
-    VkBufferCreateInfo buffer_info{
-      .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
-      .pNext = nullptr,
-      .flags = 0,
-      .size = size,
-      .usage = usage_flags,
-      .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
-      .queueFamilyIndexCount = 0,
-      .pQueueFamilyIndices = nullptr,
-    };
-
-    VmaAllocationCreateInfo alloc_info{
-      .flags = 0,
-      .usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE,
-      .requiredFlags = 0,
-      .preferredFlags = 0,
-      .memoryTypeBits = 0,
-      .pool = nullptr,
-      .pUserData = nullptr,
-      .priority = 0,
-    };
-
-    alloc_info.preferredFlags = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT;
-    if (mapped_on_create) {
-      alloc_info.flags = VMA_ALLOCATION_CREATE_MAPPED_BIT |
-                         VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT;
-    }
-
-    VmaAllocationInfo alloc_info_result{};
-    vmaCreateBuffer(device.get_allocator().get(),
-                    &buffer_info,
-                    &alloc_info,
-                    &buffer,
-                    &allocation,
-                    mapped_on_create ? &alloc_info_result : nullptr);
-
-    if (mapped_on_create)
-      persistent_ptr = alloc_info_result.pMappedData;
-
-    current_size = size;
-  }
+  auto recreate(size_t size) -> void;
 
   VkBuffer buffer{};
   VmaAllocation allocation{};

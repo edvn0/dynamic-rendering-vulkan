@@ -16,3 +16,5 @@ imgui.ini
 
 compile_commands.json
 .vs
+
+.vscode/

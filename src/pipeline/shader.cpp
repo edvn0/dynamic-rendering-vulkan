@@ -1,12 +1,40 @@
 #include "shader.hpp"
 
+#include <array>
 #include <cassert>
 #include <filesystem>
 #include <fstream>
 #include <stdexcept>
 
-
 namespace {
+
+/**
+ * @brief Empty fragment shader SPIR-V bytecode.
+ *
+ * # version 460
+ * void main() {}
+ *
+ * glslangValidator -V empty_frag.frag -o empty_frag.frag.spv
+ * xxd -i empty_frag.spv
+ *
+ * Win 11 x64
+ */
+constexpr std::array<unsigned char, 180> empty_frag_spv = {
+  0x03, 0x02, 0x23, 0x07, 0x00, 0x00, 0x01, 0x00, 0x0b, 0x00, 0x08, 0x00, 0x06,
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x11, 0x00, 0x02, 0x00, 0x01, 0x00,
+  0x00, 0x00, 0x0b, 0x00, 0x06, 0x00, 0x01, 0x00, 0x00, 0x00, 0x47, 0x4c, 0x53,
+  0x4c, 0x2e, 0x73, 0x74, 0x64, 0x2e, 0x34, 0x35, 0x30, 0x00, 0x00, 0x00, 0x00,
+  0x0e, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x0f,
+  0x00, 0x05, 0x00, 0x04, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x6d, 0x61,
+  0x69, 0x6e, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x03, 0x00, 0x04, 0x00, 0x00,
+  0x00, 0x07, 0x00, 0x00, 0x00, 0x03, 0x00, 0x03, 0x00, 0x02, 0x00, 0x00, 0x00,
+  0xcc, 0x01, 0x00, 0x00, 0x05, 0x00, 0x04, 0x00, 0x04, 0x00, 0x00, 0x00, 0x6d,
+  0x61, 0x69, 0x6e, 0x00, 0x00, 0x00, 0x00, 0x13, 0x00, 0x02, 0x00, 0x02, 0x00,
+  0x00, 0x00, 0x21, 0x00, 0x03, 0x00, 0x03, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00,
+  0x00, 0x36, 0x00, 0x05, 0x00, 0x02, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00,
+  0x00, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0xf8, 0x00, 0x02, 0x00, 0x05,
+  0x00, 0x00, 0x00, 0xfd, 0x00, 0x01, 0x00, 0x38, 0x00, 0x01, 0x00
+};
 
 auto
 read_spirv_file(const std::string& path) -> std::vector<std::uint32_t>
@@ -27,30 +55,6 @@ read_spirv_file(const std::string& path) -> std::vector<std::uint32_t>
   return buffer;
 }
 
-auto
-to_vk_stage(ShaderStage stage) -> VkShaderStageFlagBits
-{
-  switch (stage) {
-    case ShaderStage::vertex:
-      return VK_SHADER_STAGE_VERTEX_BIT;
-    case ShaderStage::fragment:
-      return VK_SHADER_STAGE_FRAGMENT_BIT;
-    case ShaderStage::compute:
-      return VK_SHADER_STAGE_COMPUTE_BIT;
-    case ShaderStage::raygen:
-      return VK_SHADER_STAGE_RAYGEN_BIT_KHR;
-    case ShaderStage::closest_hit:
-      return VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
-    case ShaderStage::miss:
-      return VK_SHADER_STAGE_MISS_BIT_KHR;
-    case ShaderStage::any_hit:
-      return VK_SHADER_STAGE_ANY_HIT_BIT_KHR;
-    case ShaderStage::intersection:
-      return VK_SHADER_STAGE_INTERSECTION_BIT_KHR;
-  }
-  return VK_SHADER_STAGE_ALL; // fallback
-}
-
 } // namespace
 
 Shader::Shader(VkDevice device)
@@ -60,8 +64,8 @@ Shader::Shader(VkDevice device)
 
 Shader::~Shader()
 {
-  for (const auto& [_, module] : modules_)
-    vkDestroyShaderModule(device_, module, nullptr);
+  for (const auto& [_, shader_module] : modules_)
+    vkDestroyShaderModule(device_, shader_module, nullptr);
 }
 
 auto
@@ -78,8 +82,16 @@ Shader::create(const VkDevice device,
 auto
 Shader::load_stage(const ShaderStageInfo& info) -> void
 {
-  auto base_path = std::filesystem::path("assets/shaders/") / info.filepath;
-  auto spirv = read_spirv_file(base_path.string());
+  std::vector<std::uint32_t> spirv{};
+  if (!info.empty) {
+    namespace fs = std::filesystem;
+    auto base_path = fs::current_path() / fs::path("assets") /
+                     fs::path("shaders") / fs::path(info.filepath);
+    spirv = read_spirv_file(base_path.string());
+  } else {
+    spirv.resize(empty_frag_spv.size() / sizeof(std::uint32_t));
+    std::memcpy(spirv.data(), empty_frag_spv.data(), empty_frag_spv.size());
+  }
 
   VkShaderModuleCreateInfo create_info{
     .sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
@@ -89,14 +101,13 @@ Shader::load_stage(const ShaderStageInfo& info) -> void
     .pCode = spirv.data(),
   };
 
-  VkShaderModule module{};
-  if (vkCreateShaderModule(device_, &create_info, nullptr, &module) !=
+  VkShaderModule shader_module{};
+  if (vkCreateShaderModule(device_, &create_info, nullptr, &shader_module) !=
       VK_SUCCESS)
-    throw std::runtime_error("Failed to create shader module: " +
-                             info.filepath);
+    assert(false && "Failed to create shader module");
 
   spirv_cache_[info.stage] = std::move(spirv);
-  modules_[info.stage] = module;
+  modules_[info.stage] = shader_module;
 }
 
 auto

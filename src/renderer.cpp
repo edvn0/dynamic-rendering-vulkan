@@ -13,6 +13,15 @@ struct CameraBuffer
   glm::mat4 vp;
 };
 
+template<typename T, std::size_t N = image_count>
+static constexpr auto
+create_sized_array(const T& value) -> std::array<T, N>
+{
+  std::array<T, N> arr{};
+  arr.fill(value);
+  return arr;
+}
+
 auto
 Renderer::create_descriptor_set_layout() -> void
 {
@@ -54,9 +63,7 @@ Renderer::create_descriptor_set_layout() -> void
   vkCreateDescriptorPool(
     device->get_device(), &pool_info, nullptr, &descriptor_pool);
 
-  const std::array layouts{ renderer_descriptor_set_layout,
-                            renderer_descriptor_set_layout,
-                            renderer_descriptor_set_layout };
+  const auto layouts = create_sized_array(renderer_descriptor_set_layout);
   VkDescriptorSetAllocateInfo alloc_info{
     .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
     .pNext = nullptr,
@@ -151,6 +158,13 @@ Renderer::Renderer(const Device& dev,
     {
       .renderer_set_layout = renderer_descriptor_set_layout,
     });
+
+  z_prepass_pipeline = pipeline_factory->create_pipeline(
+    blueprint_registry->get("z_prepass"),
+    {
+      .renderer_set_layout = renderer_descriptor_set_layout,
+    });
+
   test_compute_pipeline = compute_pipeline_factory->create_pipeline(
     blueprint_registry->get("test_compute"));
 
@@ -179,6 +193,7 @@ Renderer::destroy() -> void
 
   test_compute_pipeline.reset();
   geometry_pipeline.reset();
+  z_prepass_pipeline.reset();
 
   camera_uniform_buffer.reset();
   geometry_depth_image.reset();
@@ -201,7 +216,7 @@ Renderer::~Renderer()
 auto
 Renderer::submit(const DrawCommand& cmd, const glm::mat4& transform) -> void
 {
-  const glm::vec3 center_ws = glm::vec3(transform[3]);
+  const auto center_ws = glm::vec3(transform[3]);
   const float radius_ws = 1.0f * glm::length(glm::vec3(transform[0]));
 
   if (!current_frustum.intersects(center_ws, radius_ws))
@@ -243,12 +258,12 @@ upload_instance_vertex_data(GPUBuffer& buffer, const auto& draw_commands)
 }
 
 auto
-Renderer::update_uniform_buffers(const glm::mat4& vp) -> void
+Renderer::update_uniform_buffers(std::uint32_t frame_index, const glm::mat4& vp)
+  -> void
 {
-  static CameraBuffer buffer;
-  buffer.vp = vp;
-  const std::array buffers{ buffer, buffer, buffer };
-  camera_uniform_buffer->upload(std::span(buffers));
+  const CameraBuffer buffer{ .vp = vp };
+  camera_uniform_buffer->upload_with_offset(std::span{ &buffer, 1 },
+                                            sizeof(CameraBuffer) * frame_index);
 }
 
 auto
@@ -261,7 +276,7 @@ Renderer::end_frame(std::uint32_t frame_index,
     return;
 
   const auto view_projection = projection * view;
-  update_uniform_buffers(view_projection);
+  update_uniform_buffers(frame_index, view_projection);
 
   run_compute_pass(frame_index);
 
@@ -269,13 +284,130 @@ Renderer::end_frame(std::uint32_t frame_index,
     upload_instance_vertex_data(*instance_vertex_buffer, draw_commands);
 
   command_buffer->begin_frame(frame_index);
+
+  run_z_prepass(frame_index, flat_draw_commands);
+  run_geometry_pass(frame_index, flat_draw_commands);
+
+  command_buffer->submit_and_end(frame_index,
+                                 compute_finished_semaphore.at(frame_index));
+  draw_commands.clear();
+}
+
+auto
+Renderer::resize(std::uint32_t width, std::uint32_t height) -> void
+{
+  geometry_image->resize(width, height);
+  geometry_depth_image->resize(width, height);
+}
+
+auto
+Renderer::get_output_image() const -> const Image&
+{
+  return *geometry_image;
+}
+
+#pragma region RenderPasses
+
+auto
+Renderer::run_z_prepass(std::uint32_t frame_index, const DrawList& draw_list)
+  -> void
+{
+  command_buffer->begin_timer(frame_index, "z_prepass");
+
+  const VkCommandBuffer cmd = command_buffer->get(frame_index);
+  CoreUtils::cmd_transition_to_depth_attachment(
+    cmd, geometry_depth_image->get_image());
+
+  VkClearValue depth_clear = { .depthStencil = { 0.0f, 0 } };
+
+  VkRenderingAttachmentInfo depth_attachment = {
+    .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+    .pNext = nullptr,
+    .imageView = geometry_depth_image->get_view(),
+    .imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+    .resolveMode = VK_RESOLVE_MODE_NONE,
+    .resolveImageView = VK_NULL_HANDLE,
+    .resolveImageLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+    .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+    .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+    .clearValue = depth_clear,
+  };
+
+  VkRenderingInfo rendering_info = {
+    .sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
+    .pNext = nullptr,
+    .flags = 0,
+    .renderArea = { .offset = { 0, 0 },
+                    .extent = { geometry_image->width(), geometry_image->height() }, },
+    .layerCount = 1,
+    .viewMask = 0,
+    .colorAttachmentCount = 0,
+    .pColorAttachments = nullptr,
+    .pDepthAttachment = &depth_attachment,
+    .pStencilAttachment = nullptr,
+  };
+
+  vkCmdBeginRendering(cmd, &rendering_info);
+
+  VkViewport viewport = {
+    .x = 0.f,
+    .y = static_cast<float>(geometry_image->height()),
+    .width = static_cast<float>(geometry_image->width()),
+    .height = -static_cast<float>(geometry_image->height()),
+    .minDepth = 0.f,
+    .maxDepth = 1.f,
+  };
+  vkCmdSetViewport(cmd, 0, 1, &viewport);
+  vkCmdSetScissor(cmd, 0, 1, &rendering_info.renderArea);
+
+  vkCmdBindPipeline(
+    cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, z_prepass_pipeline->pipeline);
+  vkCmdBindDescriptorSets(cmd,
+                          VK_PIPELINE_BIND_POINT_GRAPHICS,
+                          z_prepass_pipeline->layout,
+                          0,
+                          1,
+                          &renderer_descriptor_sets[frame_index],
+                          0,
+                          nullptr);
+  for (const auto& [cmd_info, offset] : draw_list) {
+    const std::array vertex_buffers = {
+      cmd_info.vertex_buffer->get(),
+      instance_vertex_buffer->get(),
+    };
+    constexpr std::array<VkDeviceSize, 2> offsets = { 0ULL, 0ULL };
+    vkCmdBindVertexBuffers(cmd,
+                           0,
+                           static_cast<std::uint32_t>(vertex_buffers.size()),
+                           vertex_buffers.data(),
+                           offsets.data());
+    vkCmdBindIndexBuffer(cmd,
+                         cmd_info.index_buffer->get(),
+                         0,
+                         cmd_info.index_buffer->get_index_type());
+
+    vkCmdDrawIndexed(
+      cmd,
+      static_cast<std::uint32_t>(cmd_info.index_buffer->get_count()),
+      static_cast<std::uint32_t>(draw_commands[cmd_info].size()),
+      0,
+      0,
+      offset);
+  }
+
+  vkCmdEndRendering(cmd);
+  command_buffer->end_timer(frame_index, "z_prepass");
+}
+
+auto
+Renderer::run_geometry_pass(std::uint32_t frame_index,
+                            const DrawList& draw_list) -> void
+{
   command_buffer->begin_timer(frame_index, "geometry_pass");
 
   const VkCommandBuffer cmd = command_buffer->get(frame_index);
   CoreUtils::cmd_transition_to_color_attachment(cmd,
                                                 geometry_image->get_image());
-  CoreUtils::cmd_transition_to_depth_attachment(
-    cmd, geometry_depth_image->get_image());
 
   VkClearValue clear_value = { .color = { { 0.f, 0.f, 0.f, 0.f } } };
   VkRenderingAttachmentInfo color_attachment = {
@@ -291,9 +423,6 @@ Renderer::end_frame(std::uint32_t frame_index,
     .clearValue = clear_value
   };
 
-  // Reverse the depth clear value to 1.0f for depth testing
-  VkClearValue depth_clear_value = { .depthStencil = { 0.0f, 0 } };
-
   VkRenderingAttachmentInfo depth_attachment = {
     .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
     .pNext = nullptr,
@@ -302,9 +431,9 @@ Renderer::end_frame(std::uint32_t frame_index,
     .resolveMode = VK_RESOLVE_MODE_NONE,
     .resolveImageView = VK_NULL_HANDLE,
     .resolveImageLayout = VK_IMAGE_LAYOUT_UNDEFINED,
-    .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+    .loadOp = VK_ATTACHMENT_LOAD_OP_LOAD,
     .storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
-    .clearValue = depth_clear_value
+    .clearValue = {}, // unused
   };
 
   VkRenderingInfo render_info = {
@@ -312,8 +441,7 @@ Renderer::end_frame(std::uint32_t frame_index,
     .pNext = nullptr,
     .flags = 0,
     .renderArea = { .offset = { 0, 0 },
-                    .extent = { geometry_image->width(),
-                                geometry_image->height(), }, },
+                    .extent = { geometry_image->width(), geometry_image->height() }, },
     .layerCount = 1,
     .viewMask = 0,
     .colorAttachmentCount = 1,
@@ -334,46 +462,44 @@ Renderer::end_frame(std::uint32_t frame_index,
   };
   vkCmdSetViewport(cmd, 0, 1, &viewport);
   vkCmdSetScissor(cmd, 0, 1, &render_info.renderArea);
+  vkCmdBindDescriptorSets(cmd,
+                          VK_PIPELINE_BIND_POINT_GRAPHICS,
+                          geometry_pipeline->layout,
+                          0,
+                          1,
+                          &renderer_descriptor_sets[frame_index],
+                          0,
+                          nullptr);
+  vkCmdBindPipeline(
+    cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, geometry_pipeline->pipeline);
 
-  for (const auto& [command, offset] : flat_draw_commands) {
-    const auto& geometry_material = command.override_material
-                                      ? command.override_material
-                                      : default_geometry_material.get();
-    (void)geometry_material;
+  for (const auto& [cmd_info, offset] : draw_list) {
+    const auto& material = cmd_info.override_material
+                             ? cmd_info.override_material
+                             : default_geometry_material.get();
+    (void)material;
 
     const auto instance_count =
-      static_cast<std::uint32_t>(draw_commands[command].size());
+      static_cast<std::uint32_t>(draw_commands[cmd_info].size());
 
     const std::array vertex_buffers = {
-      command.vertex_buffer->get(),
+      cmd_info.vertex_buffer->get(),
       instance_vertex_buffer->get(),
     };
-    constexpr std::array<VkDeviceSize, 2> offsets = {
-      0ULL,
-      0ULL,
-    };
+    constexpr std::array<VkDeviceSize, 2> offsets = { 0ULL, 0ULL };
     vkCmdBindVertexBuffers(cmd,
                            0,
                            static_cast<std::uint32_t>(vertex_buffers.size()),
                            vertex_buffers.data(),
                            offsets.data());
     vkCmdBindIndexBuffer(cmd,
-                         command.index_buffer->get(),
+                         cmd_info.index_buffer->get(),
                          0,
-                         command.index_buffer->get_index_type());
-    vkCmdBindPipeline(
-      cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, geometry_pipeline->pipeline);
-    vkCmdBindDescriptorSets(cmd,
-                            VK_PIPELINE_BIND_POINT_GRAPHICS,
-                            geometry_pipeline->layout,
-                            0,
-                            1,
-                            &renderer_descriptor_sets[frame_index],
-                            0,
-                            nullptr);
+                         cmd_info.index_buffer->get_index_type());
+
     vkCmdDrawIndexed(
       cmd,
-      static_cast<std::uint32_t>(command.index_buffer->get_count()),
+      static_cast<std::uint32_t>(cmd_info.index_buffer->get_count()),
       instance_count,
       0,
       0,
@@ -384,23 +510,6 @@ Renderer::end_frame(std::uint32_t frame_index,
   CoreUtils::cmd_transition_to_shader_read(cmd, geometry_image->get_image());
 
   command_buffer->end_timer(frame_index, "geometry_pass");
-  command_buffer->submit_and_end(frame_index,
-                                 compute_finished_semaphore.at(frame_index));
-
-  draw_commands.clear();
-}
-
-auto
-Renderer::resize(std::uint32_t width, std::uint32_t height) -> void
-{
-  geometry_image->resize(width, height);
-  geometry_depth_image->resize(width, height);
-}
-
-auto
-Renderer::get_output_image() const -> const Image&
-{
-  return *geometry_image;
 }
 
 auto
@@ -410,8 +519,6 @@ Renderer::run_compute_pass(std::uint32_t frame_index) -> void
   compute_command_buffer->begin_timer(frame_index, "test_compute_pass");
 
   const VkCommandBuffer cmd = compute_command_buffer->get(frame_index);
-  (void)cmd;
-
   // Optional: insert debug marker or timestamp
   // vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, ...)
 
@@ -430,3 +537,5 @@ Renderer::run_compute_pass(std::uint32_t frame_index) -> void
     compute_finished_semaphore.at(frame_index),
     VK_NULL_HANDLE);
 }
+
+#pragma endregion RenderPasses

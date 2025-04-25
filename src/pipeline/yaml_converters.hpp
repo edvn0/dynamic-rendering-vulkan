@@ -86,23 +86,28 @@ struct convert<ShaderStageInfo>
 {
   static bool decode(const Node& node, ShaderStageInfo& info)
   {
-    auto stage = node["stage"].as<std::string>();
-    info.filepath = node["path"].as<std::string>();
-
-    if (stage == "vertex")
+    const auto stage_str = node["stage"].as<std::string>();
+    if (stage_str == "vertex")
       info.stage = ShaderStage::vertex;
-    else if (stage == "fragment")
+    else if (stage_str == "fragment")
       info.stage = ShaderStage::fragment;
-    else if (stage == "compute")
+    else if (stage_str == "compute")
       info.stage = ShaderStage::compute;
-    else if (stage == "raygen")
+    else if (stage_str == "raygen")
       info.stage = ShaderStage::raygen;
-    else if (stage == "closest_hit")
+    else if (stage_str == "closest_hit")
       info.stage = ShaderStage::closest_hit;
-    else if (stage == "miss")
+    else if (stage_str == "miss")
       info.stage = ShaderStage::miss;
     else
-      throw std::runtime_error("Invalid shader stage: " + stage);
+      assert(false && "Unsupported shader stage");
+
+    if (node["empty"] && node["empty"].as<bool>() == true) {
+      info.empty = true;
+      info.filepath = "";
+    } else {
+      info.filepath = node["path"].as<std::string>();
+    }
 
     return true;
   }

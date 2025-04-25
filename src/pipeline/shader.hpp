@@ -22,6 +22,7 @@ struct ShaderStageInfo
 {
   ShaderStage stage;
   std::string filepath;
+  bool empty{ false }; // Support empty fragment shader.
 };
 
 class Shader
