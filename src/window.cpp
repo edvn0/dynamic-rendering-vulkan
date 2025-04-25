@@ -2,7 +2,9 @@
 
 #include "VkBootstrap.h"
 #include "event_system.hpp"
+#include "input.hpp"
 #include "instance.hpp"
+
 
 #include "GLFW/glfw3.h"
 #include <bit>
@@ -81,24 +83,8 @@ Window::Window()
 
   glfwSetWindowUserPointer(glfw_window, user_data.get());
   hookup_events();
-}
 
-auto
-Window ::destroy(const Core::Instance& instance) -> void
-{
-  vkb::destroy_surface(instance.vkb(), vk_surface);
-  if (glfw_window) {
-    glfwDestroyWindow(glfw_window);
-  }
-  glfwTerminate();
-}
-
-Window::~Window()
-{
-  if (glfw_window) {
-    glfwDestroyWindow(glfw_window);
-  }
-  glfwTerminate();
+  Input::initialise(glfw_window);
 }
 
 auto
@@ -110,6 +96,34 @@ Window::create_surface(const Core::Instance& instance) -> void
     glfwTerminate();
     assert(false && "Failed to create window surface");
   }
+}
+
+Window::~Window()
+{
+  cleanup();
+}
+
+auto
+Window::destroy(const Core::Instance& instance) -> void
+{
+  if (vk_surface != VK_NULL_HANDLE)
+    vkb::destroy_surface(instance.vkb(), vk_surface);
+  cleanup();
+}
+
+auto
+Window::cleanup() -> void
+{
+  if (destroyed)
+    return;
+
+  if (glfw_window)
+    glfwDestroyWindow(glfw_window);
+
+  glfwTerminate();
+  destroyed = true;
+
+  Input::destroy();
 }
 
 auto

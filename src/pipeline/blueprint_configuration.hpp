@@ -68,4 +68,5 @@ struct PipelineBlueprint
 struct PipelineLayoutInfo
 {
   VkDescriptorSetLayout renderer_set_layout{};
+  std::vector<VkDescriptorSetLayout> material_sets{};
 };

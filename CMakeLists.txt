@@ -14,10 +14,10 @@ add_subdirectory(third_party)
 
 add_executable(${PROJECT_NAME} src/main.cpp src/window.cpp src/swapchain.cpp src/gui_system.cpp src/command_buffer.cpp src/allocator.cpp
   src/pipeline/blueprint_configuration.cpp src/pipeline/blueprint_registry.cpp src/pipeline/shader.cpp src/pipeline/pipeline_factory.cpp
-  src/image.cpp src/device.cpp src/gpu_buffer.cpp src/renderer.cpp src/pipeline/compute_pipeline_factory.cpp src/layer.cpp
-  src/camera.cpp
+  src/image.cpp src/device.cpp src/gpu_buffer.cpp src/renderer.cpp src/pipeline/compute_pipeline_factory.cpp src/pipeline/compiled_pipeline.cpp src/layer.cpp
+  src/camera.cpp src/material.cpp "src/input.cpp"
 )
-target_link_libraries(${PROJECT_NAME} PRIVATE Vulkan::Vulkan glm::glm vk-bootstrap::vk-bootstrap glfw imgui imguizmo::imguizmo VulkanMemoryAllocator yaml-cpp)
+target_link_libraries(${PROJECT_NAME} PRIVATE Vulkan::Vulkan glm::glm vk-bootstrap::vk-bootstrap glfw imgui imguizmo::imguizmo VulkanMemoryAllocator yaml-cpp spirv-reflect-static)
 target_include_directories(${PROJECT_NAME} PRIVATE src)
 
 if(CMAKE_BUILD_TYPE STREQUAL "Debug" OR CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo")

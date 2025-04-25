@@ -4,26 +4,17 @@
 #include <vulkan/vulkan.h>
 
 #include "blueprint_configuration.hpp"
+#include "forward.hpp"
+#include "ipipeline_factory.hpp"
 
-class Device;
-
-struct CompiledPipeline
-{
-  VkPipeline pipeline{ VK_NULL_HANDLE };
-  VkPipelineLayout layout{ VK_NULL_HANDLE };
-  VkPipelineBindPoint bind_point{ VK_PIPELINE_BIND_POINT_GRAPHICS };
-  const Device* device{ nullptr };
-
-  ~CompiledPipeline();
-};
-
-class PipelineFactory
+class PipelineFactory : public IPipelineFactory
 {
 public:
+  ~PipelineFactory() override = default;
   explicit PipelineFactory(const Device& device);
   auto create_pipeline(const PipelineBlueprint&,
                        const PipelineLayoutInfo&) const
-    -> std::unique_ptr<CompiledPipeline>;
+    -> std::unique_ptr<CompiledPipeline> override;
 
 private:
   const Device* device;

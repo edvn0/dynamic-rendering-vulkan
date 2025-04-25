@@ -65,7 +65,7 @@ public:
     info.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
 
     vkCreateSampler(vk_device, &info, nullptr, &sampler);
-    return cache.emplace(info, sampler).first->second;
+    return cache.try_emplace(info, sampler).first->second;
   }
 
   auto destroy_all() -> void

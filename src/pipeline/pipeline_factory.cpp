@@ -1,19 +1,13 @@
-#include "pipeline_factory.hpp"
+#include "pipeline/pipeline_factory.hpp"
+
+#include "pipeline/compiled_pipeline.hpp"
 
 #include "device.hpp"
 
 #include <array>
 #include <vulkan/vulkan_core.h>
 
-CompiledPipeline::~CompiledPipeline()
-{
-  if (layout)
-    vkDestroyPipelineLayout(device->get_device(), layout, nullptr);
-  if (pipeline)
-    vkDestroyPipeline(device->get_device(), pipeline, nullptr);
-}
-
-static auto to_vk_stage = [](ShaderStage stage) -> VkShaderStageFlagBits {
+static auto to_vk_stage = [](ShaderStage stage) {
   switch (stage) {
     case ShaderStage::vertex:
       return VK_SHADER_STAGE_VERTEX_BIT;
@@ -63,7 +57,7 @@ PipelineFactory::create_pipeline(const PipelineBlueprint& blueprint,
                                  const PipelineLayoutInfo& layout_info) const
   -> std::unique_ptr<CompiledPipeline>
 {
-  auto shader = Shader::create(device->get_device(), blueprint.shader_stages);
+  auto shader = Shader::create(*device, blueprint.shader_stages);
 
   std::vector<VkPipelineShaderStageCreateInfo> shader_infos;
   for (const auto& info : blueprint.shader_stages) {
@@ -101,9 +95,11 @@ PipelineFactory::create_pipeline(const PipelineBlueprint& blueprint,
     .sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
     .pNext = nullptr,
     .flags = 0,
-    .vertexBindingDescriptionCount = static_cast<uint32_t>(bindings.size()),
+    .vertexBindingDescriptionCount =
+      static_cast<std::uint32_t>(bindings.size()),
     .pVertexBindingDescriptions = bindings.data(),
-    .vertexAttributeDescriptionCount = static_cast<uint32_t>(attributes.size()),
+    .vertexAttributeDescriptionCount =
+      static_cast<std::uint32_t>(attributes.size()),
     .pVertexAttributeDescriptions = attributes.data(),
   };
 
@@ -194,7 +190,7 @@ PipelineFactory::create_pipeline(const PipelineBlueprint& blueprint,
     .sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
     .pNext = nullptr,
     .flags = 0,
-    .dynamicStateCount = static_cast<uint32_t>(dynamic_states.size()),
+    .dynamicStateCount = static_cast<std::uint32_t>(dynamic_states.size()),
     .pDynamicStates = dynamic_states.data(),
   };
 
@@ -226,7 +222,8 @@ PipelineFactory::create_pipeline(const PipelineBlueprint& blueprint,
       color_attachment_formats.push_back(attachment.format);
 
   VkFormat depth_format = VK_FORMAT_UNDEFINED;
-  if (blueprint.depth_attachment.has_value())
+  if (blueprint.depth_attachment.has_value() &&
+      blueprint.depth_attachment->is_depth())
     depth_format = blueprint.depth_attachment->format;
 
   VkPipelineRenderingCreateInfo rendering_info{
@@ -234,20 +231,25 @@ PipelineFactory::create_pipeline(const PipelineBlueprint& blueprint,
     .pNext = nullptr,
     .viewMask = 0,
     .colorAttachmentCount =
-      static_cast<uint32_t>(color_attachment_formats.size()),
+      static_cast<std::uint32_t>(color_attachment_formats.size()),
     .pColorAttachmentFormats = color_attachment_formats.data(),
     .depthAttachmentFormat = depth_format,
     .stencilAttachmentFormat = VK_FORMAT_UNDEFINED,
   };
 
-  const std::array layouts{ layout_info.renderer_set_layout };
+  std::vector<VkDescriptorSetLayout> layouts{
+    layout_info.renderer_set_layout,
+  };
+  layouts.insert(layouts.end(),
+                 layout_info.material_sets.begin(),
+                 layout_info.material_sets.end());
   VkPipelineLayout layout = create_pipeline_layout(blueprint, layouts);
 
   VkGraphicsPipelineCreateInfo pipeline_info{
     .sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
     .pNext = &rendering_info,
     .flags = 0,
-    .stageCount = static_cast<uint32_t>(shader_infos.size()),
+    .stageCount = static_cast<std::uint32_t>(shader_infos.size()),
     .pStages = shader_infos.data(),
     .pVertexInputState = &vertex_input,
     .pInputAssemblyState = &input_assembly,
@@ -276,6 +278,9 @@ PipelineFactory::create_pipeline(const PipelineBlueprint& blueprint,
     assert(false && "Could not create pipeline");
   }
 
-  return std::make_unique<CompiledPipeline>(
-    pipeline, layout, VK_PIPELINE_BIND_POINT_GRAPHICS, device);
+  return std::make_unique<CompiledPipeline>(pipeline,
+                                            layout,
+                                            VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                            std::move(shader),
+                                            device);
 }

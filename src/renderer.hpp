@@ -56,9 +56,10 @@ public:
   auto destroy() -> void;
 
   auto submit(const DrawCommand&, const glm::mat4& = glm::mat4{ 1.0F }) -> void;
-  auto end_frame(std::uint32_t,
-                 const glm::mat4& projection,
-                 const glm::mat4& view) -> void;
+  auto begin_frame(std::uint32_t,
+                   const glm::mat4& projection,
+                   const glm::mat4& view) -> void;
+  auto end_frame(std::uint32_t) -> void;
   auto resize(std::uint32_t, std::uint32_t) -> void;
   auto get_output_image() const -> const Image&;
   auto get_command_buffer() const -> CommandBuffer& { return *command_buffer; }
@@ -68,7 +69,7 @@ public:
   }
   auto update_frustum(const glm::mat4& vp) -> void
   {
-    current_frustum = Frustum::from_matrix(vp);
+    current_frustum.update(vp);
   }
 
 private:
@@ -90,7 +91,9 @@ private:
   std::unique_ptr<Image> geometry_depth_image;
   std::unique_ptr<CompiledPipeline> geometry_pipeline;
   std::unique_ptr<CompiledPipeline> z_prepass_pipeline;
-  std::unique_ptr<CompiledComputePipeline> test_compute_pipeline;
+
+  std::unique_ptr<GPUBuffer> test_compute_buffer;
+  std::unique_ptr<Material> test_compute_material;
 
   std::unordered_map<DrawCommand, std::vector<InstanceData>, DrawCommandHasher>
     draw_commands{};
@@ -111,19 +114,23 @@ private:
     static auto from_matrix(const glm::mat4& vp) -> Frustum
     {
       Frustum f;
+      f.update(vp);
+      return f;
+    }
+
+    auto update(const glm::mat4& vp) -> void
+    {
       const glm::mat4 m = glm::transpose(vp);
 
-      f.planes[0] = m[3] + m[0];
-      f.planes[1] = m[3] - m[0];
-      f.planes[2] = m[3] + m[1];
-      f.planes[3] = m[3] - m[1];
-      f.planes[4] = m[3] + m[2];
-      f.planes[5] = m[3] - m[2];
+      planes[0] = m[3] + m[0];
+      planes[1] = m[3] - m[0];
+      planes[2] = m[3] + m[1];
+      planes[3] = m[3] - m[1];
+      planes[4] = m[3] + m[2];
+      planes[5] = m[3] - m[2];
 
-      for (auto& plane : f.planes)
+      for (auto& plane : planes)
         plane /= glm::length(glm::vec3(plane));
-
-      return f;
     }
 
     auto intersects(const glm::vec3& center, float radius) const -> bool

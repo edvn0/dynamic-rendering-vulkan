@@ -38,6 +38,8 @@ private:
   VkSurfaceKHR vk_surface{ VK_NULL_HANDLE };
   struct WindowData;
   std::unique_ptr<WindowData> user_data;
+  bool destroyed{ false };
 
+  auto cleanup() -> void;
   auto hookup_events() -> void;
 };

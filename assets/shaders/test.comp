@@ -1,7 +1,26 @@
 #version 460
 
-layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
+layout(set = 0, binding = 0, std140) uniform UniformBufferObject {
+  mat4 model_view_projection;
+}
+ubo;
+
+
+layout(set = 1, binding = 0, std430) buffer StorageBuffer {
+  uint data_length;
+  float data[];
+}
+data_ssbo;
+
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
 void
 main()
 {
+  uint index = gl_GlobalInvocationID.x;
+  if (index >= data_ssbo.data_length)
+    return;
+
+  data_ssbo.data[index] += 1.0;
 }

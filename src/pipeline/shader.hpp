@@ -6,6 +6,8 @@
 #include <vector>
 #include <vulkan/vulkan.h>
 
+class Device;
+
 enum class ShaderStage : std::uint8_t
 {
   vertex,
@@ -28,7 +30,7 @@ struct ShaderStageInfo
 class Shader
 {
 public:
-  static auto create(const VkDevice device,
+  static auto create(const Device& device,
                      const std::vector<ShaderStageInfo>& stages)
     -> std::unique_ptr<Shader>;
 
@@ -37,12 +39,14 @@ public:
 
   ~Shader();
 
-private:
-  Shader(VkDevice device);
+  static auto load_binary(const std::string_view file_path)
+    -> std::vector<std::uint32_t>;
 
+private:
+  explicit Shader(const Device& device);
   auto load_stage(const ShaderStageInfo& info) -> void;
 
-  VkDevice device_;
+  const Device* device{ nullptr };
   std::unordered_map<ShaderStage, VkShaderModule> modules_;
   std::unordered_map<ShaderStage, std::vector<std::uint32_t>> spirv_cache_;
 };

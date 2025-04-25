@@ -2,13 +2,7 @@
 #include "device.hpp"
 #include "shader.hpp"
 
-CompiledComputePipeline::~CompiledComputePipeline()
-{
-  if (layout)
-    vkDestroyPipelineLayout(device->get_device(), layout, nullptr);
-  if (pipeline)
-    vkDestroyPipeline(device->get_device(), pipeline, nullptr);
-}
+#include <array>
 
 ComputePipelineFactory::ComputePipelineFactory(const Device& dev)
   : device(&dev)
@@ -16,15 +10,16 @@ ComputePipelineFactory::ComputePipelineFactory(const Device& dev)
 }
 
 auto
-ComputePipelineFactory::create_pipeline_layout(const PipelineBlueprint&) const
-  -> VkPipelineLayout
+ComputePipelineFactory::create_pipeline_layout(
+  const PipelineBlueprint&,
+  std::span<const VkDescriptorSetLayout> layouts) const -> VkPipelineLayout
 {
   VkPipelineLayoutCreateInfo layout_info{
     .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
     .pNext = nullptr,
     .flags = 0,
-    .setLayoutCount = 0,
-    .pSetLayouts = nullptr,
+    .setLayoutCount = static_cast<std::uint32_t>(layouts.size()),
+    .pSetLayouts = layouts.data(),
     .pushConstantRangeCount = 0,
     .pPushConstantRanges = nullptr,
   };
@@ -35,10 +30,12 @@ ComputePipelineFactory::create_pipeline_layout(const PipelineBlueprint&) const
 }
 
 auto
-ComputePipelineFactory::create_pipeline(const PipelineBlueprint& blueprint)
-  const -> std::unique_ptr<CompiledComputePipeline>
+ComputePipelineFactory::create_pipeline(
+  const PipelineBlueprint& blueprint,
+  const PipelineLayoutInfo& descriptor_layout_info) const
+  -> std::unique_ptr<CompiledPipeline>
 {
-  auto shader = Shader::create(device->get_device(), blueprint.shader_stages);
+  auto shader = Shader::create(*device, blueprint.shader_stages);
   const auto& stage_info = blueprint.shader_stages.front();
 
   VkPipelineShaderStageCreateInfo stage{
@@ -51,7 +48,13 @@ ComputePipelineFactory::create_pipeline(const PipelineBlueprint& blueprint)
     .pSpecializationInfo = nullptr,
   };
 
-  VkPipelineLayout layout = create_pipeline_layout(blueprint);
+  std::vector<VkDescriptorSetLayout> layouts{
+    descriptor_layout_info.renderer_set_layout,
+  };
+  layouts.insert(layouts.end(),
+                 descriptor_layout_info.material_sets.begin(),
+                 descriptor_layout_info.material_sets.end());
+  VkPipelineLayout layout = create_pipeline_layout(blueprint, layouts);
 
   VkComputePipelineCreateInfo pipeline_info{
     .sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
@@ -71,6 +74,9 @@ ComputePipelineFactory::create_pipeline(const PipelineBlueprint& blueprint)
                            nullptr,
                            &pipeline);
 
-  return std::make_unique<CompiledComputePipeline>(
-    pipeline, layout, VK_PIPELINE_BIND_POINT_COMPUTE, device);
+  return std::make_unique<CompiledPipeline>(pipeline,
+                                            layout,
+                                            VK_PIPELINE_BIND_POINT_COMPUTE,
+                                            std::move(shader),
+                                            device);
 }

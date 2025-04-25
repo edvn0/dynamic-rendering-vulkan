@@ -1,31 +1,27 @@
 #pragma once
 
+#include <span>
 #include <vulkan/vulkan.h>
 
 #include "blueprint_configuration.hpp"
+#include "compiled_pipeline.hpp"
+#include "ipipeline_factory.hpp"
 
 class Device;
 class Shader;
 
-struct CompiledComputePipeline
-{
-  VkPipeline pipeline{ VK_NULL_HANDLE };
-  VkPipelineLayout layout{ VK_NULL_HANDLE };
-  VkPipelineBindPoint bind_point{ VK_PIPELINE_BIND_POINT_COMPUTE };
-  const Device* device{ nullptr };
-
-  ~CompiledComputePipeline();
-};
-
-class ComputePipelineFactory
+class ComputePipelineFactory : public IPipelineFactory
 {
 public:
+  ~ComputePipelineFactory() override = default;
   explicit ComputePipelineFactory(const Device& device);
-  auto create_pipeline(const PipelineBlueprint&) const
-    -> std::unique_ptr<CompiledComputePipeline>;
+  auto create_pipeline(const PipelineBlueprint&,
+                       const PipelineLayoutInfo&) const
+    -> std::unique_ptr<CompiledPipeline> override;
 
 private:
   const Device* device;
-  auto create_pipeline_layout(const PipelineBlueprint&) const
+  auto create_pipeline_layout(const PipelineBlueprint&,
+                              std::span<const VkDescriptorSetLayout>) const
     -> VkPipelineLayout;
 };

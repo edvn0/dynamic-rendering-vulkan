@@ -165,13 +165,26 @@ Renderer::Renderer(const Device& dev,
       .renderer_set_layout = renderer_descriptor_set_layout,
     });
 
-  test_compute_pipeline = compute_pipeline_factory->create_pipeline(
-    blueprint_registry->get("test_compute"));
+  test_compute_material =
+    Material::create(*device,
+                     blueprint_registry->get("test_compute"),
+                     renderer_descriptor_set_layout);
+
+  struct DataSSBO
+  {
+    std::uint32_t count = 10 * 10;
+    std::uint32_t padding[3] = { 0, 0, 0 };
+    float data[10 * 10];
+  } ssbo;
+  test_compute_buffer = std::make_unique<GPUBuffer>(
+    *device, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, true);
+  test_compute_buffer->upload(std::span{ &ssbo, 1 });
+
+  test_compute_material->upload("data_ssbo", test_compute_buffer.get());
 
   {
     instance_vertex_buffer =
       std::make_unique<GPUBuffer>(dev, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, true);
-    // Size this to 48bytes (3 glm::vec4s) * 10000 instances
     static constexpr auto instance_size = sizeof(glm::vec4) * 3;
     static constexpr auto instance_count = 1'000'000;
     static constexpr auto instance_size_bytes = instance_size * instance_count;
@@ -191,10 +204,11 @@ Renderer::destroy() -> void
   vkDestroyDescriptorSetLayout(
     device->get_device(), renderer_descriptor_set_layout, nullptr);
 
-  test_compute_pipeline.reset();
   geometry_pipeline.reset();
   z_prepass_pipeline.reset();
+  test_compute_material.reset();
 
+  test_compute_buffer.reset();
   camera_uniform_buffer.reset();
   geometry_depth_image.reset();
   geometry_image.reset();
@@ -267,29 +281,35 @@ Renderer::update_uniform_buffers(std::uint32_t frame_index, const glm::mat4& vp)
 }
 
 auto
-Renderer::end_frame(std::uint32_t frame_index,
-                    const glm::mat4& projection,
-                    const glm::mat4& view) -> void
+Renderer::begin_frame(std::uint32_t frame_index,
+                      const glm::mat4& projection,
+                      const glm::mat4& view) -> void
 {
+  const auto view_projection = projection * view;
+  update_uniform_buffers(frame_index, view_projection);
+  update_frustum(view_projection);
+  draw_commands.clear();
+}
 
+auto
+Renderer::end_frame(std::uint32_t frame_index) -> void
+{
   if (draw_commands.empty())
     return;
 
-  const auto view_projection = projection * view;
-  update_uniform_buffers(frame_index, view_projection);
-
   run_compute_pass(frame_index);
 
-  auto flat_draw_commands =
-    upload_instance_vertex_data(*instance_vertex_buffer, draw_commands);
+  {
+    auto flat_draw_commands =
+      upload_instance_vertex_data(*instance_vertex_buffer, draw_commands);
+    command_buffer->begin_frame(frame_index);
 
-  command_buffer->begin_frame(frame_index);
+    run_z_prepass(frame_index, flat_draw_commands);
+    run_geometry_pass(frame_index, flat_draw_commands);
 
-  run_z_prepass(frame_index, flat_draw_commands);
-  run_geometry_pass(frame_index, flat_draw_commands);
-
-  command_buffer->submit_and_end(frame_index,
-                                 compute_finished_semaphore.at(frame_index));
+    command_buffer->submit_and_end(frame_index,
+                                   compute_finished_semaphore.at(frame_index));
+  }
   draw_commands.clear();
 }
 
@@ -474,16 +494,17 @@ Renderer::run_geometry_pass(std::uint32_t frame_index,
     cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, geometry_pipeline->pipeline);
 
   for (const auto& [cmd_info, offset] : draw_list) {
-    const auto& material = cmd_info.override_material
-                             ? cmd_info.override_material
-                             : default_geometry_material.get();
+    auto&& [vertex_buffer, index_buffer, override_material] = cmd_info;
+
+    const auto& material =
+      override_material ? override_material : default_geometry_material.get();
     (void)material;
 
     const auto instance_count =
       static_cast<std::uint32_t>(draw_commands[cmd_info].size());
 
     const std::array vertex_buffers = {
-      cmd_info.vertex_buffer->get(),
+      vertex_buffer->get(),
       instance_vertex_buffer->get(),
     };
     constexpr std::array<VkDeviceSize, 2> offsets = { 0ULL, 0ULL };
@@ -492,18 +513,15 @@ Renderer::run_geometry_pass(std::uint32_t frame_index,
                            static_cast<std::uint32_t>(vertex_buffers.size()),
                            vertex_buffers.data(),
                            offsets.data());
-    vkCmdBindIndexBuffer(cmd,
-                         cmd_info.index_buffer->get(),
-                         0,
-                         cmd_info.index_buffer->get_index_type());
+    vkCmdBindIndexBuffer(
+      cmd, index_buffer->get(), 0, index_buffer->get_index_type());
 
-    vkCmdDrawIndexed(
-      cmd,
-      static_cast<std::uint32_t>(cmd_info.index_buffer->get_count()),
-      instance_count,
-      0,
-      0,
-      offset);
+    vkCmdDrawIndexed(cmd,
+                     static_cast<std::uint32_t>(index_buffer->get_count()),
+                     instance_count,
+                     0,
+                     0,
+                     offset);
   }
 
   vkCmdEndRendering(cmd);
@@ -518,12 +536,29 @@ Renderer::run_compute_pass(std::uint32_t frame_index) -> void
   compute_command_buffer->begin_frame(frame_index);
   compute_command_buffer->begin_timer(frame_index, "test_compute_pass");
 
-  const VkCommandBuffer cmd = compute_command_buffer->get(frame_index);
+  const auto cmd = compute_command_buffer->get(frame_index);
   // Optional: insert debug marker or timestamp
   // vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, ...)
 
+  const auto& material_set =
+    test_compute_material->prepare_for_rendering(frame_index);
+  auto& test_compute_pipeline = test_compute_material->get_pipeline();
+
   vkCmdBindPipeline(
-    cmd, test_compute_pipeline->bind_point, test_compute_pipeline->pipeline);
+    cmd, test_compute_pipeline.bind_point, test_compute_pipeline.pipeline);
+  const std::array descriptor_sets{
+    renderer_descriptor_sets[frame_index],
+    material_set,
+  };
+  vkCmdBindDescriptorSets(cmd,
+                          test_compute_pipeline.bind_point,
+                          test_compute_pipeline.layout,
+                          0,
+                          static_cast<std::uint32_t>(descriptor_sets.size()),
+                          descriptor_sets.data(),
+                          0,
+                          nullptr);
+
   vkCmdDispatch(cmd,
                 1,  // x
                 1,  // y

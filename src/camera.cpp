@@ -3,93 +3,11 @@
 #include <algorithm>
 #include <array>
 
+#include "input.hpp"
+
 auto
-Camera::on_event(Event& event) -> bool
+Camera::on_event(Event&) -> bool
 {
-  EventDispatcher dispatcher(event);
-  dispatcher.dispatch<KeyPressedEvent>([&](KeyPressedEvent& e) {
-    switch (e.key) {
-      using enum KeyCode;
-      case W:
-        movement[0] = true;
-        break;
-      case S:
-        movement[1] = true;
-        break;
-      case A:
-        movement[2] = true;
-        break;
-      case D:
-        movement[3] = true;
-        break;
-      case Q:
-        movement[4] = true;
-        break;
-      case E:
-        movement[5] = true;
-        break;
-      default:
-        break;
-    }
-    return false;
-  });
-  dispatcher.dispatch<KeyReleasedEvent>([&](KeyReleasedEvent& e) {
-    switch (e.key) {
-      using enum KeyCode;
-      case W:
-        movement[0] = false;
-        break;
-      case S:
-        movement[1] = false;
-        break;
-      case A:
-        movement[2] = false;
-        break;
-      case D:
-        movement[3] = false;
-        break;
-      case Q:
-        movement[4] = false;
-        break;
-      case E:
-        movement[5] = false;
-        break;
-      default:
-        break;
-    }
-    return false;
-  });
-  dispatcher.dispatch<MouseButtonPressedEvent>([&](auto& e) {
-    if (e.button == GLFW_MOUSE_BUTTON_RIGHT)
-      right_mouse_down = true;
-    return false;
-  });
-  dispatcher.dispatch<MouseButtonReleasedEvent>([&](auto& e) {
-    if (e.button == GLFW_MOUSE_BUTTON_RIGHT)
-      right_mouse_down = false;
-    return false;
-  });
-  dispatcher.dispatch<MouseMovedEvent>([&](MouseMovedEvent& e) {
-    if (!right_mouse_down)
-      return false;
-    if (first_mouse) {
-      last_mouse_x = e.x;
-      last_mouse_y = e.y;
-      first_mouse = false;
-      return false;
-    }
-    auto dx = static_cast<float>(e.x - last_mouse_x);
-    auto dy = static_cast<float>(last_mouse_y - e.y); // flip Y
-    last_mouse_x = e.x;
-    last_mouse_y = e.y;
-
-    yaw += dx * sensitivity;
-    pitch += dy * sensitivity;
-    pitch = std::clamp(pitch, -89.0f, 89.0f);
-
-    update_vectors();
-    return true;
-  });
   return false;
 }
 
@@ -97,22 +15,37 @@ auto
 Camera::on_update(double delta_time) -> void
 {
   glm::vec3 velocity{ 0.0f };
-  if (movement[0])
+
+  using enum KeyCode;
+  if (Input::key_pressed(W))
     velocity += front;
-  if (movement[1])
+  if (Input::key_pressed(S))
     velocity -= front;
-  if (movement[2])
+  if (Input::key_pressed(A))
     velocity -= right;
-  if (movement[3])
+  if (Input::key_pressed(D))
     velocity += right;
-  if (movement[4])
+  if (Input::key_pressed(Q))
     velocity -= up;
-  if (movement[5])
+  if (Input::key_pressed(E))
     velocity += up;
 
   if (glm::length(velocity) > 0.0f)
     position +=
       glm::normalize(velocity) * speed * static_cast<float>(delta_time);
+
+  if (right_mouse_down && !first_mouse) {
+    auto [x, y] = Input::mouse_position();
+    auto dx = static_cast<float>(x - last_mouse_x);
+    auto dy = static_cast<float>(last_mouse_y - y);
+    last_mouse_x = x;
+    last_mouse_y = y;
+
+    yaw += dx * sensitivity;
+    pitch += dy * sensitivity;
+    pitch = std::clamp(pitch, -89.0f, 89.0f);
+    update_vectors();
+  }
 
   set_view(position, position + front, up);
 }

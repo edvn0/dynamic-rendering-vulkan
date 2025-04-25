@@ -6,6 +6,8 @@
 #include <fstream>
 #include <stdexcept>
 
+#include "device.hpp"
+
 namespace {
 
 /**
@@ -57,20 +59,29 @@ read_spirv_file(const std::string& path) -> std::vector<std::uint32_t>
 
 } // namespace
 
-Shader::Shader(VkDevice device)
-  : device_(device)
+auto
+Shader::load_binary(const std::string_view file_path)
+  -> std::vector<std::uint32_t>
+{
+  namespace fs = std::filesystem;
+  auto base_path = fs::current_path() / fs::path("assets") /
+                   fs::path("shaders") / fs::path(file_path);
+  return read_spirv_file(base_path.string());
+}
+
+Shader::Shader(const Device& dev)
+  : device(&dev)
 {
 }
 
 Shader::~Shader()
 {
   for (const auto& [_, shader_module] : modules_)
-    vkDestroyShaderModule(device_, shader_module, nullptr);
+    vkDestroyShaderModule(device->get_device(), shader_module, nullptr);
 }
 
 auto
-Shader::create(const VkDevice device,
-               const std::vector<ShaderStageInfo>& stages)
+Shader::create(const Device& device, const std::vector<ShaderStageInfo>& stages)
   -> std::unique_ptr<Shader>
 {
   auto shader = std::unique_ptr<Shader>(new Shader(device));
@@ -102,7 +113,8 @@ Shader::load_stage(const ShaderStageInfo& info) -> void
   };
 
   VkShaderModule shader_module{};
-  if (vkCreateShaderModule(device_, &create_info, nullptr, &shader_module) !=
+  if (vkCreateShaderModule(
+        device->get_device(), &create_info, nullptr, &shader_module) !=
       VK_SUCCESS)
     assert(false && "Failed to create shader module");
 

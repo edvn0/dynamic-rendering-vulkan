@@ -139,13 +139,6 @@ main(int argc, char** argv) -> std::int32_t
 
   FrametimeCalculator timer;
   while (!window.should_close()) {
-    glfwPollEvents();
-    if (window.is_iconified()) {
-      std::this_thread::sleep_for(std::chrono::milliseconds(100));
-      continue;
-    }
-
-    timer.start();
     if (window.framebuffer_resized()) {
       swapchain.request_recreate(window);
       auto&& [width, height] = window.framebuffer_size();
@@ -154,26 +147,40 @@ main(int argc, char** argv) -> std::int32_t
       }
       camera.resize(width, height);
       renderer.resize(width, height);
-      renderer.update_frustum(camera.get_projection() * camera.get_view());
       window.set_resize_flag(false);
       continue;
     }
+
+    glfwPollEvents();
+    if (window.is_iconified()) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(100));
+      continue;
+    }
+
+    timer.start();
 
     const auto dt = timer.end_and_get_delta_ms();
 
     camera.on_update(dt);
     std::ranges::for_each(layers, [&dt](auto& layer) { layer->on_update(dt); });
+    const auto frame_index = swapchain.get_frame_index();
+    renderer.begin_frame(
+      frame_index, camera.get_projection(), camera.get_view());
     std::ranges::for_each(
       layers, [&r = renderer](auto& layer) { layer->on_render(r); });
-    renderer.end_frame(
-      swapchain.get_frame_index(), camera.get_projection(), camera.get_view());
+    renderer.end_frame(frame_index);
 
     gui_system.begin_frame();
     std::ranges::for_each(layers, [](auto& layer) { layer->on_interface(); });
 
     if (ImGui::Begin("Renderer output")) {
       ImGui::Image(renderer.get_output_image().get_texture_id<ImTextureID>(),
-                   ImGui::GetContentRegionAvail());
+                   {
+                     static_cast<float>(renderer.get_output_image().width()),
+                     static_cast<float>(renderer.get_output_image().height()),
+                   },
+                   { 0.f, 1.f },
+                   { 1.f, 0.f });
       ImGui::End();
     }
 
@@ -187,13 +194,11 @@ main(int argc, char** argv) -> std::int32_t
       auto compute_timings =
         compute_command_buffer.resolve_timers(swapchain.get_frame_index());
 
-      // Create a table
       ImGui::BeginTable("GPU Timings", 3);
       ImGui::TableSetupColumn("Name");
       ImGui::TableSetupColumn("Duration (ms)");
       ImGui::TableSetupColumn("Command Buffer");
       ImGui::TableHeadersRow();
-      // Fill the table with data
       for (const auto& section : raster_timings) {
         ImGui::TableNextRow();
         ImGui::TableNextColumn();
@@ -212,7 +217,6 @@ main(int argc, char** argv) -> std::int32_t
         ImGui::TableNextColumn();
         ImGui::Text("Compute");
       }
-      // End the table
       ImGui::EndTable();
 
       ImGui::End();
