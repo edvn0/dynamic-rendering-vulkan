@@ -39,8 +39,10 @@ public:
 
   ~Shader();
 
-  static auto load_binary(const std::string_view file_path)
-    -> std::vector<std::uint8_t>;
+  static auto load_binary(const std::string_view, std::vector<std::uint8_t>&)
+    -> bool;
+  static auto load_binary(const std::string_view, std::vector<std::uint32_t>&)
+    -> bool;
 
 private:
   explicit Shader(const Device& device);

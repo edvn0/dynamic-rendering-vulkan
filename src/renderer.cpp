@@ -17,9 +17,10 @@ struct CameraBuffer
 
 struct ShadowBuffer
 {
-  alignas(16) glm::mat4 light_vp;
-  alignas(16) glm::vec4 light_position;
-  alignas(16) glm::vec4 light_color;
+  glm::mat4 light_vp;
+  glm::vec4 light_position;
+  glm::vec4 light_color;
+  std::array<glm::vec4, 2> padding{};
 };
 
 template<typename T, std::size_t N = image_count>
@@ -192,28 +193,14 @@ Renderer::Renderer(const Device& dev,
                     .aspect = VK_IMAGE_ASPECT_DEPTH_BIT,
                   });
 
-  geometry_pipeline = pipeline_factory->create_pipeline(
-    blueprint_registry->get("main_geometry"),
-    {
-      .renderer_set_layout = renderer_descriptor_set_layout,
-    });
-
-  z_prepass_pipeline = pipeline_factory->create_pipeline(
-    blueprint_registry->get("z_prepass"),
-    {
-      .renderer_set_layout = renderer_descriptor_set_layout,
-    });
-
-  line_pipeline = pipeline_factory->create_pipeline(
-    blueprint_registry->get("line"),
-    {
-      .renderer_set_layout = renderer_descriptor_set_layout,
-    });
-
   test_compute_material =
     Material::create(*device,
                      blueprint_registry->get("test_compute"),
                      renderer_descriptor_set_layout);
+
+  geometry_material = Material::create(*device,
+                                       blueprint_registry->get("main_geometry"),
+                                       renderer_descriptor_set_layout);
 
   struct DataSSBO
   {
@@ -239,14 +226,9 @@ Renderer::Renderer(const Device& dev,
   }
 
   {
-    gizmo_pipeline = pipeline_factory->create_pipeline(
-      blueprint_registry->get("gizmo"),
-      { .renderer_set_layout = renderer_descriptor_set_layout,
-        .push_constants = { VkPushConstantRange{
-          .stageFlags = VK_SHADER_STAGE_VERTEX_BIT,
-          .offset = 0,
-          .size = sizeof(glm::mat4),
-        } } });
+    gizmo_material = Material::create(*device,
+                                      blueprint_registry->get("gizmo"),
+                                      renderer_descriptor_set_layout);
 
     {
       struct GizmoVertex
@@ -298,11 +280,9 @@ Renderer::Renderer(const Device& dev,
                       .aspect = VK_IMAGE_ASPECT_DEPTH_BIT,
                     });
 
-    shadow_pipeline = pipeline_factory->create_pipeline(
-      blueprint_registry->get("shadow"),
-      {
-        .renderer_set_layout = renderer_descriptor_set_layout,
-      });
+    shadow_material = Material::create(*device,
+                                       blueprint_registry->get("shadow"),
+                                       renderer_descriptor_set_layout);
   }
 }
 
@@ -316,12 +296,12 @@ Renderer::destroy() -> void
   vkDestroyDescriptorSetLayout(
     device->get_device(), renderer_descriptor_set_layout, nullptr);
 
-  geometry_pipeline.reset();
-  z_prepass_pipeline.reset();
   test_compute_material.reset();
-  line_pipeline.reset();
-  gizmo_pipeline.reset();
-  shadow_pipeline.reset();
+  geometry_material.reset();
+  z_prepass_material.reset();
+  shadow_material.reset();
+  line_material.reset();
+  gizmo_material.reset();
 
   shadow_camera_buffer.reset();
   shadow_depth_image.reset();
@@ -330,7 +310,6 @@ Renderer::destroy() -> void
   camera_uniform_buffer.reset();
   geometry_depth_image.reset();
   geometry_image.reset();
-  default_geometry_material.reset();
   compute_command_buffer.reset();
   instance_vertex_buffer.reset();
   command_buffer.reset();
@@ -424,21 +403,25 @@ auto
 Renderer::update_shadow_buffers(std::uint32_t frame_index) -> void
 {
   static constexpr auto calculate_light_view_projection =
-    [](const glm::vec3& light_pos) -> glm::mat4 {
-    const glm::vec3 center{ 0.f, 0.f, 0.f };
-    const glm::vec3 up{ 0.f, 1.f, 0.f };
+    [](const glm::vec3& light_pos) {
+      const glm::vec3 center{ 0.f, 0.f, 0.f };
+      const glm::vec3 up{ 0.f, 1.f, 0.f };
 
-    const auto view = glm::lookAt(light_pos, center, up);
+      const auto view = glm::lookAt(light_pos, center, up);
 
-    constexpr float ortho_size = 50.f;
-    constexpr float near_plane = 0.1f;
-    constexpr float far_plane = 100.f;
+      constexpr float ortho_size = 50.f;
+      constexpr float near_plane = 0.1f;
+      constexpr float far_plane = 100.f;
 
-    const auto proj = glm::orthoLH_NO(
-      -ortho_size, ortho_size, -ortho_size, ortho_size, near_plane, far_plane);
+      const auto proj = glm::orthoLH_NO(-ortho_size,
+                                        ortho_size,
+                                        -ortho_size,
+                                        ortho_size,
+                                        near_plane,
+                                        far_plane);
 
-    return proj * view;
-  };
+      return proj * view;
+    };
 
   glm::mat4 vp =
     calculate_light_view_projection(light_environment.light_position);
@@ -564,12 +547,12 @@ Renderer::run_z_prepass(std::uint32_t frame_index, const DrawList& draw_list)
   };
   vkCmdSetViewport(cmd, 0, 1, &viewport);
   vkCmdSetScissor(cmd, 0, 1, &rendering_info.renderArea);
-
+  auto& z_prepass_pipeline = z_prepass_material->get_pipeline();
   vkCmdBindPipeline(
-    cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, z_prepass_pipeline->pipeline);
+    cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, z_prepass_pipeline.pipeline);
   vkCmdBindDescriptorSets(cmd,
                           VK_PIPELINE_BIND_POINT_GRAPHICS,
-                          z_prepass_pipeline->layout,
+                          z_prepass_pipeline.layout,
                           0,
                           1,
                           &renderer_descriptor_sets[frame_index],
@@ -667,23 +650,23 @@ Renderer::run_geometry_pass(std::uint32_t frame_index,
   };
   vkCmdSetViewport(cmd, 0, 1, &viewport);
   vkCmdSetScissor(cmd, 0, 1, &render_info.renderArea);
-  vkCmdBindDescriptorSets(cmd,
-                          VK_PIPELINE_BIND_POINT_GRAPHICS,
-                          geometry_pipeline->layout,
-                          0,
-                          1,
-                          &renderer_descriptor_sets[frame_index],
-                          0,
-                          nullptr);
-  vkCmdBindPipeline(
-    cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, geometry_pipeline->pipeline);
 
   for (const auto& [cmd_info, offset] : draw_list) {
     auto&& [vertex_buffer, index_buffer, override_material] = cmd_info;
 
     const auto& material =
-      override_material ? override_material : default_geometry_material.get();
-    (void)material;
+      override_material ? *override_material : *geometry_material;
+    auto& pipeline = material.get_pipeline();
+
+    vkCmdBindDescriptorSets(cmd,
+                            VK_PIPELINE_BIND_POINT_GRAPHICS,
+                            pipeline.layout,
+                            0,
+                            1,
+                            &renderer_descriptor_sets[frame_index],
+                            0,
+                            nullptr);
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.pipeline);
 
     const auto instance_count =
       static_cast<std::uint32_t>(draw_commands[cmd_info].size());
@@ -818,11 +801,12 @@ Renderer::run_line_pass(std::uint32_t frame_index) -> void
   vkCmdSetViewport(cmd, 0, 1, &viewport);
   vkCmdSetScissor(cmd, 0, 1, &rendering_info.renderArea);
 
+  auto& line_pipeline = line_material->get_pipeline();
   vkCmdBindPipeline(
-    cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, line_pipeline->pipeline);
+    cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, line_pipeline.pipeline);
   vkCmdBindDescriptorSets(cmd,
                           VK_PIPELINE_BIND_POINT_GRAPHICS,
-                          line_pipeline->layout,
+                          line_pipeline.layout,
                           0,
                           1,
                           &renderer_descriptor_sets[frame_index],
@@ -897,11 +881,12 @@ Renderer::run_gizmo_pass(std::uint32_t frame_index) -> void
   vkCmdSetViewport(cmd, 0, 1, &viewport);
   vkCmdSetScissor(cmd, 0, 1, &rendering_info.renderArea);
 
+  auto& gizmo_pipeline = gizmo_material->get_pipeline();
   vkCmdBindPipeline(
-    cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, gizmo_pipeline->pipeline);
+    cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, gizmo_pipeline.pipeline);
   vkCmdBindDescriptorSets(cmd,
                           VK_PIPELINE_BIND_POINT_GRAPHICS,
-                          gizmo_pipeline->layout,
+                          gizmo_pipeline.layout,
                           0,
                           1,
                           &renderer_descriptor_sets[frame_index],
@@ -913,10 +898,10 @@ Renderer::run_gizmo_pass(std::uint32_t frame_index) -> void
   vkCmdBindVertexBuffers(cmd, 0, 1, buffers.data(), offsets.data());
   glm::mat4 vp{};
   if (camera_uniform_buffer->read(frame_index * sizeof(glm::mat4), vp)) {
-    glm::mat4 rotation_only = glm::mat4(glm::mat3(vp));
+    const auto rotation_only = glm::mat4(glm::mat3(vp));
 
     vkCmdPushConstants(cmd,
-                       gizmo_pipeline->layout,
+                       gizmo_pipeline.layout,
                        VK_SHADER_STAGE_VERTEX_BIT,
                        0,
                        sizeof(glm::mat4),
@@ -975,11 +960,12 @@ Renderer::run_shadow_pass(std::uint32_t frame_index, const DrawList& draw_list)
   vkCmdSetViewport(cmd, 0, 1, &viewport);
   vkCmdSetScissor(cmd, 0, 1, &rendering_info.renderArea);
 
+  auto& shadow_pipeline = shadow_material->get_pipeline();
   vkCmdBindPipeline(
-    cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, shadow_pipeline->pipeline);
+    cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, shadow_pipeline.pipeline);
   vkCmdBindDescriptorSets(cmd,
                           VK_PIPELINE_BIND_POINT_GRAPHICS,
-                          shadow_pipeline->layout,
+                          shadow_pipeline.layout,
                           0,
                           1,
                           &renderer_descriptor_sets[frame_index],

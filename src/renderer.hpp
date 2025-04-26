@@ -101,18 +101,19 @@ private:
   frame_array<VkSemaphore> compute_finished_semaphore{};
   std::unique_ptr<CommandBuffer> compute_command_buffer;
 
-  std::unique_ptr<Material> default_geometry_material;
-
   std::unique_ptr<Image> geometry_image;
   std::unique_ptr<Image> geometry_depth_image;
+  std::unique_ptr<Material> z_prepass_material;
+  std::unique_ptr<Material> geometry_material;
+
   std::unique_ptr<Image> shadow_depth_image;
-  std::unique_ptr<CompiledPipeline> geometry_pipeline;
-  std::unique_ptr<CompiledPipeline> z_prepass_pipeline;
-  std::unique_ptr<CompiledPipeline> line_pipeline;
-  std::unique_ptr<CompiledPipeline> gizmo_pipeline;
-  std::unique_ptr<CompiledPipeline> shadow_pipeline;
+  std::unique_ptr<Material> shadow_material;
 
   std::unique_ptr<GPUBuffer> gizmo_vertex_buffer;
+  std::unique_ptr<Material> gizmo_material;
+
+  std::unique_ptr<Material> line_material;
+
   std::unique_ptr<GPUBuffer> test_compute_buffer;
   std::unique_ptr<Material> test_compute_material;
 

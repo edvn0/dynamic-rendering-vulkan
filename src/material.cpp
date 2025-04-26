@@ -9,70 +9,107 @@
 
 #include <spirv_reflect.h>
 
+static constexpr auto equal = [](const VkDescriptorSetLayoutBinding& a,
+                                 const VkDescriptorSetLayoutBinding& b) {
+  return a.binding == b.binding && a.descriptorType == b.descriptorType &&
+         a.descriptorCount == b.descriptorCount;
+};
+
+static auto
+merge_descriptor_binding(std::vector<VkDescriptorSetLayoutBinding>& dst,
+                         VkDescriptorSetLayoutBinding const& binding) -> void
+{
+  for (auto& ex : dst) {
+    if (equal(ex, binding)) {
+      ex.stageFlags |= binding.stageFlags;
+      return;
+    }
+  }
+  dst.push_back(binding);
+}
+
+static auto
+merge_push_constant_range(std::vector<VkPushConstantRange>& dst,
+                          VkPushConstantRange const& range) -> void
+{
+  for (auto& ex : dst) {
+    if (ex.offset == range.offset && ex.size == range.size) {
+      ex.stageFlags |= range.stageFlags;
+      return;
+    }
+  }
+  dst.push_back(range);
+}
+
 auto
 reflect_shader_using_spirv_reflect(
-  const auto& file_path,
-  std::vector<VkDescriptorSetLayoutBinding>& bindings) -> void
+  std::string_view file_path,
+  std::vector<VkDescriptorSetLayoutBinding>& bindings,
+  std::vector<VkPushConstantRange>& push_constant_ranges) -> void
 {
-  auto shader_code = Shader::load_binary(file_path);
-  spv_reflect::ShaderModule reflect_module(shader_code.size(),
-                                           shader_code.data());
-  const auto result = reflect_module.GetResult();
-  if (result != SPV_REFLECT_RESULT_SUCCESS) {
-
-    auto error_code = reflect_module.GetResult();
-    std::cerr << "Failed to reflect shader: " << file_path
-              << ", error code: " << error_code << std::endl;
+  std::vector<std::uint8_t> shader_code;
+  if (!Shader::load_binary(file_path, shader_code)) {
+    std::cerr << "Failed to load shader: " << file_path << "\n";
+    return;
+  }
+  spv_reflect::ShaderModule shader_module(shader_code.size(),
+                                          shader_code.data());
+  if (shader_module.GetResult() != SPV_REFLECT_RESULT_SUCCESS) {
+    std::cerr << "Failed to reflect shader: " << file_path << "\n";
     return;
   }
 
-  SpvReflectShaderStageFlagBits shader_stage = reflect_module.GetShaderStage();
-  VkShaderStageFlags vk_stage_flags = 0;
-
-  // Convert SpvReflect stage to Vulkan stage flags
-  switch (shader_stage) {
+  VkShaderStageFlags vk_stage = 0;
+  switch (shader_module.GetShaderStage()) {
     case SPV_REFLECT_SHADER_STAGE_VERTEX_BIT:
-      vk_stage_flags = VK_SHADER_STAGE_VERTEX_BIT;
+      vk_stage = VK_SHADER_STAGE_VERTEX_BIT;
       break;
     case SPV_REFLECT_SHADER_STAGE_FRAGMENT_BIT:
-      vk_stage_flags = VK_SHADER_STAGE_FRAGMENT_BIT;
+      vk_stage = VK_SHADER_STAGE_FRAGMENT_BIT;
       break;
     case SPV_REFLECT_SHADER_STAGE_COMPUTE_BIT:
-      vk_stage_flags = VK_SHADER_STAGE_COMPUTE_BIT;
+      vk_stage = VK_SHADER_STAGE_COMPUTE_BIT;
       break;
-    // Add other stages as needed
     default:
-      std::cerr << "Unknown shader stage in file: " << file_path << std::endl;
-      break;
+      std::cerr << "Unknown SPIR-V stage: " << file_path << "\n";
+      return;
   }
 
-  std::vector<SpvReflectDescriptorSet*> sets;
-
+  // --- descriptors ---
   uint32_t set_count = 0;
-  reflect_module.EnumerateDescriptorSets(&set_count, nullptr);
+  shader_module.EnumerateDescriptorSets(&set_count, nullptr);
+  std::vector<SpvReflectDescriptorSet*> sets(set_count);
+  shader_module.EnumerateDescriptorSets(&set_count, sets.data());
 
-  sets.resize(set_count);
-  reflect_module.EnumerateDescriptorSets(&set_count, sets.data());
+  for (const auto* ds : sets) {
+    if (ds->set != 1)
+      continue;
+    for (uint32_t i = 0; i < ds->binding_count; ++i) {
+      const auto* refl = ds->bindings[i];
+      VkDescriptorSetLayoutBinding b{};
+      b.binding = refl->binding;
+      b.descriptorType = VkDescriptorType(refl->descriptor_type);
+      b.descriptorCount = refl->count;
+      b.stageFlags = vk_stage;
+      b.pImmutableSamplers = nullptr;
 
-  if (set_count == 0) {
-    std::cerr << "No descriptor sets found in shader." << std::endl;
-    return;
+      merge_descriptor_binding(bindings, b);
+    }
   }
 
-  // We only want the set = 1 bindings.
-  for (uint32_t i = 0; i < set_count; ++i) {
-    if (sets[i]->set == 1) {
-      for (uint32_t j = 0; j < sets[i]->binding_count; ++j) {
-        VkDescriptorSetLayoutBinding binding{};
-        binding.binding = sets[i]->bindings[j]->binding;
-        binding.descriptorType =
-          static_cast<VkDescriptorType>(sets[i]->bindings[j]->descriptor_type);
-        binding.descriptorCount = sets[i]->bindings[j]->count;
-        binding.stageFlags = vk_stage_flags; // Set the shader stage flags here
-        binding.pImmutableSamplers = nullptr;
-        bindings.push_back(binding);
-      }
-    }
+  // --- push constants ---
+  uint32_t pc_count = 0;
+  shader_module.EnumeratePushConstantBlocks(&pc_count, nullptr);
+  std::vector<SpvReflectBlockVariable*> pcs(pc_count);
+  shader_module.EnumeratePushConstantBlocks(&pc_count, pcs.data());
+
+  for (const auto* pc : pcs) {
+    VkPushConstantRange r{};
+    r.offset = pc->offset;
+    r.size = pc->size;
+    r.stageFlags = vk_stage;
+
+    merge_push_constant_range(push_constant_ranges, r);
   }
 }
 
@@ -89,8 +126,11 @@ Material::create(const Device& device,
   }
 
   std::vector<VkDescriptorSetLayoutBinding> bindings;
-  for (const auto& stage : blueprint.shader_stages) {
-    reflect_shader_using_spirv_reflect(stage.filepath, bindings);
+  std::vector<VkPushConstantRange> push_constants;
+
+  for (auto const& stage : blueprint.shader_stages) {
+    reflect_shader_using_spirv_reflect(
+      stage.filepath, bindings, push_constants);
   }
 
   const bool is_compute =
@@ -125,9 +165,17 @@ Material::create(const Device& device,
   frame_array<VkDescriptorSet> descriptor_sets;
   descriptor_sets.fill(VK_NULL_HANDLE);
 
-  std::array<VkDescriptorPoolSize, 1> pool_sizes{
-    VkDescriptorPoolSize{ VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, image_count },
-  };
+  std::unordered_map<VkDescriptorType, uint32_t> type_counts;
+  for (auto const& b : bindings) {
+    type_counts[b.descriptorType] += b.descriptorCount;
+  }
+
+  std::vector<VkDescriptorPoolSize> pool_sizes;
+  pool_sizes.reserve(type_counts.size());
+  for (auto const& [type, count_per_set] : type_counts) {
+    pool_sizes.push_back(VkDescriptorPoolSize{
+      .type = type, .descriptorCount = count_per_set * image_count });
+  }
 
   VkDescriptorPoolCreateInfo pool_info{
     .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
@@ -167,6 +215,7 @@ Material::create(const Device& device,
     {
       .renderer_set_layout = renderer_set_layout,
       .material_sets = descriptor_set_layouts,
+      .push_constants = push_constants,
     });
 
   assert(pipeline != nullptr && "Pipeline creation failed.");

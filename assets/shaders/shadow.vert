@@ -10,24 +10,30 @@ layout(location = 5) in vec4 transform_non_uniform_scale;
 mat3 quaternion_to_matrix(vec4);
 mat4 reconstruct_transform_matrix();
 
-layout(set = 0, binding = 0, std140) uniform UniformBufferObject {
+layout(set = 0, binding = 0, std140) uniform UniformBufferObject
+{
   mat4 model_view_projection;
 }
 ubo;
 
-layout(set = 0, binding = 1, std140) uniform ShadowUniformBufferObject {
+layout(set = 0, binding = 1, std140) uniform ShadowUniformBufferObject
+{
   mat4 light_vp;
+  vec4 light_position; // xyz: position, w: unused
+  vec4 light_color;    // xyz: color, w: unused
+  vec4 _padding_[2];
 }
 light_ubo;
 
 void main()
 {
-    mat4 model_matrix = reconstruct_transform_matrix();
-    vec4 world_position = model_matrix * vec4(a_position, 1.0);
-    gl_Position = light_ubo.light_vp * world_position;
+  mat4 model_matrix = reconstruct_transform_matrix();
+  vec4 world_position = model_matrix * vec4(a_position, 1.0);
+  gl_Position = light_ubo.light_vp * world_position;
 }
 
-mat3 quaternion_to_matrix(vec4 q) {
+mat3 quaternion_to_matrix(vec4 q)
+{
   q = normalize(q);
 
   float x = q.x;
@@ -52,7 +58,8 @@ mat3 quaternion_to_matrix(vec4 q) {
               2.0 * (xz - yw), 2.0 * (yz + xw), 1.0 - 2.0 * (xx + yy));
 }
 
-mat4 reconstruct_transform_matrix() {
+mat4 reconstruct_transform_matrix()
+{
   vec3 translation = transform_translation_and_scale.xyz;
   vec3 non_uniform_scale = transform_non_uniform_scale.xyz;
   vec4 rotation = transform_rotation;
