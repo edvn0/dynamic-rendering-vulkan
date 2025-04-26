@@ -3,6 +3,8 @@
 #include "blueprint_configuration.hpp"
 
 #include <cassert>
+#include <expected>
+#include <string>
 #include <yaml-cpp/yaml.h>
 
 namespace YAML {
@@ -43,41 +45,178 @@ set_default_vertex_input(PipelineBlueprint& rhs)
   };
 }
 
+// Error type for Vulkan conversion failures
+struct ConversionError
+{
+  std::string message;
+  explicit ConversionError(std::string msg)
+    : message(std::move(msg))
+  {
+  }
+};
+
+// Helper functions for Vulkan type conversions using std::expected
+std::expected<VkFormat, ConversionError>
+string_to_vk_format(const std::string& format_str)
+{
+  if (format_str == "b8g8r8a8_srgb")
+    return VK_FORMAT_B8G8R8A8_SRGB;
+  else if (format_str == "b8g8r8a8_unorm")
+    return VK_FORMAT_B8G8R8A8_UNORM;
+  else if (format_str == "r8g8b8a8_unorm")
+    return VK_FORMAT_R8G8B8A8_UNORM;
+  else if (format_str == "d32_sfloat")
+    return VK_FORMAT_D32_SFLOAT;
+  else if (format_str == "d24_unorm_s8")
+    return VK_FORMAT_D24_UNORM_S8_UINT;
+
+  return std::unexpected(ConversionError("Unsupported format: " + format_str));
+}
+
+std::expected<std::string, ConversionError>
+vk_format_to_string(VkFormat format)
+{
+  switch (format) {
+    case VK_FORMAT_B8G8R8A8_SRGB:
+      return "b8g8r8a8_srgb";
+    case VK_FORMAT_B8G8R8A8_UNORM:
+      return "b8g8r8a8_unorm";
+    case VK_FORMAT_R8G8B8A8_UNORM:
+      return "r8g8b8a8_unorm";
+    case VK_FORMAT_D32_SFLOAT:
+      return "d32_sfloat";
+    case VK_FORMAT_D24_UNORM_S8_UINT:
+      return "d24_unorm_s8";
+    default:
+      return std::unexpected(ConversionError("Unsupported VkFormat value"));
+  }
+}
+
+std::expected<VkPrimitiveTopology, ConversionError>
+string_to_topology(const std::string& topo)
+{
+  if (topo == "triangle-list")
+    return VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+  else if (topo == "triangle-strip")
+    return VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP;
+  else if (topo == "line-list")
+    return VK_PRIMITIVE_TOPOLOGY_LINE_LIST;
+  else if (topo == "line-strip")
+    return VK_PRIMITIVE_TOPOLOGY_LINE_STRIP;
+  else if (topo == "point-list")
+    return VK_PRIMITIVE_TOPOLOGY_POINT_LIST;
+
+  return std::unexpected(ConversionError("Unsupported topology: " + topo));
+}
+
+std::expected<VkFormat, ConversionError>
+string_to_vertex_attribute_format(const std::string& fmt)
+{
+  if (fmt == "vec2")
+    return VK_FORMAT_R32G32_SFLOAT;
+  else if (fmt == "vec3")
+    return VK_FORMAT_R32G32B32_SFLOAT;
+  else if (fmt == "vec4")
+    return VK_FORMAT_R32G32B32A32_SFLOAT;
+
+  return std::unexpected(
+    ConversionError("Unsupported vertex attribute format: " + fmt));
+}
+
+std::expected<VkCullModeFlags, ConversionError>
+string_to_cull_mode(const std::string& cm)
+{
+  if (cm == "none")
+    return VK_CULL_MODE_NONE;
+  else if (cm == "front")
+    return VK_CULL_MODE_FRONT_BIT;
+  else if (cm == "back")
+    return VK_CULL_MODE_BACK_BIT;
+
+  return std::unexpected(ConversionError("Unsupported cull mode: " + cm));
+}
+
+std::expected<VkPolygonMode, ConversionError>
+string_to_polygon_mode(const std::string& pm)
+{
+  if (pm == "line")
+    return VK_POLYGON_MODE_LINE;
+  else if (pm == "point")
+    return VK_POLYGON_MODE_POINT;
+  else if (pm == "fill")
+    return VK_POLYGON_MODE_FILL;
+
+  return std::unexpected(ConversionError("Unsupported polygon mode: " + pm));
+}
+
+std::expected<VkCompareOp, ConversionError>
+string_to_compare_op(const std::string& cmp)
+{
+  if (cmp == "less")
+    return VK_COMPARE_OP_LESS;
+  else if (cmp == "less_equal")
+    return VK_COMPARE_OP_LESS_OR_EQUAL;
+  else if (cmp == "greater")
+    return VK_COMPARE_OP_GREATER;
+  else if (cmp == "greater_equal")
+    return VK_COMPARE_OP_GREATER_OR_EQUAL;
+  else if (cmp == "always")
+    return VK_COMPARE_OP_ALWAYS;
+  else if (cmp == "never")
+    return VK_COMPARE_OP_NEVER;
+  else if (cmp == "equal")
+    return VK_COMPARE_OP_EQUAL;
+  else if (cmp == "not_equal")
+    return VK_COMPARE_OP_NOT_EQUAL;
+
+  return std::unexpected(
+    ConversionError("Unsupported depth compare_op: " + cmp));
+}
+
+std::expected<ShaderStage, ConversionError>
+string_to_shader_stage(const std::string& stage_str)
+{
+  if (stage_str == "vertex")
+    return ShaderStage::vertex;
+  else if (stage_str == "fragment")
+    return ShaderStage::fragment;
+  else if (stage_str == "compute")
+    return ShaderStage::compute;
+  else if (stage_str == "raygen")
+    return ShaderStage::raygen;
+  else if (stage_str == "closest_hit")
+    return ShaderStage::closest_hit;
+  else if (stage_str == "miss")
+    return ShaderStage::miss;
+
+  return std::unexpected(
+    ConversionError("Unsupported shader stage: " + stage_str));
+}
+
+// YAML converters that use the expected-based helpers
 template<>
 struct convert<VkFormat>
 {
   static Node encode(const VkFormat& rhs)
   {
-    switch (rhs) {
-      case VK_FORMAT_B8G8R8A8_SRGB:
-        return Node("b8g8r8a8_srgb");
-      case VK_FORMAT_R8G8B8A8_UNORM:
-        return Node("r8g8b8a8_unorm");
-      case VK_FORMAT_D32_SFLOAT:
-        return Node("d32_sfloat");
-      case VK_FORMAT_D24_UNORM_S8_UINT:
-        return Node("d24_unorm_s8");
-      default:
-        assert(false && "Unsupported format");
+    auto result = vk_format_to_string(rhs);
+    if (result.has_value()) {
+      return Node(result.value());
     }
+    assert(false && result.error().message.c_str());
     return Node{};
   }
 
   static bool decode(const Node& node, VkFormat& rhs)
   {
     const auto format_str = node.as<std::string>();
-    if (format_str == "b8g8r8a8_srgb")
-      rhs = VK_FORMAT_B8G8R8A8_SRGB;
-    else if (format_str == "r8g8b8a8_unorm")
-      rhs = VK_FORMAT_R8G8B8A8_UNORM;
-    else if (format_str == "d32_sfloat")
-      rhs = VK_FORMAT_D32_SFLOAT;
-    else if (format_str == "d24_unorm_s8")
-      rhs = VK_FORMAT_D24_UNORM_S8_UINT;
-    else
-      assert(false && "Unsupported format");
-
-    return true;
+    auto result = string_to_vk_format(format_str);
+    if (result.has_value()) {
+      rhs = result.value();
+      return true;
+    }
+    assert(false && result.error().message.c_str());
+    return false;
   }
 };
 
@@ -87,20 +226,13 @@ struct convert<ShaderStageInfo>
   static bool decode(const Node& node, ShaderStageInfo& info)
   {
     const auto stage_str = node["stage"].as<std::string>();
-    if (stage_str == "vertex")
-      info.stage = ShaderStage::vertex;
-    else if (stage_str == "fragment")
-      info.stage = ShaderStage::fragment;
-    else if (stage_str == "compute")
-      info.stage = ShaderStage::compute;
-    else if (stage_str == "raygen")
-      info.stage = ShaderStage::raygen;
-    else if (stage_str == "closest_hit")
-      info.stage = ShaderStage::closest_hit;
-    else if (stage_str == "miss")
-      info.stage = ShaderStage::miss;
-    else
-      assert(false && "Unsupported shader stage");
+    auto stage_result = string_to_shader_stage(stage_str);
+    if (!stage_result.has_value()) {
+      assert(false && stage_result.error().message.c_str());
+      return false;
+    }
+
+    info.stage = stage_result.value();
 
     if (node["empty"] && node["empty"].as<bool>() == true) {
       info.empty = true;
@@ -119,18 +251,13 @@ struct convert<Attachment>
   static bool decode(const Node& node, Attachment& out)
   {
     const auto format_str = node["format"].as<std::string>();
-    if (format_str == "b8g8r8a8_srgb")
-      out.format = VK_FORMAT_B8G8R8A8_SRGB;
-    if (format_str == "b8g8r8a8_unorm")
-      out.format = VK_FORMAT_B8G8R8A8_UNORM;
-    else if (format_str == "r8g8b8a8_unorm")
-      out.format = VK_FORMAT_R8G8B8A8_UNORM;
-    else if (format_str == "d32_sfloat")
-      out.format = VK_FORMAT_D32_SFLOAT;
-    else if (format_str == "d24_unorm_s8")
-      out.format = VK_FORMAT_D24_UNORM_S8_UINT;
-    else
-      assert(false && "Unsupported format");
+    auto format_result = string_to_vk_format(format_str);
+    if (!format_result.has_value()) {
+      assert(false && format_result.error().message.c_str());
+      return false;
+    }
+
+    out.format = format_result.value();
 
     if (node["blend_enable"])
       out.blend_enable = node["blend_enable"].as<bool>();
@@ -166,16 +293,14 @@ struct convert<VertexAttribute>
     rhs.binding = node["binding"].as<std::uint32_t>();
     rhs.offset = node["offset"].as<std::uint32_t>();
 
-    const auto& fmt = node["format"].as<std::string>();
-    if (fmt == "vec2")
-      rhs.format = VK_FORMAT_R32G32_SFLOAT;
-    else if (fmt == "vec3")
-      rhs.format = VK_FORMAT_R32G32B32_SFLOAT;
-    else if (fmt == "vec4")
-      rhs.format = VK_FORMAT_R32G32B32A32_SFLOAT;
-    else
-      assert(false && "Unsupported format");
+    auto format_result =
+      string_to_vertex_attribute_format(node["format"].as<std::string>());
+    if (!format_result.has_value()) {
+      assert(false && format_result.error().message.c_str());
+      return false;
+    }
 
+    rhs.format = format_result.value();
     return true;
   }
 };
@@ -185,8 +310,11 @@ struct convert<PipelineBlueprint>
 {
   static bool decode(const Node& node, PipelineBlueprint& rhs)
   {
+    // Basic properties
     rhs.name = node["name"].as<std::string>();
     rhs.shader_stages = node["shaders"].as<std::vector<ShaderStageInfo>>();
+
+    // Vertex input handling
     if (node["vertex_input"]) {
       if (node["vertex_input"]["bindings"])
         rhs.bindings =
@@ -198,70 +326,90 @@ struct convert<PipelineBlueprint>
       set_default_vertex_input(rhs);
     }
 
+    // Rasterization settings
     if (node["rasterization"]) {
-      auto cm = node["rasterization"]["cull_mode"].as<std::string>("back");
-      rhs.cull_mode = cm == "none"    ? VK_CULL_MODE_NONE
-                      : cm == "front" ? VK_CULL_MODE_FRONT_BIT
-                                      : VK_CULL_MODE_BACK_BIT;
+      auto& rast = node["rasterization"];
 
-      auto pm = node["rasterization"]["polygon_mode"].as<std::string>("fill");
-      rhs.polygon_mode = pm == "line"    ? VK_POLYGON_MODE_LINE
-                         : pm == "point" ? VK_POLYGON_MODE_POINT
-                                         : VK_POLYGON_MODE_FILL;
+      auto cull_result =
+        string_to_cull_mode(rast["cull_mode"].as<std::string>("back"));
+
+      if (!cull_result.has_value()) {
+        assert(false && cull_result.error().message.c_str());
+        return false;
+      }
+      rhs.cull_mode = cull_result.value();
+
+      auto polygon_result =
+        string_to_polygon_mode(rast["polygon_mode"].as<std::string>("fill"));
+
+      if (!polygon_result.has_value()) {
+        assert(false && polygon_result.error().message.c_str());
+        return false;
+      }
+      rhs.polygon_mode = polygon_result.value();
     }
 
+    auto topology_result =
+      string_to_topology(node["topology"].as<std::string>("triangle-list"));
+
+    if (!topology_result.has_value()) {
+      assert(false && topology_result.error().message.c_str());
+      return false;
+    }
+    rhs.topology = topology_result.value();
+
+    // Blend settings
     if (node["blend"])
       rhs.blend_enable = node["blend"]["enable"].as<bool>(false);
 
+    // Depth/stencil settings
     if (node["depth_stencil"]) {
       auto& depth_stencil = node["depth_stencil"];
       rhs.depth_test = depth_stencil["depth_test"].as<bool>(false);
       rhs.depth_write = depth_stencil["depth_write"].as<bool>(false);
 
-      if (depth_stencil["format"])
-        rhs.depth_attachment =
-          Attachment{ .format = depth_stencil["format"].as<VkFormat>() };
-
-      if (depth_stencil["compare_op"]) {
-        const auto cmp = depth_stencil["compare_op"].as<std::string>();
-        if (cmp == "less")
-          rhs.depth_compare_op = VK_COMPARE_OP_LESS;
-        else if (cmp == "less_equal")
-          rhs.depth_compare_op = VK_COMPARE_OP_LESS_OR_EQUAL;
-        else if (cmp == "greater")
-          rhs.depth_compare_op = VK_COMPARE_OP_GREATER;
-        else if (cmp == "greater_equal")
-          rhs.depth_compare_op = VK_COMPARE_OP_GREATER_OR_EQUAL;
-        else if (cmp == "always")
-          rhs.depth_compare_op = VK_COMPARE_OP_ALWAYS;
-        else if (cmp == "never")
-          rhs.depth_compare_op = VK_COMPARE_OP_NEVER;
-        else if (cmp == "equal")
-          rhs.depth_compare_op = VK_COMPARE_OP_EQUAL;
-        else if (cmp == "not_equal")
-          rhs.depth_compare_op = VK_COMPARE_OP_NOT_EQUAL;
-        else
-          throw std::runtime_error("Unsupported depth compare_op: " + cmp);
+      if (depth_stencil["format"]) {
+        auto format_result = depth_stencil["format"].as<VkFormat>();
+        rhs.depth_attachment = Attachment{ .format = format_result };
       }
 
-      if (!rhs.depth_test && rhs.depth_write)
+      if (depth_stencil["compare_op"]) {
+        auto compare_result =
+          string_to_compare_op(depth_stencil["compare_op"].as<std::string>());
+
+        if (!compare_result.has_value()) {
+          assert(false && compare_result.error().message.c_str());
+          return false;
+        }
+        rhs.depth_compare_op = compare_result.value();
+      }
+
+      // Validation checks
+      if (!rhs.depth_test && rhs.depth_write) {
         assert(false &&
                "Invalid pipeline config: depth_write requires depth_test");
+        return false;
+      }
 
-      if (depth_stencil["compare_op"] && !rhs.depth_test)
-        assert(false &&
-               "Warning: Using depth compare_op without depth_test may lead to "
-               "undefined behavior");
+      if (depth_stencil["compare_op"] && !rhs.depth_test) {
+        assert(false && "Warning: Using depth compare_op without depth_test "
+                        "may lead to undefined behavior");
+        // You might want to just warn here, not fail
+      }
 
       if ((rhs.depth_compare_op == VK_COMPARE_OP_GREATER ||
            rhs.depth_compare_op == VK_COMPARE_OP_GREATER_OR_EQUAL) &&
-          !rhs.depth_write)
+          !rhs.depth_write) {
         assert(false && "Warning: Using reverse-Z compare_op without "
                         "depth_write may lead to z-fighting");
+        // You might want to just warn here, not fail
+      }
     }
 
+    // Color attachments
     if (node["attachments"])
       rhs.attachments = node["attachments"].as<std::vector<Attachment>>();
+
     return true;
   }
 };

@@ -61,12 +61,17 @@ read_spirv_file(const std::string& path) -> std::vector<std::uint32_t>
 
 auto
 Shader::load_binary(const std::string_view file_path)
-  -> std::vector<std::uint32_t>
+  -> std::vector<std::uint8_t>
 {
   namespace fs = std::filesystem;
   auto base_path = fs::current_path() / fs::path("assets") /
                    fs::path("shaders") / fs::path(file_path);
-  return read_spirv_file(base_path.string());
+
+  auto spirv = read_spirv_file(base_path.string());
+  std::vector<std::uint8_t> output;
+  output.resize(spirv.size() * sizeof(std::uint32_t));
+  std::memcpy(output.data(), spirv.data(), output.size());
+  return output;
 }
 
 Shader::Shader(const Device& dev)

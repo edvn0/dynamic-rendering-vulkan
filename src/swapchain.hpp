@@ -18,10 +18,11 @@ public:
     : device(device.get_device())
     , physical_device(device.get_physical_device())
     , surface(window.surface())
+    , window(&window)
     , queue(device.graphics_queue())
     , queue_family_index(device.graphics_queue_family_index())
   {
-    create_swapchain();
+    create_swapchain(VK_NULL_HANDLE);
     create_command_pool();
     allocate_command_buffers();
     create_sync_objects();
@@ -29,6 +30,7 @@ public:
 
   auto destroy() -> void
   {
+    vkDeviceWaitIdle(device);
     cleanup_swapchain();
     vkDestroyCommandPool(device, command_pool, nullptr);
     for (std::uint32_t i = 0; i < image_count; ++i) {
@@ -38,14 +40,15 @@ public:
     }
   }
 
-  auto request_recreate(Window& w) -> void { recreate_swapchain(w); }
-  auto draw_frame(Window& w, GUISystem& gui_system) -> void;
+  auto request_recreate() -> void { recreate_swapchain(); }
+  auto draw_frame(GUISystem& gui_system) -> void;
   auto get_frame_index() const -> std::uint32_t { return frame_index; }
 
 private:
   VkDevice device;
   VkPhysicalDevice physical_device;
   VkSurfaceKHR surface;
+  const Window* window;
   VkQueue queue;
   std::uint32_t queue_family_index;
   std::uint32_t frame_index = 0;
@@ -64,20 +67,37 @@ private:
   std::array<VkSemaphore, image_count> render_finished_semaphores{};
   std::array<VkFence, image_count> in_flight_fences{};
 
-  auto recreate_swapchain(Window& window) -> void
+  auto recreate_swapchain() -> void
   {
-    int width = 0;
-    int height = 0;
+    std::uint32_t width = 0;
+    std::uint32_t height = 0;
     while (width == 0 || height == 0) {
-      glfwGetFramebufferSize(window.window(), &width, &height);
+      auto&& [w, h] = window->framebuffer_size();
+      width = w;
+      height = h;
       glfwWaitEvents();
     }
 
     std::cout << "Recreating swapchain..." << std::endl;
 
     vkDeviceWaitIdle(device);
-    cleanup_swapchain();
-    create_swapchain();
+
+    // Store old swapchain for proper recreation
+    VkSwapchainKHR old_swapchain = swapchain;
+
+    // Clean up image views but keep the old swapchain temporarily
+    for (auto view : swapchain_image_views_) {
+      vkDestroyImageView(device, view, nullptr);
+    }
+    swapchain_image_views_.clear();
+
+    // Create new swapchain with reference to old one
+    create_swapchain(old_swapchain);
+
+    // Now that we have a new swapchain, we can destroy the old one
+    if (old_swapchain != VK_NULL_HANDLE) {
+      vkDestroySwapchainKHR(device, old_swapchain, nullptr);
+    }
   }
 
   auto cleanup_swapchain() -> void
@@ -85,7 +105,12 @@ private:
     for (auto view : swapchain_image_views_) {
       vkDestroyImageView(device, view, nullptr);
     }
-    vkDestroySwapchainKHR(device, swapchain, nullptr);
+    swapchain_image_views_.clear();
+
+    if (swapchain != VK_NULL_HANDLE) {
+      vkDestroySwapchainKHR(device, swapchain, nullptr);
+      swapchain = VK_NULL_HANDLE;
+    }
   }
 
   auto create_command_pool() -> void
@@ -160,7 +185,12 @@ private:
     if (capabilities.currentExtent.width != UINT32_MAX) {
       return capabilities.currentExtent;
     }
-    VkExtent2D actual_extent = capabilities.currentExtent;
+
+    auto&& [width, height] = window->framebuffer_size();
+
+    VkExtent2D actual_extent = { static_cast<uint32_t>(width),
+                                 static_cast<uint32_t>(height) };
+
     actual_extent.width = std::clamp(actual_extent.width,
                                      capabilities.minImageExtent.width,
                                      capabilities.maxImageExtent.width);
@@ -170,7 +200,7 @@ private:
     return actual_extent;
   }
 
-  void create_swapchain()
+  void create_swapchain(VkSwapchainKHR old_swapchain)
   {
     VkSurfaceCapabilitiesKHR caps;
     vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physical_device, surface, &caps);
@@ -197,10 +227,16 @@ private:
       physical_device, surface, &present_mode_count, present_modes.data());
     auto present_mode = choose_present_mode(present_modes);
 
+    // Calculate desired image count (potentially more than minimum)
+    uint32_t desired_image_count = caps.minImageCount + 1;
+    if (caps.maxImageCount > 0 && desired_image_count > caps.maxImageCount) {
+      desired_image_count = caps.maxImageCount;
+    }
+
     VkSwapchainCreateInfoKHR create_info{};
     create_info.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
     create_info.surface = surface;
-    create_info.minImageCount = image_count;
+    create_info.minImageCount = desired_image_count;
     create_info.imageFormat = swapchain_format;
     create_info.imageColorSpace = surface_format.colorSpace;
     create_info.imageExtent = swapchain_extent;
@@ -211,8 +247,14 @@ private:
     create_info.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
     create_info.presentMode = present_mode;
     create_info.clipped = VK_TRUE;
+    create_info.oldSwapchain =
+      old_swapchain; // Pass the old swapchain for proper recreation
 
-    vkCreateSwapchainKHR(device, &create_info, nullptr, &swapchain);
+    VkResult result =
+      vkCreateSwapchainKHR(device, &create_info, nullptr, &swapchain);
+    if (result != VK_SUCCESS) {
+      assert(false);
+    }
 
     std::uint32_t count;
     vkGetSwapchainImagesKHR(device, swapchain, &count, nullptr);
@@ -230,8 +272,11 @@ private:
       view_info.subresourceRange.levelCount = 1;
       view_info.subresourceRange.layerCount = 1;
 
-      vkCreateImageView(
-        device, &view_info, nullptr, &swapchain_image_views_[i]);
+      if (vkCreateImageView(
+            device, &view_info, nullptr, &swapchain_image_views_[i]) !=
+          VK_SUCCESS) {
+        assert(false);
+      }
     }
   }
 };

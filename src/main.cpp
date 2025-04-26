@@ -3,6 +3,7 @@
 #include <chrono>
 #include <cstdint>
 #include <execution>
+#include <filesystem>
 #include <glm/gtc/matrix_transform.hpp>
 #include <iostream>
 #include <memory>
@@ -15,11 +16,9 @@
 #include "camera.hpp"
 #include "command_buffer.hpp"
 #include "device.hpp"
-#include "gpu_buffer.hpp"
+#include "editor_camera.hpp"
 #include "gui_system.hpp"
 #include "image.hpp"
-#include "image_transition.hpp"
-#include "imgui_impl_vulkan.h"
 #include "instance.hpp"
 #include "pipeline/blueprint_registry.hpp"
 #include "pipeline/compute_pipeline_factory.hpp"
@@ -31,38 +30,32 @@
 #include "layer.hpp"
 
 #include "GLFW/glfw3.h"
-#include "VkBootstrap.h"
 #include "imgui.h"
 
 struct FrametimeCalculator
 {
   using clock = std::chrono::high_resolution_clock;
 
-  auto start() { start_time = clock::now(); }
-
-  auto end_and_get_delta_ms() const -> double
+  auto get_delta_and_restart_ms() -> double
   {
-    auto end_time = clock::now();
-    auto delta =
-      std::chrono::duration<double, std::milli>(end_time - start_time);
+    const auto now = clock::now();
+    const auto delta = std::chrono::duration<double>(now - start_time);
+    start_time = now;
     return delta.count();
   }
 
 private:
-  clock::time_point start_time;
+  clock::time_point start_time{ clock::now() };
 };
 
 auto
 main(int argc, char** argv) -> std::int32_t
 {
   if (argc > 1) {
-    try {
-      std::filesystem::current_path(argv[1]);
-    } catch (const std::filesystem::filesystem_error& e) {
-      std::cerr << "Failed to set current path to '" << argv[1]
-                << "': " << e.what() << '\n';
-      return 1;
-    }
+    if (!std::filesystem::exists(argv[1]))
+      assert(false && "Could not find CWD to set");
+
+    std::filesystem::current_path(argv[1]);
   }
 
   auto instance = Core::Instance::create();
@@ -83,16 +76,14 @@ main(int argc, char** argv) -> std::int32_t
   Swapchain swapchain(device, window);
 
   Renderer renderer{
-    device, blueprint_registry, pipeline_factory, compute_pipeline_factory,
+    device,
+    blueprint_registry,
+    pipeline_factory,
     window,
   };
 
-  Camera camera;
   auto&& [w, h] = window.framebuffer_size();
-  camera.set_perspective(60.f, static_cast<float>(w) / h, 0.1f);
-  camera.set_view(glm::vec3(0.f, 3.f, -2.f),
-                  glm::vec3(0.f, 0.f, 0.f),
-                  glm::vec3(0.f, 1.f, 0.f));
+  EditorCamera camera{ 60.0F, static_cast<float>(w) / h, 0.1f };
   renderer.update_frustum(camera.get_projection() * camera.get_view());
 
   std::vector<std::unique_ptr<ILayer>> layers;
@@ -111,9 +102,20 @@ main(int argc, char** argv) -> std::int32_t
             return true;
           }))
         return;
-      if (dispatcher.dispatch<KeyReleasedEvent>([&w](auto& e) {
+      if (dispatcher.dispatch<KeyReleasedEvent>([&w, &c = camera](auto& e) {
             if (e.key == KeyCode::Escape)
               w.close();
+            if (e.key == KeyCode::L) {
+              auto&& [width, height] = w.framebuffer_size();
+              const float aspect_ratio = static_cast<float>(width) / height;
+
+              if (std::holds_alternative<Camera::InfiniteProjection>(
+                    c.get_projection_config())) {
+                c.set_perspective_float_far(60.f, aspect_ratio, 0.1f, 500.f);
+              } else {
+                c.set_perspective(60.f, aspect_ratio, 0.1f);
+              }
+            }
             return true;
           }))
         return;
@@ -140,7 +142,7 @@ main(int argc, char** argv) -> std::int32_t
   FrametimeCalculator timer;
   while (!window.should_close()) {
     if (window.framebuffer_resized()) {
-      swapchain.request_recreate(window);
+      swapchain.request_recreate();
       auto&& [width, height] = window.framebuffer_size();
       for (auto& layer : layers) {
         layer->on_resize(width, height);
@@ -157,9 +159,7 @@ main(int argc, char** argv) -> std::int32_t
       continue;
     }
 
-    timer.start();
-
-    const auto dt = timer.end_and_get_delta_ms();
+    const auto dt = timer.get_delta_and_restart_ms();
 
     camera.on_update(dt);
     std::ranges::for_each(layers, [&dt](auto& layer) { layer->on_update(dt); });
@@ -178,9 +178,7 @@ main(int argc, char** argv) -> std::int32_t
                    {
                      static_cast<float>(renderer.get_output_image().width()),
                      static_cast<float>(renderer.get_output_image().height()),
-                   },
-                   { 0.f, 1.f },
-                   { 1.f, 0.f });
+                   });
       ImGui::End();
     }
 
@@ -222,7 +220,7 @@ main(int argc, char** argv) -> std::int32_t
       ImGui::End();
     }
 
-    swapchain.draw_frame(window, gui_system);
+    swapchain.draw_frame(gui_system);
   }
 
   vkDeviceWaitIdle(device.get_device());

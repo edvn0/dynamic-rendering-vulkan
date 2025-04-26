@@ -55,6 +55,7 @@ struct PipelineBlueprint
   std::optional<Attachment> depth_attachment{};
   VkCullModeFlags cull_mode{ VK_CULL_MODE_BACK_BIT };
   VkPolygonMode polygon_mode{ VK_POLYGON_MODE_FILL };
+  VkPrimitiveTopology topology{ VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST };
   bool blend_enable{ false };
   bool depth_test{ false };
   bool depth_write{ false };

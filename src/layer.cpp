@@ -89,6 +89,20 @@ Layer::Layer(const Device& dev)
   auto&& [cube_vertex, cube_index] = generate_cube(dev);
   cube_vertex_buffer = std::move(cube_vertex);
   cube_index_buffer = std::move(cube_index);
+
+  std::array<Vertex, 6> axes_vertices = {
+    Vertex{ { 0.f, 0.f, 0.f }, { 1.f, 0.f, 0.f }, { 0.f, 0.f } },
+    Vertex{ { 1.f, 0.f, 0.f }, { 1.f, 0.f, 0.f }, { 1.f, 0.f } },
+    Vertex{ { 0.f, 0.f, 0.f }, { 0.f, 1.f, 0.f }, { 0.f, 0.f } },
+    Vertex{ { 0.f, 1.f, 0.f }, { 0.f, 1.f, 0.f }, { 1.f, 0.f } },
+    Vertex{ { 0.f, 0.f, 0.f }, { 0.f, 0.f, 1.f }, { 0.f, 0.f } },
+    Vertex{ { 0.f, 0.f, 1.f }, { 0.f, 0.f, 1.f }, { 1.f, 0.f } },
+  };
+  axes_vertex_buffer = std::make_unique<GPUBuffer>(
+    dev,
+    VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+    true);
+  axes_vertex_buffer->upload(std::span(axes_vertices));
 }
 
 auto
@@ -98,6 +112,7 @@ Layer::on_destroy() -> void
   quad_index_buffer.reset();
   cube_vertex_buffer.reset();
   cube_index_buffer.reset();
+  axes_vertex_buffer.reset();
 }
 
 auto
@@ -165,6 +180,13 @@ Layer::on_render(Renderer& renderer) -> void
       .index_buffer = cube_index_buffer.get(),
     },
     transforms.at(0));
+
+  renderer.submit_lines(
+    {
+      .vertex_buffer = axes_vertex_buffer.get(),
+      .vertex_count = 6,
+    },
+    glm::mat4(1.f));
 }
 
 auto

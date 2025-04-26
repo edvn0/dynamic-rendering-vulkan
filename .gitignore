@@ -18,3 +18,5 @@ compile_commands.json
 .vs
 
 .vscode/
+conan_profiles
+

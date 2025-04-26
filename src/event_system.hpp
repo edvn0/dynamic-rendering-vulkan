@@ -116,6 +116,23 @@ enum class KeyCode : std::int32_t
   Menu = GLFW_KEY_MENU,
   Last = GLFW_KEY_LAST
 };
+
+enum class MouseCode : std::uint8_t
+{
+  MouseButton1 = GLFW_MOUSE_BUTTON_1,
+  MouseButton2 = GLFW_MOUSE_BUTTON_2,
+  MouseButton3 = GLFW_MOUSE_BUTTON_3,
+  MouseButton4 = GLFW_MOUSE_BUTTON_4,
+  MouseButton5 = GLFW_MOUSE_BUTTON_5,
+  MouseButton6 = GLFW_MOUSE_BUTTON_6,
+  MouseButton7 = GLFW_MOUSE_BUTTON_7,
+  MouseButton8 = GLFW_MOUSE_BUTTON_8,
+  MouseButtonLast = GLFW_MOUSE_BUTTON_8,
+  MouseButtonLeft = GLFW_MOUSE_BUTTON_1,
+  MouseButtonRight = GLFW_MOUSE_BUTTON_2,
+  MouseButtonMiddle = GLFW_MOUSE_BUTTON_3
+};
+
 inline auto
 operator<<(std::ostream& os, KeyCode key) -> std::ostream&
 {

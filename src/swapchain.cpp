@@ -4,7 +4,7 @@
 #include "imgui.h"
 
 auto
-Swapchain::draw_frame(Window& w, GUISystem& gui_system) -> void
+Swapchain::draw_frame(GUISystem& gui_system) -> void
 {
   vkWaitForFences(
     device, 1, &in_flight_fences[frame_index], VK_TRUE, UINT64_MAX);
@@ -19,7 +19,7 @@ Swapchain::draw_frame(Window& w, GUISystem& gui_system) -> void
                                       &image_index);
 
   if (result == VK_ERROR_OUT_OF_DATE_KHR) {
-    recreate_swapchain(w);
+    recreate_swapchain();
     return;
   }
 
@@ -127,7 +127,7 @@ Swapchain::draw_frame(Window& w, GUISystem& gui_system) -> void
 
   result = vkQueuePresentKHR(queue, &present_info);
   if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR) {
-    recreate_swapchain(w);
+    recreate_swapchain();
   }
 
   frame_index = (frame_index + 1) % image_count;

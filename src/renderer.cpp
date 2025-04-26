@@ -3,6 +3,7 @@
 #include <functional>
 #include <memory>
 
+#include <execution>
 #include <glm/glm.hpp>
 #include <vulkan/vulkan_core.h>
 #define GLM_ENABLE_EXPERIMENTAL
@@ -113,13 +114,10 @@ Renderer::create_descriptor_set_layout() -> void
 Renderer::Renderer(const Device& dev,
                    const BlueprintRegistry& registry,
                    const PipelineFactory& factory,
-                   const ComputePipelineFactory& compute_factory,
                    const Window& win)
   : device(&dev)
   , blueprint_registry(&registry)
   , pipeline_factory(&factory)
-  , compute_pipeline_factory(&compute_factory)
-  , window(&win)
 {
   create_descriptor_set_layout();
 
@@ -161,6 +159,12 @@ Renderer::Renderer(const Device& dev,
 
   z_prepass_pipeline = pipeline_factory->create_pipeline(
     blueprint_registry->get("z_prepass"),
+    {
+      .renderer_set_layout = renderer_descriptor_set_layout,
+    });
+
+  line_pipeline = pipeline_factory->create_pipeline(
+    blueprint_registry->get("line"),
     {
       .renderer_set_layout = renderer_descriptor_set_layout,
     });
@@ -207,6 +211,7 @@ Renderer::destroy() -> void
   geometry_pipeline.reset();
   z_prepass_pipeline.reset();
   test_compute_material.reset();
+  line_pipeline.reset();
 
   test_compute_buffer.reset();
   camera_uniform_buffer.reset();
@@ -251,19 +256,50 @@ Renderer::submit(const DrawCommand& cmd, const glm::mat4& transform) -> void
     rotation_vec, translation_and_scale, non_uniform_scale);
 }
 
+auto
+Renderer::submit_lines(const LineDrawCommand& cmd, const glm::mat4& transform)
+  -> void
+{
+  line_draw_commands.emplace_back(cmd, transform);
+}
+
 static auto
 upload_instance_vertex_data(GPUBuffer& buffer, const auto& draw_commands)
   -> std::vector<std::pair<DrawCommand, std::uint32_t>>
 {
-  std::vector<InstanceData> flattened_instances;
   std::vector<std::pair<DrawCommand, std::uint32_t>> flat_draw_commands;
+  flat_draw_commands.reserve(draw_commands.size());
 
+  std::size_t total_instance_count = 0;
+  for (const auto& [cmd, instances] : draw_commands)
+    total_instance_count += instances.size();
+
+  std::vector<InstanceData> flattened_instances(total_instance_count);
+
+  std::vector<std::tuple<const DrawCommand*,
+                         const std::vector<InstanceData>*,
+                         std::size_t>>
+    jobs;
+  jobs.reserve(draw_commands.size());
+
+  std::size_t current_offset = 0;
   for (const auto& [cmd, instances] : draw_commands) {
-    flat_draw_commands.emplace_back(
-      cmd, static_cast<std::uint32_t>(flattened_instances.size()));
-    flattened_instances.insert(
-      flattened_instances.end(), instances.begin(), instances.end());
+    flat_draw_commands.emplace_back(cmd,
+                                    static_cast<std::uint32_t>(current_offset));
+    jobs.emplace_back(&cmd, &instances, current_offset);
+    current_offset += instances.size();
   }
+
+  std::for_each(std::execution::par_unseq,
+                jobs.begin(),
+                jobs.end(),
+                [&flattened_instances](const auto& job) {
+                  auto [cmd, instances, offset] = job;
+                  const auto count = instances->size();
+                  std::memcpy(flattened_instances.data() + offset,
+                              instances->data(),
+                              count * sizeof(InstanceData));
+                });
 
   buffer.upload(
     std::span{ flattened_instances.data(), flattened_instances.size() });
@@ -306,6 +342,7 @@ Renderer::end_frame(std::uint32_t frame_index) -> void
 
     run_z_prepass(frame_index, flat_draw_commands);
     run_geometry_pass(frame_index, flat_draw_commands);
+    run_line_pass(frame_index);
 
     command_buffer->submit_and_end(frame_index,
                                    compute_finished_semaphore.at(frame_index));
@@ -571,6 +608,97 @@ Renderer::run_compute_pass(std::uint32_t frame_index) -> void
     VK_NULL_HANDLE,
     compute_finished_semaphore.at(frame_index),
     VK_NULL_HANDLE);
+}
+
+auto
+Renderer::run_line_pass(std::uint32_t frame_index) -> void
+{
+  command_buffer->begin_timer(frame_index, "line_pass");
+
+  const VkCommandBuffer cmd = command_buffer->get(frame_index);
+
+  CoreUtils::cmd_transition_image(
+    cmd,
+    {
+      .image = geometry_image->get_image(),
+      .old_layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+      .new_layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+      .src_access_mask = VK_ACCESS_SHADER_READ_BIT,
+      .dst_access_mask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+      .src_stage_mask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+      .dst_stage_mask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+    });
+
+  VkRenderingAttachmentInfo color_attachment{
+    .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+    .imageView = geometry_image->get_view(),
+    .imageLayout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
+    .loadOp = VK_ATTACHMENT_LOAD_OP_LOAD,
+    .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+    .clearValue = { .color = { { 0.f, 0.f, 0.f, 1.f } } }
+  };
+
+  VkRenderingAttachmentInfo depth_attachment{
+    .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+    .imageView = geometry_depth_image->get_view(),
+    .imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+    .loadOp = VK_ATTACHMENT_LOAD_OP_LOAD,
+    .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+    .clearValue = { .depthStencil = { 1.0f, 0 } }
+  };
+
+  VkRenderingInfo rendering_info{
+    .sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
+    .renderArea = { { 0, 0 },
+                    { geometry_image->width(), geometry_image->height() } },
+    .layerCount = 1,
+    .colorAttachmentCount = 1,
+    .pColorAttachments = &color_attachment,
+    .pDepthAttachment = &depth_attachment,
+  };
+
+  vkCmdBeginRendering(cmd, &rendering_info);
+
+  VkViewport viewport{
+    .x = 0.f,
+    .y = static_cast<float>(geometry_image->height()),
+    .width = static_cast<float>(geometry_image->width()),
+    .height = -static_cast<float>(geometry_image->height()),
+    .minDepth = 0.f,
+    .maxDepth = 1.f,
+  };
+  vkCmdSetViewport(cmd, 0, 1, &viewport);
+  vkCmdSetScissor(cmd, 0, 1, &rendering_info.renderArea);
+
+  vkCmdBindPipeline(
+    cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, line_pipeline->pipeline);
+  vkCmdBindDescriptorSets(cmd,
+                          VK_PIPELINE_BIND_POINT_GRAPHICS,
+                          line_pipeline->layout,
+                          0,
+                          1,
+                          &renderer_descriptor_sets[frame_index],
+                          0,
+                          nullptr);
+
+  for (const auto& [submission, transform] : line_draw_commands) {
+    const std::array<VkDeviceSize, 1> offsets = { 0 };
+    const std::array<VkBuffer, 1> buffer = { submission.vertex_buffer->get() };
+    vkCmdBindVertexBuffers(cmd,
+                           0,
+                           static_cast<std::uint32_t>(buffer.size()),
+                           buffer.data(),
+                           offsets.data());
+
+    vkCmdDraw(cmd, submission.vertex_count, 1, 0, 0);
+  }
+
+  vkCmdEndRendering(cmd);
+
+  CoreUtils::cmd_transition_to_shader_read(cmd, geometry_image->get_image());
+
+  command_buffer->end_timer(frame_index, "line_pass");
+  line_draw_commands.clear();
 }
 
 #pragma endregion RenderPasses

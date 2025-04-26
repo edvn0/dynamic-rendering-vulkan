@@ -51,14 +51,11 @@ private:
   // Materials own the pipeline.
   std::unique_ptr<CompiledPipeline> pipeline{ nullptr };
 
-  bool is_compute{ false };
-
   Material(const Device& device,
            frame_array<VkDescriptorSet>&&,
            std::span<const VkDescriptorSetLayout>,
            VkDescriptorPool,
-           std::unique_ptr<CompiledPipeline>,
-           bool is_compute = false);
+           std::unique_ptr<CompiledPipeline>);
 
   auto destroy() -> void;
 

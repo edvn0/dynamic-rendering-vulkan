@@ -17,7 +17,8 @@ reflect_shader_using_spirv_reflect(
   auto shader_code = Shader::load_binary(file_path);
   spv_reflect::ShaderModule reflect_module(shader_code.size(),
                                            shader_code.data());
-  if (reflect_module.GetResult() != SPV_REFLECT_RESULT_SUCCESS) {
+  const auto result = reflect_module.GetResult();
+  if (result != SPV_REFLECT_RESULT_SUCCESS) {
 
     auto error_code = reflect_module.GetResult();
     std::cerr << "Failed to reflect shader: " << file_path
@@ -25,9 +26,33 @@ reflect_shader_using_spirv_reflect(
     return;
   }
 
+  SpvReflectShaderStageFlagBits shader_stage = reflect_module.GetShaderStage();
+  VkShaderStageFlags vk_stage_flags = 0;
+
+  // Convert SpvReflect stage to Vulkan stage flags
+  switch (shader_stage) {
+    case SPV_REFLECT_SHADER_STAGE_VERTEX_BIT:
+      vk_stage_flags = VK_SHADER_STAGE_VERTEX_BIT;
+      break;
+    case SPV_REFLECT_SHADER_STAGE_FRAGMENT_BIT:
+      vk_stage_flags = VK_SHADER_STAGE_FRAGMENT_BIT;
+      break;
+    case SPV_REFLECT_SHADER_STAGE_COMPUTE_BIT:
+      vk_stage_flags = VK_SHADER_STAGE_COMPUTE_BIT;
+      break;
+    // Add other stages as needed
+    default:
+      std::cerr << "Unknown shader stage in file: " << file_path << std::endl;
+      break;
+  }
+
+  std::vector<SpvReflectDescriptorSet*> sets;
+
   uint32_t set_count = 0;
-  SpvReflectDescriptorSet* sets = nullptr;
-  reflect_module.EnumerateDescriptorSets(&set_count, &sets);
+  reflect_module.EnumerateDescriptorSets(&set_count, nullptr);
+
+  sets.resize(set_count);
+  reflect_module.EnumerateDescriptorSets(&set_count, sets.data());
 
   if (set_count == 0) {
     std::cerr << "No descriptor sets found in shader." << std::endl;
@@ -36,14 +61,14 @@ reflect_shader_using_spirv_reflect(
 
   // We only want the set = 1 bindings.
   for (uint32_t i = 0; i < set_count; ++i) {
-    if (sets[i].set == 1) {
-      for (uint32_t j = 0; j < sets[i].binding_count; ++j) {
-        VkDescriptorSetLayoutBinding binding;
-        binding.binding = sets[i].bindings[j]->binding;
+    if (sets[i]->set == 1) {
+      for (uint32_t j = 0; j < sets[i]->binding_count; ++j) {
+        VkDescriptorSetLayoutBinding binding{};
+        binding.binding = sets[i]->bindings[j]->binding;
         binding.descriptorType =
-          static_cast<VkDescriptorType>(sets[i].bindings[j]->descriptor_type);
-        binding.descriptorCount = sets[i].bindings[j]->count;
-        // TODO: binding.stageFlags = sets[i].bindings[j].;
+          static_cast<VkDescriptorType>(sets[i]->bindings[j]->descriptor_type);
+        binding.descriptorCount = sets[i]->bindings[j]->count;
+        binding.stageFlags = vk_stage_flags; // Set the shader stage flags here
         binding.pImmutableSamplers = nullptr;
         bindings.push_back(binding);
       }
@@ -57,9 +82,10 @@ Material::create(const Device& device,
                  VkDescriptorSetLayout renderer_set_layout)
   -> std::unique_ptr<Material>
 {
-  if (!pipeline_factory || !compute_pipeline_factory) {
-    pipeline_factory = std::make_unique<PipelineFactory>(device);
-    compute_pipeline_factory = std::make_unique<ComputePipelineFactory>(device);
+  if (!Material::pipeline_factory || !Material::compute_pipeline_factory) {
+    Material::pipeline_factory = std::make_unique<PipelineFactory>(device);
+    Material::compute_pipeline_factory =
+      std::make_unique<ComputePipelineFactory>(device);
   }
 
   std::vector<VkDescriptorSetLayoutBinding> bindings;
@@ -71,20 +97,25 @@ Material::create(const Device& device,
     blueprint.shader_stages.size() == 1 &&
     blueprint.shader_stages[0].stage == ShaderStage::compute;
 
-  VkDescriptorSetLayoutBinding ssbo_binding{
-    .binding = 0,
-    .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-    .descriptorCount = 1,
-    .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT,
-    .pImmutableSamplers = nullptr,
-  };
-
-  std::array binds{ ssbo_binding };
+#ifdef ACCEPT_DEBUG
+  if (bindings.empty() && is_compute) {
+    VkDescriptorSetLayoutBinding ssbo_binding{
+      .binding = 0,
+      .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+      .descriptorCount = 1,
+      .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT,
+      .pImmutableSamplers = nullptr,
+    };
+    bindings.push_back(ssbo_binding);
+  }
+#endif
 
   VkDescriptorSetLayoutCreateInfo layout_info{
     .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-    .bindingCount = static_cast<uint32_t>(binds.size()),
-    .pBindings = binds.data(),
+    .pNext = nullptr,
+    .flags = 0,
+    .bindingCount = static_cast<uint32_t>(bindings.size()),
+    .pBindings = bindings.data(),
   };
 
   VkDescriptorSetLayout material_set_layout{ VK_NULL_HANDLE };
@@ -100,6 +131,8 @@ Material::create(const Device& device,
 
   VkDescriptorPoolCreateInfo pool_info{
     .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+    .pNext = nullptr,
+    .flags = 0,
     .maxSets = image_count,
     .poolSizeCount = static_cast<uint32_t>(pool_sizes.size()),
     .pPoolSizes = pool_sizes.data(),
@@ -114,6 +147,7 @@ Material::create(const Device& device,
 
   VkDescriptorSetAllocateInfo alloc_info{
     .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+    .pNext = nullptr,
     .descriptorPool = descriptor_pool,
     .descriptorSetCount = image_count,
     .pSetLayouts = layouts.data(),
@@ -141,22 +175,19 @@ Material::create(const Device& device,
                  std::move(descriptor_sets),
                  std::span(descriptor_set_layouts),
                  descriptor_pool,
-                 std::move(pipeline),
-                 is_compute));
+                 std::move(pipeline)));
 }
 
 Material::Material(const Device& dev,
                    frame_array<VkDescriptorSet>&& sets,
                    std::span<const VkDescriptorSetLayout> ls,
                    VkDescriptorPool p,
-                   std::unique_ptr<CompiledPipeline> pipe,
-                   bool is_compute)
+                   std::unique_ptr<CompiledPipeline> pipe)
   : device(&dev)
   , descriptor_sets(std::move(sets))
   , descriptor_set_layout(ls[0])
   , descriptor_pool(p)
   , pipeline(std::move(pipe))
-  , is_compute(is_compute)
 {
 }
 
@@ -213,9 +244,12 @@ Material::prepare_for_rendering(std::uint32_t frame_index)
         .pNext = nullptr,
         .dstSet = descriptor_sets[frame_index],
         .dstBinding = binding,
+        .dstArrayElement = 0,
         .descriptorCount = 1,
         .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+        .pImageInfo = nullptr,
         .pBufferInfo = &buffer_infos.back(),
+        .pTexelBufferView = nullptr,
       };
       writes.push_back(write);
     }

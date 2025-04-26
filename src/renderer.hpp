@@ -24,6 +24,13 @@ struct InstanceData
   glm::vec4 non_uniform_scale{};     // Non-uniform scale
 };
 
+struct LineDrawCommand
+{
+  GPUBuffer* vertex_buffer;
+  std::uint32_t vertex_count;
+  Material* override_material{ nullptr };
+};
+
 struct DrawCommand
 {
   GPUBuffer* vertex_buffer;
@@ -50,12 +57,12 @@ public:
   Renderer(const Device&,
            const BlueprintRegistry&,
            const PipelineFactory&,
-           const ComputePipelineFactory&,
            const Window&);
   ~Renderer();
   auto destroy() -> void;
 
   auto submit(const DrawCommand&, const glm::mat4& = glm::mat4{ 1.0F }) -> void;
+  auto submit_lines(const LineDrawCommand&, const glm::mat4&) -> void;
   auto begin_frame(std::uint32_t,
                    const glm::mat4& projection,
                    const glm::mat4& view) -> void;
@@ -75,9 +82,9 @@ public:
 private:
   const Device* device{ nullptr };
   const BlueprintRegistry* blueprint_registry{ nullptr };
-  const PipelineFactory* pipeline_factory{ nullptr };
-  const ComputePipelineFactory* compute_pipeline_factory{ nullptr };
-  const Window* window{ nullptr };
+  const PipelineFactory* pipeline_factory{
+    nullptr
+  }; // TODO: Retire and use materials
 
   std::unique_ptr<CommandBuffer> command_buffer;
   std::unique_ptr<GPUBuffer> instance_vertex_buffer;
@@ -91,10 +98,12 @@ private:
   std::unique_ptr<Image> geometry_depth_image;
   std::unique_ptr<CompiledPipeline> geometry_pipeline;
   std::unique_ptr<CompiledPipeline> z_prepass_pipeline;
+  std::unique_ptr<CompiledPipeline> line_pipeline;
 
   std::unique_ptr<GPUBuffer> test_compute_buffer;
   std::unique_ptr<Material> test_compute_material;
 
+  std::vector<std::pair<LineDrawCommand, glm::mat4>> line_draw_commands{};
   std::unordered_map<DrawCommand, std::vector<InstanceData>, DrawCommandHasher>
     draw_commands{};
 
@@ -149,4 +158,5 @@ private:
   using DrawList = std::vector<std::pair<DrawCommand, std::uint32_t>>;
   auto run_geometry_pass(std::uint32_t, const DrawList&) -> void;
   auto run_z_prepass(std::uint32_t, const DrawList&) -> void;
+  auto run_line_pass(std::uint32_t) -> void;
 };

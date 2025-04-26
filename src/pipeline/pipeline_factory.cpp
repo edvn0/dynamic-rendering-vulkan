@@ -107,7 +107,7 @@ PipelineFactory::create_pipeline(const PipelineBlueprint& blueprint,
     .sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
     .pNext = nullptr,
     .flags = 0,
-    .topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
+    .topology = blueprint.topology,
     .primitiveRestartEnable = VK_FALSE,
   };
 

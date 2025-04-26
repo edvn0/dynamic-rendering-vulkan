@@ -156,8 +156,8 @@ CommandBuffer::submit(uint32_t frame_index,
   std::memset(&submit_info, 0, sizeof(submit_info));
   submit_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
 
+  VkPipelineStageFlags stage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
   if (wait_semaphore) {
-    VkPipelineStageFlags stage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
     submit_info.waitSemaphoreCount = 1;
     submit_info.pWaitSemaphores = &wait_semaphore;
     submit_info.pWaitDstStageMask = &stage;

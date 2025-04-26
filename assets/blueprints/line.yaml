@@ -1,0 +1,39 @@
+name: line
+shaders:
+  - stage: vertex
+    path: line.vert.spv
+  - stage: fragment
+    path: line.frag.spv
+
+rasterization:
+  cull_mode: none
+
+topology: line-list
+
+depth_stencil:
+  depth_test: true
+  depth_write: false
+  format: d32_sfloat
+  compare_op: less
+
+attachments:
+  - format: b8g8r8a8_unorm
+
+vertex_input:
+  bindings:
+    - binding: 0
+      stride: 32
+      input_rate: vertex
+  attributes:
+    - location: 0
+      binding: 0
+      format: vec3
+      offset: 0
+    - location: 1
+      binding: 0
+      format: vec3
+      offset: 12
+    - location: 2
+      binding: 0
+      format: vec2
+      offset: 24

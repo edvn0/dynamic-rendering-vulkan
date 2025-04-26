@@ -1,6 +1,7 @@
 #pragma once
 
 #include "event_system.hpp"
+#include "gpu_buffer.hpp"
 #include "renderer.hpp"
 
 struct Vertex
@@ -38,6 +39,7 @@ struct Layer final : public ILayer
   std::unique_ptr<IndexBuffer> quad_index_buffer;
   std::unique_ptr<GPUBuffer> cube_vertex_buffer;
   std::unique_ptr<IndexBuffer> cube_index_buffer;
+  std::unique_ptr<GPUBuffer> axes_vertex_buffer;
   std::vector<glm::mat4> transforms{};
   glm::vec2 bounds{ 0.F };
   float rotation_speed = 3.6f;
