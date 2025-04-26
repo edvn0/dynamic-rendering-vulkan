@@ -1,6 +1,7 @@
 #include "renderer.hpp"
 #include "image_transition.hpp"
 #include <functional>
+#include <glm/ext/matrix_clip_space.hpp>
 #include <memory>
 
 #include <execution>
@@ -12,6 +13,13 @@
 struct CameraBuffer
 {
   glm::mat4 vp;
+};
+
+struct ShadowBuffer
+{
+  alignas(16) glm::mat4 light_vp;
+  alignas(16) glm::vec4 light_position;
+  alignas(16) glm::vec4 light_color;
 };
 
 template<typename T, std::size_t N = image_count>
@@ -33,24 +41,36 @@ Renderer::create_descriptor_set_layout() -> void
     .stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
     .pImmutableSamplers = nullptr,
   };
+  VkDescriptorSetLayoutBinding shadow_binding{
+    .binding = 1,
+    .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+    .descriptorCount = 1,
+    .stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+    .pImmutableSamplers = nullptr,
+  };
+  const std::array bindings{ binding, shadow_binding };
   VkDescriptorSetLayoutCreateInfo layout_info{
     .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
     .pNext = nullptr,
     .flags = 0,
-    .bindingCount = 1,
-    .pBindings = &binding,
+    .bindingCount = static_cast<std::uint32_t>(bindings.size()),
+    .pBindings = bindings.data(),
   };
   vkCreateDescriptorSetLayout(device->get_device(),
                               &layout_info,
                               nullptr,
                               &renderer_descriptor_set_layout);
 
-  std::array<VkDescriptorPoolSize, 1> pool_sizes{ {
-    {
-      .type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-      .descriptorCount = image_count,
-    },
-  } };
+  std::array<VkDescriptorPoolSize, 2> pool_sizes{
+    { {
+        .type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+        .descriptorCount = image_count,
+      },
+      {
+        .type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+        .descriptorCount = image_count,
+      } }
+  };
 
   VkDescriptorPoolCreateInfo pool_info{
     .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
@@ -86,28 +106,49 @@ Renderer::create_descriptor_set_layout() -> void
       sizeof(CameraBuffer) * image_count,
     });
   }
+  {
+    shadow_camera_buffer = std::make_unique<GPUBuffer>(
+      *device, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, true);
+    const auto shadow_bytes =
+      std::make_unique<std::byte[]>(sizeof(ShadowBuffer) * image_count);
+    shadow_camera_buffer->upload(std::span<std::byte>{
+      shadow_bytes.get(),
+      sizeof(ShadowBuffer) * image_count,
+    });
+  }
 
   for (std::size_t i = 0; i < image_count; ++i) {
-    VkDescriptorBufferInfo buffer_info{
-      .buffer = camera_uniform_buffer->get(),
-      .offset = sizeof(CameraBuffer) * i,
-      .range = sizeof(CameraBuffer),
+    std::array<VkWriteDescriptorSet, 2> writes{
+      { { .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+          .dstSet = renderer_descriptor_sets[i],
+          .dstBinding = 0,
+          .dstArrayElement = 0,
+          .descriptorCount = 1,
+          .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+          .pBufferInfo =
+            new VkDescriptorBufferInfo{
+              .buffer = camera_uniform_buffer->get(),
+              .offset = sizeof(CameraBuffer) * i,
+              .range = sizeof(CameraBuffer),
+            } },
+        { .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+          .dstSet = renderer_descriptor_sets[i],
+          .dstBinding = 1,
+          .dstArrayElement = 0,
+          .descriptorCount = 1,
+          .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+          .pBufferInfo =
+            new VkDescriptorBufferInfo{
+              .buffer = shadow_camera_buffer->get(),
+              .offset = sizeof(ShadowBuffer) * i,
+              .range = sizeof(ShadowBuffer),
+            } } }
     };
-
-    VkWriteDescriptorSet write{
-      .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-      .pNext = nullptr,
-      .dstSet = renderer_descriptor_sets[i],
-      .dstBinding = 0,
-      .dstArrayElement = 0,
-      .descriptorCount = 1,
-      .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-      .pImageInfo = nullptr,
-      .pBufferInfo = &buffer_info,
-      .pTexelBufferView = nullptr,
-    };
-
-    vkUpdateDescriptorSets(device->get_device(), 1, &write, 0, nullptr);
+    vkUpdateDescriptorSets(device->get_device(),
+                           static_cast<std::uint32_t>(writes.size()),
+                           writes.data(),
+                           0,
+                           nullptr);
   }
 }
 
@@ -196,6 +237,73 @@ Renderer::Renderer(const Device& dev,
     instance_vertex_buffer->upload(
       std::span<std::byte>{ bytes.get(), instance_size_bytes });
   }
+
+  {
+    gizmo_pipeline = pipeline_factory->create_pipeline(
+      blueprint_registry->get("gizmo"),
+      { .renderer_set_layout = renderer_descriptor_set_layout,
+        .push_constants = { VkPushConstantRange{
+          .stageFlags = VK_SHADER_STAGE_VERTEX_BIT,
+          .offset = 0,
+          .size = sizeof(glm::mat4),
+        } } });
+
+    {
+      struct GizmoVertex
+      {
+        glm::vec3 pos;
+        glm::vec3 col;
+      };
+      constexpr std::array<GizmoVertex, 6> gizmo_vertices = {
+        GizmoVertex{
+          .pos = glm::vec3(0.f, 0.f, 0.f),
+          .col = glm::vec3{},
+        },
+        {
+          glm::vec3(1.f, 0.f, 0.f),
+          glm::vec3{},
+        },
+        {
+          glm::vec3(0.f, 0.f, 0.f),
+          glm::vec3{},
+        },
+        {
+          glm::vec3(0.f, 1.f, 0.f),
+          glm::vec3{},
+        },
+        {
+          glm::vec3(0.f, 0.f, 0.f),
+          glm::vec3{},
+        },
+        {
+          glm::vec3(0.f, 0.f, 1.f),
+          glm::vec3{},
+        },
+      };
+
+      gizmo_vertex_buffer = std::make_unique<GPUBuffer>(
+        dev, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, true);
+      gizmo_vertex_buffer->upload(std::span{ gizmo_vertices });
+    }
+  }
+
+  {
+    shadow_depth_image =
+      Image::create(dev,
+                    ImageConfiguration{
+                      .extent = { 2048, 2048 },
+                      .format = VK_FORMAT_D32_SFLOAT,
+                      .usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT |
+                               VK_IMAGE_USAGE_SAMPLED_BIT,
+                      .aspect = VK_IMAGE_ASPECT_DEPTH_BIT,
+                    });
+
+    shadow_pipeline = pipeline_factory->create_pipeline(
+      blueprint_registry->get("shadow"),
+      {
+        .renderer_set_layout = renderer_descriptor_set_layout,
+      });
+  }
 }
 
 auto
@@ -212,7 +320,12 @@ Renderer::destroy() -> void
   z_prepass_pipeline.reset();
   test_compute_material.reset();
   line_pipeline.reset();
+  gizmo_pipeline.reset();
+  shadow_pipeline.reset();
 
+  shadow_camera_buffer.reset();
+  shadow_depth_image.reset();
+  gizmo_vertex_buffer.reset();
   test_compute_buffer.reset();
   camera_uniform_buffer.reset();
   geometry_depth_image.reset();
@@ -308,6 +421,38 @@ upload_instance_vertex_data(GPUBuffer& buffer, const auto& draw_commands)
 }
 
 auto
+Renderer::update_shadow_buffers(std::uint32_t frame_index) -> void
+{
+  static constexpr auto calculate_light_view_projection =
+    [](const glm::vec3& light_pos) -> glm::mat4 {
+    const glm::vec3 center{ 0.f, 0.f, 0.f };
+    const glm::vec3 up{ 0.f, 1.f, 0.f };
+
+    const auto view = glm::lookAt(light_pos, center, up);
+
+    constexpr float ortho_size = 50.f;
+    constexpr float near_plane = 0.1f;
+    constexpr float far_plane = 100.f;
+
+    const auto proj = glm::orthoLH_NO(
+      -ortho_size, ortho_size, -ortho_size, ortho_size, near_plane, far_plane);
+
+    return proj * view;
+  };
+
+  glm::mat4 vp =
+    calculate_light_view_projection(light_environment.light_position);
+  ShadowBuffer shadow_data{
+    .light_vp = vp,
+    .light_position = glm::vec4{ light_environment.light_position, 1.0F },
+    .light_color = glm::vec4{ light_environment.light_color, 1.0F },
+  };
+
+  shadow_camera_buffer->upload_with_offset(std::span{ &shadow_data, 1 },
+                                           sizeof(ShadowBuffer) * frame_index);
+}
+
+auto
 Renderer::update_uniform_buffers(std::uint32_t frame_index, const glm::mat4& vp)
   -> void
 {
@@ -323,6 +468,7 @@ Renderer::begin_frame(std::uint32_t frame_index,
 {
   const auto view_projection = projection * view;
   update_uniform_buffers(frame_index, view_projection);
+  update_shadow_buffers(frame_index);
   update_frustum(view_projection);
   draw_commands.clear();
 }
@@ -340,9 +486,11 @@ Renderer::end_frame(std::uint32_t frame_index) -> void
       upload_instance_vertex_data(*instance_vertex_buffer, draw_commands);
     command_buffer->begin_frame(frame_index);
 
+    run_shadow_pass(frame_index, flat_draw_commands);
     run_z_prepass(frame_index, flat_draw_commands);
     run_geometry_pass(frame_index, flat_draw_commands);
     run_line_pass(frame_index);
+    run_gizmo_pass(frame_index);
 
     command_buffer->submit_and_end(frame_index,
                                    compute_finished_semaphore.at(frame_index));
@@ -699,6 +847,173 @@ Renderer::run_line_pass(std::uint32_t frame_index) -> void
 
   command_buffer->end_timer(frame_index, "line_pass");
   line_draw_commands.clear();
+}
+
+auto
+Renderer::run_gizmo_pass(std::uint32_t frame_index) -> void
+{
+  command_buffer->begin_timer(frame_index, "gizmo_pass");
+
+  const VkCommandBuffer cmd = command_buffer->get(frame_index);
+
+  VkRenderingAttachmentInfo color_attachment{
+    .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+    .imageView = geometry_image->get_view(),
+    .imageLayout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
+    .loadOp = VK_ATTACHMENT_LOAD_OP_LOAD,
+    .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+    .clearValue = { .color = { { 0.f, 0.f, 0.f, 1.f } } }
+  };
+
+  VkRenderingAttachmentInfo depth_attachment{
+    .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+    .imageView = geometry_depth_image->get_view(),
+    .imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+    .loadOp = VK_ATTACHMENT_LOAD_OP_LOAD,
+    .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+    .clearValue = { .depthStencil = { 1.0f, 0 } }
+  };
+
+  VkRenderingInfo rendering_info{
+    .sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
+    .renderArea = { { 0, 0 },
+                    { geometry_image->width(), geometry_image->height() } },
+    .layerCount = 1,
+    .colorAttachmentCount = 1,
+    .pColorAttachments = &color_attachment,
+    .pDepthAttachment = &depth_attachment,
+  };
+
+  vkCmdBeginRendering(cmd, &rendering_info);
+
+  VkViewport viewport{
+    .x = 0.f,
+    .y = static_cast<float>(geometry_image->height()),
+    .width = static_cast<float>(geometry_image->width()),
+    .height = -static_cast<float>(geometry_image->height()),
+    .minDepth = 0.f,
+    .maxDepth = 1.f,
+  };
+  vkCmdSetViewport(cmd, 0, 1, &viewport);
+  vkCmdSetScissor(cmd, 0, 1, &rendering_info.renderArea);
+
+  vkCmdBindPipeline(
+    cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, gizmo_pipeline->pipeline);
+  vkCmdBindDescriptorSets(cmd,
+                          VK_PIPELINE_BIND_POINT_GRAPHICS,
+                          gizmo_pipeline->layout,
+                          0,
+                          1,
+                          &renderer_descriptor_sets[frame_index],
+                          0,
+                          nullptr);
+
+  const std::array<VkDeviceSize, 1> offsets{ 0 };
+  const std::array<VkBuffer, 1> buffers{ gizmo_vertex_buffer->get() };
+  vkCmdBindVertexBuffers(cmd, 0, 1, buffers.data(), offsets.data());
+  glm::mat4 vp{};
+  if (camera_uniform_buffer->read(frame_index * sizeof(glm::mat4), vp)) {
+    glm::mat4 rotation_only = glm::mat4(glm::mat3(vp));
+
+    vkCmdPushConstants(cmd,
+                       gizmo_pipeline->layout,
+                       VK_SHADER_STAGE_VERTEX_BIT,
+                       0,
+                       sizeof(glm::mat4),
+                       &rotation_only);
+  }
+  vkCmdDraw(cmd, 6, 1, 0, 0);
+
+  vkCmdEndRendering(cmd);
+
+  command_buffer->end_timer(frame_index, "gizmo_pass");
+}
+
+auto
+Renderer::run_shadow_pass(std::uint32_t frame_index, const DrawList& draw_list)
+  -> void
+{
+  command_buffer->begin_timer(frame_index, "shadow_pass");
+
+  const VkCommandBuffer cmd = command_buffer->get(frame_index);
+  CoreUtils::cmd_transition_to_depth_attachment(
+    cmd, shadow_depth_image->get_image());
+
+  VkClearValue depth_clear = { .depthStencil = { 1.f, 0 } };
+
+  VkRenderingAttachmentInfo depth_attachment = {
+    .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+    .imageView = shadow_depth_image->get_view(),
+    .imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+    .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+    .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+    .clearValue = depth_clear,
+  };
+
+  VkRenderingInfo rendering_info = {
+    .sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
+    .renderArea = { { 0, 0 },
+                    { shadow_depth_image->width(),
+                      shadow_depth_image->height() } },
+    .layerCount = 1,
+    .colorAttachmentCount = 0,
+    .pColorAttachments = nullptr,
+    .pDepthAttachment = &depth_attachment,
+    .pStencilAttachment = nullptr,
+  };
+
+  vkCmdBeginRendering(cmd, &rendering_info);
+
+  VkViewport viewport = {
+    .x = 0.f,
+    .y = static_cast<float>(shadow_depth_image->height()),
+    .width = static_cast<float>(shadow_depth_image->width()),
+    .height = -static_cast<float>(shadow_depth_image->height()),
+    .minDepth = 0.f,
+    .maxDepth = 1.f,
+  };
+  vkCmdSetViewport(cmd, 0, 1, &viewport);
+  vkCmdSetScissor(cmd, 0, 1, &rendering_info.renderArea);
+
+  vkCmdBindPipeline(
+    cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, shadow_pipeline->pipeline);
+  vkCmdBindDescriptorSets(cmd,
+                          VK_PIPELINE_BIND_POINT_GRAPHICS,
+                          shadow_pipeline->layout,
+                          0,
+                          1,
+                          &renderer_descriptor_sets[frame_index],
+                          0,
+                          nullptr);
+
+  for (const auto& [cmd_info, offset] : draw_list) {
+    const std::array vertex_buffers = {
+      cmd_info.vertex_buffer->get(),
+      instance_vertex_buffer->get(),
+    };
+    constexpr std::array<VkDeviceSize, 2> offsets = { 0ULL, 0ULL };
+    vkCmdBindVertexBuffers(cmd,
+                           0,
+                           static_cast<std::uint32_t>(vertex_buffers.size()),
+                           vertex_buffers.data(),
+                           offsets.data());
+    vkCmdBindIndexBuffer(cmd,
+                         cmd_info.index_buffer->get(),
+                         0,
+                         cmd_info.index_buffer->get_index_type());
+
+    vkCmdDrawIndexed(
+      cmd,
+      static_cast<std::uint32_t>(cmd_info.index_buffer->get_count()),
+      static_cast<std::uint32_t>(draw_commands[cmd_info].size()),
+      0,
+      0,
+      offset);
+  }
+
+  vkCmdEndRendering(cmd);
+
+  command_buffer->end_timer(frame_index, "shadow_pass");
 }
 
 #pragma endregion RenderPasses

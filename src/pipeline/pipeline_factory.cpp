@@ -35,7 +35,8 @@ PipelineFactory::PipelineFactory(const Device& dev)
 auto
 PipelineFactory::create_pipeline_layout(
   const PipelineBlueprint&,
-  std::span<const VkDescriptorSetLayout> layouts) const -> VkPipelineLayout
+  std::span<const VkDescriptorSetLayout> layouts,
+  std::span<const VkPushConstantRange> ranges) const -> VkPipelineLayout
 {
   VkPipelineLayoutCreateInfo layout_info{
     .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
@@ -43,8 +44,8 @@ PipelineFactory::create_pipeline_layout(
     .flags = 0,
     .setLayoutCount = static_cast<std::uint32_t>(layouts.size()),
     .pSetLayouts = layouts.data(),
-    .pushConstantRangeCount = 0,
-    .pPushConstantRanges = nullptr,
+    .pushConstantRangeCount = static_cast<std::uint32_t>(ranges.size()),
+    .pPushConstantRanges = ranges.data(),
   };
 
   VkPipelineLayout layout{};
@@ -243,7 +244,8 @@ PipelineFactory::create_pipeline(const PipelineBlueprint& blueprint,
   layouts.insert(layouts.end(),
                  layout_info.material_sets.begin(),
                  layout_info.material_sets.end());
-  VkPipelineLayout layout = create_pipeline_layout(blueprint, layouts);
+  VkPipelineLayout layout =
+    create_pipeline_layout(blueprint, layouts, layout_info.push_constants);
 
   VkGraphicsPipelineCreateInfo pipeline_info{
     .sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,

@@ -4,19 +4,21 @@
 #include "gpu_buffer.hpp"
 #include "renderer.hpp"
 
+#include <glm/glm.hpp>
+
 struct Vertex
 {
-  std::array<float, 3> pos{
+  glm::vec3 pos{
     0.f,
     0.f,
     0.f,
   };
-  std::array<float, 3> normal{
+  glm::vec3 normal{
     0.f,
     0.f,
     1.f,
   };
-  std::array<float, 2> uv{
+  glm::vec2 uv{
     0.f,
     0.f,
   };
@@ -52,4 +54,9 @@ struct Layer final : public ILayer
   auto on_update(double ts) -> void override;
   auto on_render(Renderer& renderer) -> void override;
   auto on_resize(std::uint32_t w, std::uint32_t h) -> void override;
+
+private:
+  auto generate_scene() -> void;
+  glm::vec3 light_position{ 10.f, 20.f, 10.f };
+  glm::vec3 light_color{ 1.f, 0.95f, 0.8f };
 };

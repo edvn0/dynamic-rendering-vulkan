@@ -9,6 +9,13 @@ layout(set = 0, binding = 0) uniform CameraUBO
   mat4 vp;
 };
 
+layout(set = 0, binding = 1, std140) uniform ShadowUniformBufferObject {
+  mat4 light_vp;
+  vec4 light_position; // xyz: position, w: unused
+  vec4 light_color;    // xyz: color, w: unused
+};
+
+
 layout(location = 0) out vec3 frag_color;
 
 void main()

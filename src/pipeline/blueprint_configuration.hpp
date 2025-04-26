@@ -70,4 +70,5 @@ struct PipelineLayoutInfo
 {
   VkDescriptorSetLayout renderer_set_layout{};
   std::vector<VkDescriptorSetLayout> material_sets{};
+  std::vector<VkPushConstantRange> push_constants{};
 };

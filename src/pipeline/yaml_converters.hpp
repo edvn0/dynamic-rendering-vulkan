@@ -400,8 +400,6 @@ struct convert<PipelineBlueprint>
       if ((rhs.depth_compare_op == VK_COMPARE_OP_GREATER ||
            rhs.depth_compare_op == VK_COMPARE_OP_GREATER_OR_EQUAL) &&
           !rhs.depth_write) {
-        assert(false && "Warning: Using reverse-Z compare_op without "
-                        "depth_write may lead to z-fighting");
         // You might want to just warn here, not fail
       }
     }

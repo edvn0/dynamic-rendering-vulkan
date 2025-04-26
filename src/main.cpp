@@ -83,7 +83,7 @@ main(int argc, char** argv) -> std::int32_t
   };
 
   auto&& [w, h] = window.framebuffer_size();
-  EditorCamera camera{ 60.0F, static_cast<float>(w) / h, 0.1f };
+  EditorCamera camera{ 90.0F, static_cast<float>(w) / h, 0.1f };
   renderer.update_frustum(camera.get_projection() * camera.get_view());
 
   std::vector<std::unique_ptr<ILayer>> layers;
@@ -111,9 +111,9 @@ main(int argc, char** argv) -> std::int32_t
 
               if (std::holds_alternative<Camera::InfiniteProjection>(
                     c.get_projection_config())) {
-                c.set_perspective_float_far(60.f, aspect_ratio, 0.1f, 500.f);
+                c.set_perspective_float_far(90.f, aspect_ratio, 0.1f, 500.f);
               } else {
-                c.set_perspective(60.f, aspect_ratio, 0.1f);
+                c.set_perspective(90.f, aspect_ratio, 0.1f);
               }
             }
             return true;

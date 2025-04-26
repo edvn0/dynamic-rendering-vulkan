@@ -24,6 +24,12 @@ struct InstanceData
   glm::vec4 non_uniform_scale{};     // Non-uniform scale
 };
 
+struct LightEnvironment
+{
+  glm::vec3 light_position{ 40.f, 40.f, 40.f };
+  glm::vec3 light_color{ 1.f, 1.f, 1.f };
+};
+
 struct LineDrawCommand
 {
   GPUBuffer* vertex_buffer;
@@ -78,6 +84,7 @@ public:
   {
     current_frustum.update(vp);
   }
+  auto get_light_environment() -> auto& { return light_environment; }
 
 private:
   const Device* device{ nullptr };
@@ -85,6 +92,8 @@ private:
   const PipelineFactory* pipeline_factory{
     nullptr
   }; // TODO: Retire and use materials
+
+  LightEnvironment light_environment;
 
   std::unique_ptr<CommandBuffer> command_buffer;
   std::unique_ptr<GPUBuffer> instance_vertex_buffer;
@@ -96,10 +105,14 @@ private:
 
   std::unique_ptr<Image> geometry_image;
   std::unique_ptr<Image> geometry_depth_image;
+  std::unique_ptr<Image> shadow_depth_image;
   std::unique_ptr<CompiledPipeline> geometry_pipeline;
   std::unique_ptr<CompiledPipeline> z_prepass_pipeline;
   std::unique_ptr<CompiledPipeline> line_pipeline;
+  std::unique_ptr<CompiledPipeline> gizmo_pipeline;
+  std::unique_ptr<CompiledPipeline> shadow_pipeline;
 
+  std::unique_ptr<GPUBuffer> gizmo_vertex_buffer;
   std::unique_ptr<GPUBuffer> test_compute_buffer;
   std::unique_ptr<Material> test_compute_material;
 
@@ -109,8 +122,10 @@ private:
 
   auto run_compute_pass(std::uint32_t) -> void;
   auto update_uniform_buffers(std::uint32_t, const glm::mat4&) -> void;
+  auto update_shadow_buffers(std::uint32_t) -> void;
 
   std::unique_ptr<GPUBuffer> camera_uniform_buffer;
+  std::unique_ptr<GPUBuffer> shadow_camera_buffer;
   frame_array<VkDescriptorSet> renderer_descriptor_sets{};
   VkDescriptorSetLayout renderer_descriptor_set_layout{};
   VkDescriptorPool descriptor_pool{};
@@ -156,7 +171,9 @@ private:
   bool destroyed{ false };
 
   using DrawList = std::vector<std::pair<DrawCommand, std::uint32_t>>;
-  auto run_geometry_pass(std::uint32_t, const DrawList&) -> void;
+  auto run_shadow_pass(std::uint32_t, const DrawList&) -> void;
   auto run_z_prepass(std::uint32_t, const DrawList&) -> void;
+  auto run_geometry_pass(std::uint32_t, const DrawList&) -> void;
   auto run_line_pass(std::uint32_t) -> void;
+  auto run_gizmo_pass(std::uint32_t) -> void;
 };

@@ -104,6 +104,24 @@ public:
     upload_with_offset(std::span<const T, N>{ data }, offset_bytes);
   }
 
+  template<AdmitsGPUBuffer T>
+  auto read(std::size_t offset_bytes, T& user_allocated) -> bool
+  {
+    if (!mapped_on_create)
+      return false;
+
+    void* mapped = persistent_ptr;
+    if (!mapped)
+      return false;
+
+    if (offset_bytes + sizeof(T) > current_size)
+      return false;
+
+    std::memcpy(&user_allocated,
+                static_cast<const std::byte*>(mapped) + offset_bytes,
+                sizeof(T));
+    return true;
+  }
   auto get() const -> const VkBuffer& { return buffer; }
 
   ~GPUBuffer()

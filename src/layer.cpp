@@ -84,8 +84,6 @@ Layer::Layer(const Device& dev)
   std::array<std::uint32_t, 6> square_indices = { 0, 1, 2, 2, 3, 0 };
   quad_index_buffer->upload(std::span(square_indices));
 
-  transforms.resize(100'000);
-
   auto&& [cube_vertex, cube_index] = generate_cube(dev);
   cube_vertex_buffer = std::move(cube_vertex);
   cube_index_buffer = std::move(cube_index);
@@ -103,6 +101,9 @@ Layer::Layer(const Device& dev)
     VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
     true);
   axes_vertex_buffer->upload(std::span(axes_vertices));
+
+  transforms.reserve(16);
+  generate_scene();
 }
 
 auto
@@ -165,21 +166,30 @@ Layer::on_update(double ts) -> void
 auto
 Layer::on_render(Renderer& renderer) -> void
 {
-  for (const auto& transform : transforms) {
-    renderer.submit(
-      {
-        .vertex_buffer = quad_vertex_buffer.get(),
-        .index_buffer = quad_index_buffer.get(),
-      },
-      transform);
-  }
+  auto& light_env = renderer.get_light_environment();
+  light_env.light_position = light_position;
+  light_env.light_color = light_color;
 
+  if (transforms.empty())
+    return;
+
+  // First transform = ground
   renderer.submit(
     {
-      .vertex_buffer = cube_vertex_buffer.get(),
-      .index_buffer = cube_index_buffer.get(),
+      .vertex_buffer = quad_vertex_buffer.get(),
+      .index_buffer = quad_index_buffer.get(),
     },
     transforms.at(0));
+
+  // All others = cubes
+  for (std::size_t i = 1; i < transforms.size(); ++i) {
+    renderer.submit(
+      {
+        .vertex_buffer = cube_vertex_buffer.get(),
+        .index_buffer = cube_index_buffer.get(),
+      },
+      transforms.at(i));
+  }
 
   renderer.submit_lines(
     {
@@ -194,4 +204,22 @@ Layer::on_resize(std::uint32_t w, std::uint32_t h) -> void
 {
   bounds.x = static_cast<float>(w);
   bounds.y = static_cast<float>(h);
+}
+
+auto
+Layer::generate_scene() -> void
+{
+  transforms.clear();
+
+  // Ground plane
+  transforms.emplace_back(glm::mat4(1.f)); // Identity, no transform
+
+  // Some cubes
+  transforms.emplace_back(glm::translate(glm::mat4(1.f), { -3.f, 1.f, -3.f }));
+  transforms.emplace_back(glm::translate(glm::mat4(1.f), { 3.f, 1.f, -3.f }));
+  transforms.emplace_back(glm::translate(glm::mat4(1.f), { 3.f, 1.f, 3.f }));
+  transforms.emplace_back(glm::translate(glm::mat4(1.f), { -3.f, 1.f, 3.f }));
+
+  transforms.emplace_back(glm::translate(glm::mat4(1.f), { 0.f, 5.f, 0.f }) *
+                          glm::scale(glm::mat4(1.f), glm::vec3(0.5f)));
 }

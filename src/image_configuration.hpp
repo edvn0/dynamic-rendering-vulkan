@@ -10,6 +10,13 @@ struct Extent2D
 
   Extent2D() = default;
 
+  template<std::integral T>
+  Extent2D(const T w, const T h)
+    : width(static_cast<std::uint32_t>(w))
+    , height(static_cast<std::uint32_t>(h))
+  {
+  }
+
   // Construct from std::pair<std::integral T, std::integral T>
   template<std::integral T>
   Extent2D(const std::pair<T, T>& pair)

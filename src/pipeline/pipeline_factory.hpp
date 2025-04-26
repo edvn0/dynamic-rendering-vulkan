@@ -20,6 +20,7 @@ private:
   const Device* device;
 
   auto create_pipeline_layout(const PipelineBlueprint&,
-                              std::span<const VkDescriptorSetLayout>) const
+                              std::span<const VkDescriptorSetLayout>,
+                              std::span<const VkPushConstantRange>) const
     -> VkPipelineLayout;
 };
