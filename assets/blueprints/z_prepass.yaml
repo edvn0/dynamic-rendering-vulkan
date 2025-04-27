@@ -9,3 +9,4 @@ depth_stencil:
   depth_test: true
   depth_write: true
   format: d32_sfloat
+  compare_op: less

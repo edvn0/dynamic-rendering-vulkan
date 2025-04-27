@@ -19,9 +19,7 @@
 
 struct InstanceData
 {
-  glm::vec4 rotation{};              // Quaternion
-  glm::vec4 translation_and_scale{}; // Translation and scale
-  glm::vec4 non_uniform_scale{};     // Non-uniform scale
+  glm::mat4 transform;
 };
 
 struct LightEnvironment

@@ -13,6 +13,8 @@ PipelineBlueprint::hash() const -> std::size_t
 
   hash_combine(static_cast<std::uint32_t>(cull_mode));
   hash_combine(static_cast<std::uint32_t>(polygon_mode));
+  hash_combine(static_cast<std::uint32_t>(topology));
+  hash_combine(static_cast<std::uint32_t>(winding));
   hash_combine(blend_enable);
   hash_combine(depth_test);
   hash_combine(depth_write);

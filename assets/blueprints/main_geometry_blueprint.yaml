@@ -7,6 +7,7 @@ shaders:
 
 rasterization:
   cull_mode: back
+  winding: ccw
 
 depth_stencil:
   depth_test: true
@@ -18,6 +19,6 @@ blend:
   enable: false
 
 attachments:
-  - format: b8g8r8a8_unorm
-    blend_enable: false
+  - format: r32g32b32a32_sfloat
+    blend_enable: true
     write_mask_rgba: true

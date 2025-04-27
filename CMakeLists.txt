@@ -51,6 +51,8 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
   spirv-reflect-static
 )
 
+target_compile_definitions(${PROJECT_NAME} PRIVATE GLM_FORCE_LEFT_HANDED GLM_FORCE_DEPTH_ZERO_TO_ONE)
+
 target_include_directories(${PROJECT_NAME} PRIVATE src)
 
 if(CMAKE_BUILD_TYPE STREQUAL "Debug" OR CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo")
@@ -90,7 +92,7 @@ function(generate_shaders)
     add_custom_command(
       OUTPUT ${spirv_shader}
       COMMAND ${CMAKE_COMMAND} -E make_directory ${shader_binary_dir}
-      COMMAND glslangValidator -V ${glsl_shader} -o ${spirv_shader} -gVS
+      COMMAND glslangValidator -V ${glsl_shader} -o ${spirv_shader} -gVS -I${shader_source_dir}/include
       DEPENDS ${glsl_shader}
       JOB_POOL compile_shaders
       COMMENT "Compiling shader ${file_name}"

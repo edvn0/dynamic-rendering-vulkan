@@ -7,6 +7,8 @@
 #include <string>
 #include <yaml-cpp/yaml.h>
 
+#include <iostream>
+
 namespace YAML {
 
 inline void
@@ -14,7 +16,9 @@ set_default_vertex_input(PipelineBlueprint& rhs)
 {
   rhs.bindings = {
     { .binding = 0, .stride = 32, .input_rate = VK_VERTEX_INPUT_RATE_VERTEX },
-    { .binding = 1, .stride = 48, .input_rate = VK_VERTEX_INPUT_RATE_INSTANCE },
+    { .binding = 1,
+      .stride = sizeof(float) * 4 * 4,
+      .input_rate = VK_VERTEX_INPUT_RATE_INSTANCE },
   };
 
   rhs.attributes = {
@@ -42,6 +46,10 @@ set_default_vertex_input(PipelineBlueprint& rhs)
       .binding = 1,
       .format = VK_FORMAT_R32G32B32A32_SFLOAT,
       .offset = 32 },
+    { .location = 6,
+      .binding = 1,
+      .format = VK_FORMAT_R32G32B32A32_SFLOAT,
+      .offset = 48 },
   };
 }
 
@@ -65,7 +73,13 @@ string_to_vk_format(const std::string& format_str)
     return VK_FORMAT_B8G8R8A8_UNORM;
   else if (format_str == "r8g8b8a8_unorm")
     return VK_FORMAT_R8G8B8A8_UNORM;
-  else if (format_str == "d32_sfloat")
+  else if (format_str == "r32g32b32a32_sfloat")
+    return VK_FORMAT_R32G32B32A32_SFLOAT;
+  else if (format_str == "b32g32r32a32_sfloat") {
+    std::cout
+      << "Vulkan only supports RGBA32, not BGRA32, falling back to RGBA32.\n";
+    return VK_FORMAT_R32G32B32A32_SFLOAT;
+  } else if (format_str == "d32_sfloat")
     return VK_FORMAT_D32_SFLOAT;
   else if (format_str == "d24_unorm_s8")
     return VK_FORMAT_D24_UNORM_S8_UINT;
@@ -132,6 +146,8 @@ string_to_cull_mode(const std::string& cm)
     return VK_CULL_MODE_FRONT_BIT;
   else if (cm == "back")
     return VK_CULL_MODE_BACK_BIT;
+  else if (cm == "both")
+    return VK_CULL_MODE_FRONT_AND_BACK;
 
   return std::unexpected(ConversionError("Unsupported cull mode: " + cm));
 }
@@ -147,6 +163,17 @@ string_to_polygon_mode(const std::string& pm)
     return VK_POLYGON_MODE_FILL;
 
   return std::unexpected(ConversionError("Unsupported polygon mode: " + pm));
+}
+
+std::expected<VkFrontFace, ConversionError>
+string_to_winding_mode(const std::string& pm)
+{
+  if (pm == "cw" || pm == "clockwise")
+    return VK_FRONT_FACE_CLOCKWISE;
+  else if (pm == "ccw" || pm == "counter-clockwise" || pm == "counterclockwise")
+    return VK_FRONT_FACE_COUNTER_CLOCKWISE;
+
+  return std::unexpected(ConversionError("Unsupported winding mode: " + pm));
 }
 
 std::expected<VkCompareOp, ConversionError>
@@ -347,6 +374,15 @@ struct convert<PipelineBlueprint>
         return false;
       }
       rhs.polygon_mode = polygon_result.value();
+
+      auto winding_result = string_to_winding_mode(
+        rast["winding"].as<std::string>("counter-clockwise"));
+
+      if (!winding_result.has_value()) {
+        assert(false && winding_result.error().message.c_str());
+        return false;
+      }
+      rhs.winding = winding_result.value();
     }
 
     auto topology_result =

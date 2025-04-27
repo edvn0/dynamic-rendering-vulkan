@@ -8,7 +8,8 @@ layout(location = 0) out vec4 fragColor;
 
 layout(set = 1, binding = 0) uniform sampler2D shadowMap;
 
-void main() {
+void main()
+{
   vec3 normal = normalize(v_normal);
   vec3 light_pos = vec3(40.0, 40.0, 40.0);
   vec3 light_color = vec3(1.0, 0.5, 0.0); // orange

@@ -17,7 +17,7 @@ depth_stencil:
   compare_op: less
 
 attachments:
-  - format: b8g8r8a8_unorm
+  - format: r32g32b32a32_sfloat
 
 vertex_input:
   bindings:

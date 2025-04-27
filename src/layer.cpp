@@ -13,54 +13,55 @@
 #include <imgui.h>
 
 auto
-generate_cube(const Device& device)
+generate_cube_counter_clockwise(const Device& device)
   -> std::tuple<std::unique_ptr<GPUBuffer>, std::unique_ptr<IndexBuffer>>
 {
-  std::array<Vertex, 24> vertices = {
-    Vertex{ { -0.5f, -0.5f, 0.5f }, { 0.f, 0.f, 1.f }, { 0.f, 0.f } },
-    Vertex{ { 0.5f, -0.5f, 0.5f }, { 0.f, 0.f, 1.f }, { 1.f, 0.f } },
-    Vertex{ { 0.5f, 0.5f, 0.5f }, { 0.f, 0.f, 1.f }, { 1.f, 1.f } },
-    Vertex{ { -0.5f, 0.5f, 0.5f }, { 0.f, 0.f, 1.f }, { 0.f, 1.f } },
-
-    Vertex{ { 0.5f, -0.5f, -0.5f }, { 0.f, 0.f, -1.f }, { 0.f, 0.f } },
-    Vertex{ { -0.5f, -0.5f, -0.5f }, { 0.f, 0.f, -1.f }, { 1.f, 0.f } },
-    Vertex{ { -0.5f, 0.5f, -0.5f }, { 0.f, 0.f, -1.f }, { 1.f, 1.f } },
-    Vertex{ { 0.5f, 0.5f, -0.5f }, { 0.f, 0.f, -1.f }, { 0.f, 1.f } },
-
-    Vertex{ { -0.5f, -0.5f, -0.5f }, { -1.f, 0.f, 0.f }, { 0.f, 0.f } },
-    Vertex{ { -0.5f, -0.5f, 0.5f }, { -1.f, 0.f, 0.f }, { 1.f, 0.f } },
-    Vertex{ { -0.5f, 0.5f, 0.5f }, { -1.f, 0.f, 0.f }, { 1.f, 1.f } },
-    Vertex{ { -0.5f, 0.5f, -0.5f }, { -1.f, 0.f, 0.f }, { 0.f, 1.f } },
-
-    Vertex{ { 0.5f, -0.5f, 0.5f }, { 1.f, 0.f, 0.f }, { 0.f, 0.f } },
-    Vertex{ { 0.5f, -0.5f, -0.5f }, { 1.f, 0.f, 0.f }, { 1.f, 0.f } },
-    Vertex{ { 0.5f, 0.5f, -0.5f }, { 1.f, 0.f, 0.f }, { 1.f, 1.f } },
-    Vertex{ { 0.5f, 0.5f, 0.5f }, { 1.f, 0.f, 0.f }, { 0.f, 1.f } },
-
-    Vertex{ { -0.5f, 0.5f, 0.5f }, { 0.f, 1.f, 0.f }, { 0.f, 0.f } },
-    Vertex{ { 0.5f, 0.5f, 0.5f }, { 0.f, 1.f, 0.f }, { 1.f, 0.f } },
-    Vertex{ { 0.5f, 0.5f, -0.5f }, { 0.f, 1.f, 0.f }, { 1.f, 1.f } },
-    Vertex{ { -0.5f, 0.5f, -0.5f }, { 0.f, 1.f, 0.f }, { 0.f, 1.f } },
-
-    Vertex{ { -0.5f, -0.5f, -0.5f }, { 0.f, -1.f, 0.f }, { 0.f, 0.f } },
-    Vertex{ { 0.5f, -0.5f, -0.5f }, { 0.f, -1.f, 0.f }, { 1.f, 0.f } },
-    Vertex{ { 0.5f, -0.5f, 0.5f }, { 0.f, -1.f, 0.f }, { 1.f, 1.f } },
-    Vertex{ { -0.5f, -0.5f, 0.5f }, { 0.f, -1.f, 0.f }, { 0.f, 1.f } },
+  struct Vertex
+  {
+    glm::vec3 position;
+    glm::vec3 normal;
+    glm::vec2 uv;
   };
 
-  std::array<std::uint32_t, 36> indices = {
+  static constexpr std::array<Vertex, 24> vertices = { {
+    { { -1.f, -1.f, 1.f }, { 0.f, 0.f, 1.f }, { 0.f, 0.f } },
+    { { 1.f, -1.f, 1.f }, { 0.f, 0.f, 1.f }, { 1.f, 0.f } },
+    { { 1.f, 1.f, 1.f }, { 0.f, 0.f, 1.f }, { 1.f, 1.f } },
+    { { -1.f, 1.f, 1.f }, { 0.f, 0.f, 1.f }, { 0.f, 1.f } },
+    { { 1.f, -1.f, -1.f }, { 0.f, 0.f, -1.f }, { 0.f, 0.f } },
+    { { -1.f, -1.f, -1.f }, { 0.f, 0.f, -1.f }, { 1.f, 0.f } },
+    { { -1.f, 1.f, -1.f }, { 0.f, 0.f, -1.f }, { 1.f, 1.f } },
+    { { 1.f, 1.f, -1.f }, { 0.f, 0.f, -1.f }, { 0.f, 1.f } },
+    { { -1.f, -1.f, -1.f }, { -1.f, 0.f, 0.f }, { 0.f, 0.f } },
+    { { -1.f, -1.f, 1.f }, { -1.f, 0.f, 0.f }, { 1.f, 0.f } },
+    { { -1.f, 1.f, 1.f }, { -1.f, 0.f, 0.f }, { 1.f, 1.f } },
+    { { -1.f, 1.f, -1.f }, { -1.f, 0.f, 0.f }, { 0.f, 1.f } },
+    { { 1.f, -1.f, 1.f }, { 1.f, 0.f, 0.f }, { 0.f, 0.f } },
+    { { 1.f, -1.f, -1.f }, { 1.f, 0.f, 0.f }, { 1.f, 0.f } },
+    { { 1.f, 1.f, -1.f }, { 1.f, 0.f, 0.f }, { 1.f, 1.f } },
+    { { 1.f, 1.f, 1.f }, { 1.f, 0.f, 0.f }, { 0.f, 1.f } },
+    { { -1.f, 1.f, 1.f }, { 0.f, 1.f, 0.f }, { 0.f, 0.f } },
+    { { 1.f, 1.f, 1.f }, { 0.f, 1.f, 0.f }, { 1.f, 0.f } },
+    { { 1.f, 1.f, -1.f }, { 0.f, 1.f, 0.f }, { 1.f, 1.f } },
+    { { -1.f, 1.f, -1.f }, { 0.f, 1.f, 0.f }, { 0.f, 1.f } },
+    { { -1.f, -1.f, -1.f }, { 0.f, -1.f, 0.f }, { 0.f, 0.f } },
+    { { 1.f, -1.f, -1.f }, { 0.f, -1.f, 0.f }, { 1.f, 0.f } },
+    { { 1.f, -1.f, 1.f }, { 0.f, -1.f, 0.f }, { 1.f, 1.f } },
+    { { -1.f, -1.f, 1.f }, { 0.f, -1.f, 0.f }, { 0.f, 1.f } },
+  } };
+
+  static constexpr std::array<std::uint32_t, 36> indices = {
     0,  1,  2,  2,  3,  0,  4,  5,  6,  6,  7,  4,  8,  9,  10, 10, 11, 8,
-    12, 13, 14, 14, 15, 12, 16, 17, 18, 18, 19, 16, 20, 21, 22, 22, 23, 20
+    12, 13, 14, 14, 15, 12, 16, 17, 18, 18, 19, 16, 20, 21, 22, 22, 23, 20,
   };
 
   auto vertex_buffer = std::make_unique<GPUBuffer>(
-    device,
-    VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-    true);
-  vertex_buffer->upload(std::span(vertices));
+    device, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, true);
+  vertex_buffer->upload(std::span(vertices.data(), vertices.size()));
 
-  auto index_buffer = std::make_unique<IndexBuffer>(device);
-  index_buffer->upload(std::span(indices));
+  auto index_buffer =
+    std::make_unique<IndexBuffer>(device, VK_INDEX_TYPE_UINT32);
+  index_buffer->upload(std::span(indices.data(), indices.size()));
 
   return { std::move(vertex_buffer), std::move(index_buffer) };
 }
@@ -84,7 +85,7 @@ Layer::Layer(const Device& dev)
   std::array<std::uint32_t, 6> square_indices = { 0, 1, 2, 2, 3, 0 };
   quad_index_buffer->upload(std::span(square_indices));
 
-  auto&& [cube_vertex, cube_index] = generate_cube(dev);
+  auto&& [cube_vertex, cube_index] = generate_cube_counter_clockwise(dev);
   cube_vertex_buffer = std::move(cube_vertex);
   cube_index_buffer = std::move(cube_index);
 
@@ -196,7 +197,7 @@ Layer::on_render(Renderer& renderer) -> void
       .vertex_buffer = axes_vertex_buffer.get(),
       .vertex_count = 6,
     },
-    glm::mat4(1.f));
+    glm::scale(glm::mat4{ 1.0F }, glm::vec3{ 5.0F }));
 }
 
 auto

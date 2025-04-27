@@ -120,7 +120,7 @@ PipelineFactory::create_pipeline(const PipelineBlueprint& blueprint,
     .rasterizerDiscardEnable = VK_FALSE,
     .polygonMode = blueprint.polygon_mode,
     .cullMode = blueprint.cull_mode,
-    .frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE,
+    .frontFace = blueprint.winding,
     .depthBiasEnable = VK_FALSE,
     .depthBiasConstantFactor = 0.0f,
     .depthBiasClamp = 0.0f,
@@ -200,9 +200,7 @@ PipelineFactory::create_pipeline(const PipelineBlueprint& blueprint,
     .pNext = nullptr,
     .flags = 0,
     .viewportCount = 1,
-    .pViewports = nullptr,
     .scissorCount = 1,
-    .pScissors = nullptr,
   };
 
   VkPipelineMultisampleStateCreateInfo multisample_state{

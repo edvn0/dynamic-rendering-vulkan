@@ -182,7 +182,7 @@ Renderer::Renderer(const Device& dev,
   geometry_image = Image::create(dev,
                                  ImageConfiguration{
                                    .extent = win.framebuffer_size(),
-                                   .format = VK_FORMAT_B8G8R8A8_UNORM,
+                                   .format = VK_FORMAT_R32G32B32A32_SFLOAT,
                                  });
   geometry_depth_image =
     Image::create(dev,
@@ -225,7 +225,7 @@ Renderer::Renderer(const Device& dev,
   {
     instance_vertex_buffer =
       std::make_unique<GPUBuffer>(dev, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, true);
-    static constexpr auto instance_size = sizeof(glm::vec4) * 3;
+    static constexpr auto instance_size = sizeof(glm::mat4);
     static constexpr auto instance_count = 1'000'000;
     static constexpr auto instance_size_bytes = instance_size * instance_count;
     const auto bytes = std::make_unique<std::byte[]>(instance_size_bytes);
@@ -247,28 +247,28 @@ Renderer::Renderer(const Device& dev,
       constexpr std::array<GizmoVertex, 6> gizmo_vertices = {
         GizmoVertex{
           .pos = glm::vec3(0.f, 0.f, 0.f),
-          .col = glm::vec3{},
+          .col = glm::vec3{ 1.0, 0.0, 0.0 },
         },
         {
           glm::vec3(1.f, 0.f, 0.f),
-          glm::vec3{},
-        },
+          glm::vec3{ 1.0, 0.0, 0.0 },
+        }, // X+ = RED
         {
           glm::vec3(0.f, 0.f, 0.f),
-          glm::vec3{},
+          glm::vec3{ 0.0, 1.0, 0.0 },
         },
         {
           glm::vec3(0.f, 1.f, 0.f),
-          glm::vec3{},
-        },
+          glm::vec3{ 0.0, 1.0, 0.0 },
+        }, // Y+ = BLUE
         {
           glm::vec3(0.f, 0.f, 0.f),
-          glm::vec3{},
+          glm::vec3{ 0.0, 0.0, 1.0 },
         },
         {
           glm::vec3(0.f, 0.f, 1.f),
-          glm::vec3{},
-        },
+          glm::vec3{ 0.0, 0.0, 1.0 },
+        }, // Z+ = GREEN
       };
 
       gizmo_vertex_buffer = std::make_unique<GPUBuffer>(
@@ -341,19 +341,7 @@ Renderer::submit(const DrawCommand& cmd, const glm::mat4& transform) -> void
   if (!current_frustum.intersects(center_ws, radius_ws))
     return;
 
-  glm::quat rotation = glm::quat_cast(transform);
-  auto rotation_vec = glm::vec4(rotation.x, rotation.y, rotation.z, rotation.w);
-
-  auto translation = glm::vec3(transform[3]);
-  glm::vec3 scale(glm::length(glm::vec3(transform[0])),
-                  glm::length(glm::vec3(transform[1])),
-                  glm::length(glm::vec3(transform[2])));
-
-  glm::vec4 translation_and_scale(translation, 1.0f);
-  glm::vec4 non_uniform_scale(scale, 0.0f);
-
-  draw_commands[cmd].emplace_back(
-    rotation_vec, translation_and_scale, non_uniform_scale);
+  draw_commands[cmd].emplace_back(transform);
 }
 
 auto
@@ -401,8 +389,7 @@ upload_instance_vertex_data(GPUBuffer& buffer, const auto& draw_commands)
                               count * sizeof(InstanceData));
                 });
 
-  buffer.upload(
-    std::span{ flattened_instances.data(), flattened_instances.size() });
+  buffer.upload(std::span(flattened_instances));
 
   return flat_draw_commands;
 }
@@ -550,8 +537,8 @@ Renderer::run_z_prepass(std::uint32_t frame_index, const DrawList& draw_list)
     .y = static_cast<float>(geometry_image->height()),
     .width = static_cast<float>(geometry_image->width()),
     .height = -static_cast<float>(geometry_image->height()),
-    .minDepth = 0.f,
-    .maxDepth = 1.f,
+    .minDepth = 1.f,
+    .maxDepth = 0.f,
   };
   vkCmdSetViewport(cmd, 0, 1, &viewport);
   vkCmdSetScissor(cmd, 0, 1, &rendering_info.renderArea);
@@ -653,8 +640,8 @@ Renderer::run_geometry_pass(std::uint32_t frame_index,
     .y = static_cast<float>(geometry_image->height()),
     .width = static_cast<float>(geometry_image->width()),
     .height = -static_cast<float>(geometry_image->height()),
-    .minDepth = 0.f,
-    .maxDepth = 1.f,
+    .minDepth = 1.f,
+    .maxDepth = 0.f,
   };
   vkCmdSetViewport(cmd, 0, 1, &viewport);
   vkCmdSetScissor(cmd, 0, 1, &render_info.renderArea);
@@ -735,10 +722,7 @@ Renderer::run_compute_pass(std::uint32_t frame_index) -> void
                           0,
                           nullptr);
 
-  vkCmdDispatch(cmd,
-                1,  // x
-                1,  // y
-                1); // z
+  vkCmdDispatch(cmd, 1, 1, 1);
 
   compute_command_buffer->end_timer(frame_index, "test_compute_pass");
 
@@ -774,7 +758,6 @@ Renderer::run_line_pass(std::uint32_t frame_index) -> void
     .imageLayout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
     .loadOp = VK_ATTACHMENT_LOAD_OP_LOAD,
     .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
-    .clearValue = { .color = { { 0.f, 0.f, 0.f, 1.f } } }
   };
 
   VkRenderingAttachmentInfo depth_attachment{
@@ -783,7 +766,6 @@ Renderer::run_line_pass(std::uint32_t frame_index) -> void
     .imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
     .loadOp = VK_ATTACHMENT_LOAD_OP_LOAD,
     .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
-    .clearValue = { .depthStencil = { 1.0f, 0 } }
   };
 
   VkRenderingInfo rendering_info{
@@ -803,8 +785,8 @@ Renderer::run_line_pass(std::uint32_t frame_index) -> void
     .y = static_cast<float>(geometry_image->height()),
     .width = static_cast<float>(geometry_image->width()),
     .height = -static_cast<float>(geometry_image->height()),
-    .minDepth = 0.f,
-    .maxDepth = 1.f,
+    .minDepth = 1.f,
+    .maxDepth = 0.f,
   };
   vkCmdSetViewport(cmd, 0, 1, &viewport);
   vkCmdSetScissor(cmd, 0, 1, &rendering_info.renderArea);
@@ -883,8 +865,8 @@ Renderer::run_gizmo_pass(std::uint32_t frame_index) -> void
     .y = static_cast<float>(geometry_image->height()),
     .width = static_cast<float>(geometry_image->width()),
     .height = -static_cast<float>(geometry_image->height()),
-    .minDepth = 0.f,
-    .maxDepth = 1.f,
+    .minDepth = 1.f,
+    .maxDepth = 0.f,
   };
   vkCmdSetViewport(cmd, 0, 1, &viewport);
   vkCmdSetScissor(cmd, 0, 1, &rendering_info.renderArea);
@@ -932,7 +914,7 @@ Renderer::run_shadow_pass(std::uint32_t frame_index, const DrawList& draw_list)
   CoreUtils::cmd_transition_to_depth_attachment(
     cmd, shadow_depth_image->get_image());
 
-  VkClearValue depth_clear = { .depthStencil = { 1.f, 0 } };
+  VkClearValue depth_clear = { .depthStencil = { 0.f, 0 } };
 
   VkRenderingAttachmentInfo depth_attachment = {
     .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,

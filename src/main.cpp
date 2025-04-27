@@ -83,7 +83,7 @@ main(int argc, char** argv) -> std::int32_t
   };
 
   auto&& [w, h] = window.framebuffer_size();
-  EditorCamera camera{ 90.0F, static_cast<float>(w) / h, 0.1f };
+  EditorCamera camera{ 90.0F, static_cast<float>(w) / h, 0.1F, 1000.0F };
   renderer.update_frustum(camera.get_projection() * camera.get_view());
 
   std::vector<std::unique_ptr<ILayer>> layers;
@@ -173,21 +173,32 @@ main(int argc, char** argv) -> std::int32_t
     gui_system.begin_frame();
     std::ranges::for_each(layers, [](auto& layer) { layer->on_interface(); });
 
-    if (ImGui::Begin("Renderer output")) {
+    if (ImGui::Begin("Renderer output",
+                     nullptr,
+                     ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+                       ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
+                       ImGuiWindowFlags_NoScrollWithMouse |
+                       ImGuiWindowFlags_NoCollapse |
+                       ImGuiWindowFlags_NoBackground)) {
+      auto size = ImGui::GetWindowSize();
+
       ImGui::Image(renderer.get_output_image().get_texture_id<ImTextureID>(),
-                   {
-                     static_cast<float>(renderer.get_output_image().width()),
-                     static_cast<float>(renderer.get_output_image().height()),
-                   });
+                   size);
+
       ImGui::End();
     }
 
-    if (ImGui::Begin("Shadow output")) {
+    if (ImGui::Begin("Shadow output",
+                     nullptr,
+                     ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+                       ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
+                       ImGuiWindowFlags_NoScrollWithMouse |
+                       ImGuiWindowFlags_NoCollapse |
+                       ImGuiWindowFlags_NoBackground)) {
+      auto size = ImGui::GetWindowSize();
+
       ImGui::Image(renderer.get_shadow_image().get_texture_id<ImTextureID>(),
-                   {
-                     static_cast<float>(renderer.get_shadow_image().width()),
-                     static_cast<float>(renderer.get_shadow_image().height()),
-                   });
+                   size);
       ImGui::End();
     }
 

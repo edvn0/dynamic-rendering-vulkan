@@ -115,14 +115,7 @@ protected:
                                   float znear,
                                   float zfar) -> glm::mat4
   {
-    const float f = 1.0f / std::tan(glm::radians(fovy) * 0.5f);
-    glm::mat4 result{ 0.0f };
-    result[0][0] = f / aspect;
-    result[1][1] = -f;
-    result[2][2] = zfar / (znear - zfar);
-    result[2][3] = -1.0f;
-    result[3][2] = (znear * zfar) / (znear - zfar);
-    return result;
+    return glm::perspective(glm::radians(fovy), aspect, znear, zfar);
   }
 
   auto update_projection_matrix() -> void

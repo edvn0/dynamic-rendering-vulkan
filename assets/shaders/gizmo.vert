@@ -5,10 +5,7 @@ layout(location = 1) in vec3 in_color;
 
 layout(location = 0) out vec3 out_color;
 
-layout(push_constant) uniform PushConstants
-{
-  mat4 rotation_matrix;
-}
+layout(push_constant) uniform PushConstants { mat4 rotation_matrix; }
 pc;
 
 layout(set = 0, binding = 1, std140) uniform ShadowUniformBufferObject
@@ -24,7 +21,7 @@ void main()
   vec4 pos = pc.rotation_matrix * vec4(in_position, 0.0);
 
   // Draw small in top-right of screen
-  pos.xy *= 0.1; // shrink the gizmo size
+  pos.xy *= 0.3; // shrink the gizmo size
   pos.x += 0.8;  // move to top-right
   pos.y += 0.8;
 

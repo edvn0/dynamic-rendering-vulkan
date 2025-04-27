@@ -56,6 +56,7 @@ struct PipelineBlueprint
   VkCullModeFlags cull_mode{ VK_CULL_MODE_BACK_BIT };
   VkPolygonMode polygon_mode{ VK_POLYGON_MODE_FILL };
   VkPrimitiveTopology topology{ VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST };
+  VkFrontFace winding{ VK_FRONT_FACE_COUNTER_CLOCKWISE };
   bool blend_enable{ false };
   bool depth_test{ false };
   bool depth_write{ false };
