@@ -29,6 +29,8 @@ public:
     return device.physical_device.physical_device;
   }
   auto get_timestamp_period() const -> double;
+  auto get_max_sample_count(VkSampleCountFlags = 0) const
+    -> VkSampleCountFlagBits;
 
   auto create_one_time_command_buffer() const
     -> std::tuple<VkCommandBuffer, VkCommandPool>;
@@ -45,4 +47,6 @@ private:
 
   vkb::Device device;
   std::unique_ptr<Allocator> allocator;
+
+  static inline std::optional<VkPhysicalDeviceProperties> props{ std::nullopt };
 };

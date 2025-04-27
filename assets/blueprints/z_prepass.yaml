@@ -10,3 +10,5 @@ depth_stencil:
   depth_write: true
   format: d32_sfloat
   compare_op: less
+
+msaa_samples: 16

@@ -22,3 +22,5 @@ attachments:
   - format: r32g32b32a32_sfloat
     blend_enable: true
     write_mask_rgba: true
+
+msaa_samples: 16

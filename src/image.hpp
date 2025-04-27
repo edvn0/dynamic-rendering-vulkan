@@ -33,7 +33,8 @@ public:
                                                 config.array_layers,
                                                 config.usage,
                                                 config.aspect,
-                                                config.allow_in_ui));
+                                                config.allow_in_ui,
+                                                config.sample_count));
     img->recreate();
     return img;
   }
@@ -74,7 +75,8 @@ private:
         uint32_t layers,
         VkImageUsageFlags usage_flags,
         VkImageAspectFlags aspect_flags,
-        bool allow)
+        bool allow,
+        VkSampleCountFlags sc)
     : extent(ext)
     , mip_levels(mips)
     , array_layers(layers)
@@ -82,6 +84,7 @@ private:
     , format(fmt)
     , usage(usage_flags)
     , aspect(aspect_flags)
+    , sample_count(sc)
     , allow_in_ui(allow)
   {
   }
@@ -101,6 +104,7 @@ private:
   VkFormat format{};
   VkImageUsageFlags usage{};
   VkImageAspectFlags aspect{};
+  VkSampleCountFlags sample_count{}; // For MSAA images.
 
   // For UI systems.
   bool allow_in_ui{ true }; // For UI systems

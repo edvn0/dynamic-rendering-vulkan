@@ -60,6 +60,7 @@ struct PipelineBlueprint
   bool blend_enable{ false };
   bool depth_test{ false };
   bool depth_write{ false };
+  VkSampleCountFlags msaa_samples{ VK_SAMPLE_COUNT_1_BIT };
 
   // Reverse z-buffer by default
   VkCompareOp depth_compare_op{ VK_COMPARE_OP_GREATER };

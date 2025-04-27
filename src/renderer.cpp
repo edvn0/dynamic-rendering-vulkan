@@ -119,32 +119,34 @@ Renderer::create_descriptor_set_layout() -> void
   }
 
   for (std::size_t i = 0; i < image_count; ++i) {
-    std::array<VkWriteDescriptorSet, 2> writes{
-      { { .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-          .dstSet = renderer_descriptor_sets[i],
-          .dstBinding = 0,
-          .dstArrayElement = 0,
-          .descriptorCount = 1,
-          .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-          .pBufferInfo =
-            new VkDescriptorBufferInfo{
-              .buffer = camera_uniform_buffer->get(),
-              .offset = sizeof(CameraBuffer) * i,
-              .range = sizeof(CameraBuffer),
-            } },
-        { .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-          .dstSet = renderer_descriptor_sets[i],
-          .dstBinding = 1,
-          .dstArrayElement = 0,
-          .descriptorCount = 1,
-          .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-          .pBufferInfo =
-            new VkDescriptorBufferInfo{
-              .buffer = shadow_camera_buffer->get(),
-              .offset = sizeof(ShadowBuffer) * i,
-              .range = sizeof(ShadowBuffer),
-            } } }
+    VkDescriptorBufferInfo camera_info{
+      .buffer = camera_uniform_buffer->get(),
+      .offset = sizeof(CameraBuffer) * i,
+      .range = sizeof(CameraBuffer),
     };
+    VkDescriptorBufferInfo shadow_info{
+      .buffer = shadow_camera_buffer->get(),
+      .offset = sizeof(ShadowBuffer) * i,
+      .range = sizeof(ShadowBuffer),
+    };
+
+    std::vector<VkWriteDescriptorSet> writes;
+    auto& first = writes.emplace_back();
+    first.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    first.dstSet = renderer_descriptor_sets[i];
+    first.descriptorCount = 1;
+    first.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    first.pBufferInfo = &camera_info;
+    first.dstBinding = 0;
+    auto& second = writes.emplace_back();
+    second.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    second.dstSet = renderer_descriptor_sets[i];
+    second.descriptorCount = 1;
+    second.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    second.pBufferInfo = &shadow_info;
+    second.dstBinding = 1;
+    second.pImageInfo = nullptr;
+
     vkUpdateDescriptorSets(device->get_device(),
                            static_cast<std::uint32_t>(writes.size()),
                            writes.data(),
@@ -155,11 +157,9 @@ Renderer::create_descriptor_set_layout() -> void
 
 Renderer::Renderer(const Device& dev,
                    const BlueprintRegistry& registry,
-                   const PipelineFactory& factory,
                    const Window& win)
   : device(&dev)
   , blueprint_registry(&registry)
-  , pipeline_factory(&factory)
 {
   create_descriptor_set_layout();
 
@@ -184,6 +184,18 @@ Renderer::Renderer(const Device& dev,
                                    .extent = win.framebuffer_size(),
                                    .format = VK_FORMAT_R32G32B32A32_SFLOAT,
                                  });
+
+  auto sample_count = device->get_max_sample_count();
+
+  geometry_msaa_image =
+    Image::create(dev,
+                  ImageConfiguration{
+                    .extent = win.framebuffer_size(),
+                    .format = VK_FORMAT_R32G32B32A32_SFLOAT,
+                    .usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
+                             VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT,
+                    .sample_count = sample_count,
+                  });
   geometry_depth_image =
     Image::create(dev,
                   ImageConfiguration{
@@ -191,6 +203,7 @@ Renderer::Renderer(const Device& dev,
                     .format = VK_FORMAT_D32_SFLOAT,
                     .usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
                     .aspect = VK_IMAGE_ASPECT_DEPTH_BIT,
+                    .sample_count = sample_count,
                     .allow_in_ui = false,
                   });
 
@@ -318,6 +331,7 @@ Renderer::destroy() -> void
   camera_uniform_buffer.reset();
   geometry_depth_image.reset();
   geometry_image.reset();
+  geometry_msaa_image.reset();
   compute_command_buffer.reset();
   instance_vertex_buffer.reset();
   command_buffer.reset();
@@ -480,6 +494,7 @@ auto
 Renderer::resize(std::uint32_t width, std::uint32_t height) -> void
 {
   geometry_image->resize(width, height);
+  geometry_msaa_image->resize(width, height);
   geometry_depth_image->resize(width, height);
 }
 
@@ -591,16 +606,18 @@ Renderer::run_geometry_pass(std::uint32_t frame_index,
   const VkCommandBuffer cmd = command_buffer->get(frame_index);
   CoreUtils::cmd_transition_to_color_attachment(cmd,
                                                 geometry_image->get_image());
+  CoreUtils::cmd_transition_to_color_attachment(
+    cmd, geometry_msaa_image->get_image());
 
   VkClearValue clear_value = { .color = { { 0.f, 0.f, 0.f, 0.f } } };
   VkRenderingAttachmentInfo color_attachment = {
     .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
     .pNext = nullptr,
-    .imageView = geometry_image->get_view(),
+    .imageView = geometry_msaa_image->get_view(),
     .imageLayout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
-    .resolveMode = VK_RESOLVE_MODE_NONE,
-    .resolveImageView = VK_NULL_HANDLE,
-    .resolveImageLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+    .resolveMode = VK_RESOLVE_MODE_AVERAGE_BIT_KHR,
+    .resolveImageView = geometry_image->get_view(),
+    .resolveImageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
     .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
     .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
     .clearValue = clear_value
@@ -619,6 +636,9 @@ Renderer::run_geometry_pass(std::uint32_t frame_index,
     .clearValue = {}, // unused
   };
 
+  const std::array colour_attachments = {
+    color_attachment,
+  };
   VkRenderingInfo render_info = {
     .sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
     .pNext = nullptr,
@@ -627,8 +647,8 @@ Renderer::run_geometry_pass(std::uint32_t frame_index,
                     .extent = { geometry_image->width(), geometry_image->height() }, },
     .layerCount = 1,
     .viewMask = 0,
-    .colorAttachmentCount = 1,
-    .pColorAttachments = &color_attachment,
+    .colorAttachmentCount = static_cast<std::uint32_t>(colour_attachments.size()),
+    .pColorAttachments = colour_attachments.data(),
     .pDepthAttachment = &depth_attachment,
     .pStencilAttachment = nullptr,
   };
@@ -754,28 +774,42 @@ Renderer::run_line_pass(std::uint32_t frame_index) -> void
 
   VkRenderingAttachmentInfo color_attachment{
     .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
-    .imageView = geometry_image->get_view(),
+    .pNext = nullptr,
+    .imageView = geometry_msaa_image->get_view(),
     .imageLayout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
+    .resolveMode = VK_RESOLVE_MODE_AVERAGE_BIT_KHR,
+    .resolveImageView = geometry_image->get_view(),
+    .resolveImageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
     .loadOp = VK_ATTACHMENT_LOAD_OP_LOAD,
     .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+    .clearValue = {}
   };
 
   VkRenderingAttachmentInfo depth_attachment{
     .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+    .pNext = nullptr,
     .imageView = geometry_depth_image->get_view(),
     .imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+    .resolveMode = VK_RESOLVE_MODE_NONE,
+    .resolveImageView = VK_NULL_HANDLE,
+    .resolveImageLayout = VK_IMAGE_LAYOUT_UNDEFINED,
     .loadOp = VK_ATTACHMENT_LOAD_OP_LOAD,
     .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+    .clearValue = {}
   };
 
   VkRenderingInfo rendering_info{
     .sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
+    .pNext = nullptr,
+    .flags = 0,
     .renderArea = { { 0, 0 },
                     { geometry_image->width(), geometry_image->height() } },
     .layerCount = 1,
+    .viewMask = 0,
     .colorAttachmentCount = 1,
     .pColorAttachments = &color_attachment,
     .pDepthAttachment = &depth_attachment,
+    .pStencilAttachment = nullptr,
   };
 
   vkCmdBeginRendering(cmd, &rendering_info);
@@ -832,8 +866,12 @@ Renderer::run_gizmo_pass(std::uint32_t frame_index) -> void
 
   VkRenderingAttachmentInfo color_attachment{
     .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
-    .imageView = geometry_image->get_view(),
+    .pNext = nullptr,
+    .imageView = geometry_msaa_image->get_view(),
     .imageLayout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
+    .resolveMode = VK_RESOLVE_MODE_AVERAGE_BIT_KHR,
+    .resolveImageView = geometry_image->get_view(),
+    .resolveImageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
     .loadOp = VK_ATTACHMENT_LOAD_OP_LOAD,
     .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
     .clearValue = { .color = { { 0.f, 0.f, 0.f, 1.f } } }
@@ -841,8 +879,12 @@ Renderer::run_gizmo_pass(std::uint32_t frame_index) -> void
 
   VkRenderingAttachmentInfo depth_attachment{
     .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+    .pNext = nullptr,
     .imageView = geometry_depth_image->get_view(),
     .imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+    .resolveMode = VK_RESOLVE_MODE_NONE,
+    .resolveImageView = VK_NULL_HANDLE,
+    .resolveImageLayout = VK_IMAGE_LAYOUT_UNDEFINED,
     .loadOp = VK_ATTACHMENT_LOAD_OP_LOAD,
     .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
     .clearValue = { .depthStencil = { 1.0f, 0 } }
@@ -850,12 +892,16 @@ Renderer::run_gizmo_pass(std::uint32_t frame_index) -> void
 
   VkRenderingInfo rendering_info{
     .sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
+    .pNext = nullptr,
+    .flags = 0,
     .renderArea = { { 0, 0 },
                     { geometry_image->width(), geometry_image->height() } },
     .layerCount = 1,
+    .viewMask = 0,
     .colorAttachmentCount = 1,
     .pColorAttachments = &color_attachment,
     .pDepthAttachment = &depth_attachment,
+    .pStencilAttachment = nullptr,
   };
 
   vkCmdBeginRendering(cmd, &rendering_info);
@@ -918,8 +964,12 @@ Renderer::run_shadow_pass(std::uint32_t frame_index, const DrawList& draw_list)
 
   VkRenderingAttachmentInfo depth_attachment = {
     .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+    .pNext = nullptr,
     .imageView = shadow_depth_image->get_view(),
     .imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+    .resolveMode = VK_RESOLVE_MODE_NONE,
+    .resolveImageView = VK_NULL_HANDLE,
+    .resolveImageLayout = VK_IMAGE_LAYOUT_UNDEFINED,
     .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
     .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
     .clearValue = depth_clear,
@@ -927,10 +977,13 @@ Renderer::run_shadow_pass(std::uint32_t frame_index, const DrawList& draw_list)
 
   VkRenderingInfo rendering_info = {
     .sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
+    .pNext = nullptr,
+    .flags = 0,
     .renderArea = { { 0, 0 },
                     { shadow_depth_image->width(),
                       shadow_depth_image->height() } },
     .layerCount = 1,
+    .viewMask = 0,
     .colorAttachmentCount = 0,
     .pColorAttachments = nullptr,
     .pDepthAttachment = &depth_attachment,

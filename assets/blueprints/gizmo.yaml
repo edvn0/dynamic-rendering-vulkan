@@ -18,6 +18,8 @@ depth_stencil:
 attachments:
   - format: r32g32b32a32_sfloat
 
+msaa_samples: 16
+
 vertex_input:
   bindings:
     - binding: 0

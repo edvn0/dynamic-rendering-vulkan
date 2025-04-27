@@ -69,16 +69,12 @@ main(int argc, char** argv) -> std::int32_t
     using fs = std::filesystem::path;
     blueprint_registry.load_from_directory(fs{ "assets" } / fs{ "blueprints" });
   }
-  PipelineFactory pipeline_factory(device);
-  ComputePipelineFactory compute_pipeline_factory(device);
-
   GUISystem gui_system(instance, device, window);
   Swapchain swapchain(device, window);
 
   Renderer renderer{
     device,
     blueprint_registry,
-    pipeline_factory,
     window,
   };
 
@@ -211,6 +207,9 @@ main(int argc, char** argv) -> std::int32_t
         command_buffer.resolve_timers(swapchain.get_frame_index());
       auto compute_timings =
         compute_command_buffer.resolve_timers(swapchain.get_frame_index());
+
+      ImGui::Text("Frame time: %.2f ms", dt * 1000.0f);
+      ImGui::Text("FPS: %.2f", 1.0f / dt);
 
       ImGui::BeginTable("GPU Timings", 3);
       ImGui::TableSetupColumn("Name");

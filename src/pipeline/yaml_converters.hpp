@@ -444,6 +444,28 @@ struct convert<PipelineBlueprint>
     if (node["attachments"])
       rhs.attachments = node["attachments"].as<std::vector<Attachment>>();
 
+    if (node["msaa_samples"]) {
+      auto samples = node["msaa_samples"].as<std::string>("1x");
+      if (samples == "1x" || samples == "1")
+        rhs.msaa_samples = VK_SAMPLE_COUNT_1_BIT;
+      else if (samples == "2x" || samples == "2")
+        rhs.msaa_samples = VK_SAMPLE_COUNT_2_BIT;
+      else if (samples == "4x" || samples == "4")
+        rhs.msaa_samples = VK_SAMPLE_COUNT_4_BIT;
+      else if (samples == "8x" || samples == "8")
+        rhs.msaa_samples = VK_SAMPLE_COUNT_8_BIT;
+      else if (samples == "16x" || samples == "16")
+        rhs.msaa_samples = VK_SAMPLE_COUNT_16_BIT;
+      else if (samples == "32x" || samples == "32")
+        rhs.msaa_samples = VK_SAMPLE_COUNT_32_BIT;
+      else if (samples == "64x" || samples == "64")
+        rhs.msaa_samples = VK_SAMPLE_COUNT_64_BIT;
+      else {
+        assert(false && "Invalid sample count specified");
+        return false;
+      }
+    }
+
     return true;
   }
 };

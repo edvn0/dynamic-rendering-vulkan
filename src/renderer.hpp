@@ -58,10 +58,7 @@ struct DrawCommandHasher
 class Renderer
 {
 public:
-  Renderer(const Device&,
-           const BlueprintRegistry&,
-           const PipelineFactory&,
-           const Window&);
+  Renderer(const Device&, const BlueprintRegistry&, const Window&);
   ~Renderer();
   auto destroy() -> void;
 
@@ -88,10 +85,6 @@ public:
 private:
   const Device* device{ nullptr };
   const BlueprintRegistry* blueprint_registry{ nullptr };
-  const PipelineFactory* pipeline_factory{
-    nullptr
-  }; // TODO: Retire and use materials
-
   LightEnvironment light_environment;
 
   std::unique_ptr<CommandBuffer> command_buffer;
@@ -101,6 +94,7 @@ private:
   std::unique_ptr<CommandBuffer> compute_command_buffer;
 
   std::unique_ptr<Image> geometry_image;
+  std::unique_ptr<Image> geometry_msaa_image;
   std::unique_ptr<Image> geometry_depth_image;
   std::unique_ptr<Material> z_prepass_material;
   std::unique_ptr<Material> geometry_material;

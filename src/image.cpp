@@ -16,7 +16,7 @@ Image::recreate() -> void
     .extent = { extent.width, extent.height, 1 },
     .mipLevels = mip_levels,
     .arrayLayers = array_layers,
-    .samples = VK_SAMPLE_COUNT_1_BIT,
+    .samples = static_cast<VkSampleCountFlagBits>(sample_count),
     .tiling = VK_IMAGE_TILING_OPTIMAL,
     .usage = usage,
     .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
@@ -116,7 +116,7 @@ Image::recreate() -> void
 
   sampler = sampler_manager.get_sampler(sampler_info);
 
-  if (allow_in_ui) {
+  if (allow_in_ui && sample_count == VK_SAMPLE_COUNT_1_BIT) {
     texture_implementation_pointer =
       std::bit_cast<std::uint64_t>(ImGui_ImplVulkan_AddTexture(
         sampler, default_view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL));

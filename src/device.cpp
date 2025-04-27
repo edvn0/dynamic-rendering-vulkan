@@ -40,10 +40,49 @@ Device::graphics_queue() const -> VkQueue
   }
   return queue_result.value();
 }
+
+auto
+Device::get_max_sample_count(VkSampleCountFlags desired_flags) const
+  -> VkSampleCountFlagBits
+{
+  if (!props) {
+    VkPhysicalDeviceProperties p;
+    vkGetPhysicalDeviceProperties(device.physical_device.physical_device, &p);
+    props = p;
+  }
+
+  // device’s full supported mask
+  auto available_counts = props->limits.framebufferColorSampleCounts;
+
+  // pick the highest bit in a mask
+  static constexpr auto select_max =
+    [](VkSampleCountFlags f) -> VkSampleCountFlagBits {
+    if (f & VK_SAMPLE_COUNT_64_BIT)
+      return VK_SAMPLE_COUNT_64_BIT;
+    if (f & VK_SAMPLE_COUNT_32_BIT)
+      return VK_SAMPLE_COUNT_32_BIT;
+    if (f & VK_SAMPLE_COUNT_16_BIT)
+      return VK_SAMPLE_COUNT_16_BIT;
+    if (f & VK_SAMPLE_COUNT_8_BIT)
+      return VK_SAMPLE_COUNT_8_BIT;
+    if (f & VK_SAMPLE_COUNT_4_BIT)
+      return VK_SAMPLE_COUNT_4_BIT;
+    if (f & VK_SAMPLE_COUNT_2_BIT)
+      return VK_SAMPLE_COUNT_2_BIT;
+    return VK_SAMPLE_COUNT_1_BIT;
+  };
+
+  // intersect desired with what’s actually available
+  auto supported = desired_flags & available_counts;
+
+  // if any bits remain, pick the top one; otherwise fall back to the highest
+  // device-supported
+  return supported ? select_max(supported) : select_max(available_counts);
+}
+
 auto
 Device::get_timestamp_period() const -> double
 {
-  static std::optional<VkPhysicalDeviceProperties> props{ std::nullopt };
   if (!props) {
     props = VkPhysicalDeviceProperties{};
     vkGetPhysicalDeviceProperties(device.physical_device.physical_device,
@@ -51,6 +90,7 @@ Device::get_timestamp_period() const -> double
   }
   return props->limits.timestampPeriod;
 }
+
 auto
 Device::graphics_queue_family_index() const -> uint32_t
 {
