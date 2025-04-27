@@ -191,6 +191,7 @@ Renderer::Renderer(const Device& dev,
                     .format = VK_FORMAT_D32_SFLOAT,
                     .usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
                     .aspect = VK_IMAGE_ASPECT_DEPTH_BIT,
+                    .allow_in_ui = false,
                   });
 
   test_compute_material =
@@ -201,6 +202,13 @@ Renderer::Renderer(const Device& dev,
   geometry_material = Material::create(*device,
                                        blueprint_registry->get("main_geometry"),
                                        renderer_descriptor_set_layout);
+
+  z_prepass_material = Material::create(*device,
+                                        blueprint_registry->get("z_prepass"),
+                                        renderer_descriptor_set_layout);
+
+  line_material = Material::create(
+    *device, blueprint_registry->get("line"), renderer_descriptor_set_layout);
 
   struct DataSSBO
   {
@@ -896,8 +904,8 @@ Renderer::run_gizmo_pass(std::uint32_t frame_index) -> void
   const std::array<VkDeviceSize, 1> offsets{ 0 };
   const std::array<VkBuffer, 1> buffers{ gizmo_vertex_buffer->get() };
   vkCmdBindVertexBuffers(cmd, 0, 1, buffers.data(), offsets.data());
-  glm::mat4 vp{};
-  if (camera_uniform_buffer->read(frame_index * sizeof(glm::mat4), vp)) {
+  if (glm::mat4 vp{}; camera_uniform_buffer->read_into_with_offset(
+        vp, frame_index * sizeof(glm::mat4))) {
     const auto rotation_only = glm::mat4(glm::mat3(vp));
 
     vkCmdPushConstants(cmd,
@@ -998,6 +1006,8 @@ Renderer::run_shadow_pass(std::uint32_t frame_index, const DrawList& draw_list)
   }
 
   vkCmdEndRendering(cmd);
+  CoreUtils::cmd_transition_depth_to_shader_read(
+    cmd, shadow_depth_image->get_image());
 
   command_buffer->end_timer(frame_index, "shadow_pass");
 }

@@ -182,6 +182,15 @@ main(int argc, char** argv) -> std::int32_t
       ImGui::End();
     }
 
+    if (ImGui::Begin("Shadow output")) {
+      ImGui::Image(renderer.get_shadow_image().get_texture_id<ImTextureID>(),
+                   {
+                     static_cast<float>(renderer.get_shadow_image().width()),
+                     static_cast<float>(renderer.get_shadow_image().height()),
+                   });
+      ImGui::End();
+    }
+
     if (ImGui::Begin("GPU Timers")) {
       const auto& command_buffer = renderer.get_command_buffer();
       const auto& compute_command_buffer =

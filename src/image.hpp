@@ -32,7 +32,8 @@ public:
                                                 config.mip_levels,
                                                 config.array_layers,
                                                 config.usage,
-                                                config.aspect));
+                                                config.aspect,
+                                                config.allow_in_ui));
     img->recreate();
     return img;
   }
@@ -72,7 +73,8 @@ private:
         uint32_t mips,
         uint32_t layers,
         VkImageUsageFlags usage_flags,
-        VkImageAspectFlags aspect_flags)
+        VkImageAspectFlags aspect_flags,
+        bool allow)
     : extent(ext)
     , mip_levels(mips)
     , array_layers(layers)
@@ -80,6 +82,7 @@ private:
     , format(fmt)
     , usage(usage_flags)
     , aspect(aspect_flags)
+    , allow_in_ui(allow)
   {
   }
 
@@ -100,5 +103,6 @@ private:
   VkImageAspectFlags aspect{};
 
   // For UI systems.
+  bool allow_in_ui{ true }; // For UI systems
   std::uint64_t texture_implementation_pointer{};
 };

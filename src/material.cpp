@@ -129,6 +129,8 @@ Material::create(const Device& device,
   std::vector<VkPushConstantRange> push_constants;
 
   for (auto const& stage : blueprint.shader_stages) {
+    if (stage.empty)
+      continue;
     reflect_shader_using_spirv_reflect(
       stage.filepath, bindings, push_constants);
   }

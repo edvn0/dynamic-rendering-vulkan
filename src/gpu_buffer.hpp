@@ -105,7 +105,8 @@ public:
   }
 
   template<AdmitsGPUBuffer T>
-  auto read(std::size_t offset_bytes, T& user_allocated) -> bool
+  auto read_into_with_offset(T& user_allocated, std::size_t offset_bytes)
+    -> bool
   {
     if (!mapped_on_create)
       return false;

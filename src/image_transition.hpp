@@ -108,6 +108,39 @@ cmd_transition_to_shader_read(VkCommandBuffer cmd,
                        });
 }
 
+/// @brief Transition depth image from depth attachment to shader read layout.
+/// @param cmd
+/// @param image
+/// @param src_stage
+/// @param dst_stage
+/// @return void
+inline auto
+cmd_transition_depth_to_shader_read(
+  VkCommandBuffer cmd,
+  VkImage image,
+  VkPipelineStageFlags src_stage = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT,
+  VkPipelineStageFlags dst_stage =
+    VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT) noexcept -> void
+{
+  cmd_transition_image(cmd,
+                       {
+                         image,
+                         VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+                         VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                         VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+                         VK_ACCESS_SHADER_READ_BIT,
+                         src_stage,
+                         dst_stage,
+                         {
+                           VK_IMAGE_ASPECT_DEPTH_BIT,
+                           0,
+                           1,
+                           0,
+                           1,
+                         },
+                       });
+}
+
 inline auto
 cmd_transition_to_depth_attachment(
   VkCommandBuffer cmd,

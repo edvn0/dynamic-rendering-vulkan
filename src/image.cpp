@@ -116,10 +116,7 @@ Image::recreate() -> void
 
   sampler = sampler_manager.get_sampler(sampler_info);
 
-  Attachment attachment{
-    .format = format,
-  };
-  if (!attachment.is_depth()) {
+  if (allow_in_ui) {
     texture_implementation_pointer =
       std::bit_cast<std::uint64_t>(ImGui_ImplVulkan_AddTexture(
         sampler, default_view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL));
