@@ -39,6 +39,8 @@ public:
 
 private:
   std::unordered_map<std::string, const GPUBuffer*> buffers;
+  std::unordered_map<std::string, std::tuple<std::uint32_t, std::uint32_t>>
+    binding_info;
   std::unordered_map<std::string, const Image*> images;
   frame_array<std::unordered_set<std::string>> per_frame_dirty_flags;
 
@@ -55,7 +57,9 @@ private:
            frame_array<VkDescriptorSet>&&,
            std::span<const VkDescriptorSetLayout>,
            VkDescriptorPool,
-           std::unique_ptr<CompiledPipeline>);
+           std::unique_ptr<CompiledPipeline>,
+           std::unordered_map<std::string,
+                              std::tuple<std::uint32_t, std::uint32_t>>&&);
 
   auto destroy() -> void;
 

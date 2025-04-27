@@ -203,12 +203,13 @@ PipelineFactory::create_pipeline(const PipelineBlueprint& blueprint,
     .scissorCount = 1,
   };
 
+  auto sample_count = device->get_max_sample_count(blueprint.msaa_samples);
+
   VkPipelineMultisampleStateCreateInfo multisample_state{
     .sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
     .pNext = nullptr,
     .flags = 0,
-    .rasterizationSamples =
-      static_cast<VkSampleCountFlagBits>(blueprint.msaa_samples),
+    .rasterizationSamples = static_cast<VkSampleCountFlagBits>(sample_count),
     .sampleShadingEnable = VK_FALSE,
     .minSampleShading = 0.0f,
     .pSampleMask = nullptr,

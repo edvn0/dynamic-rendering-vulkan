@@ -45,7 +45,9 @@ auto
 reflect_shader_using_spirv_reflect(
   std::string_view file_path,
   std::vector<VkDescriptorSetLayoutBinding>& bindings,
-  std::vector<VkPushConstantRange>& push_constant_ranges) -> void
+  std::vector<VkPushConstantRange>& push_constant_ranges,
+  std::unordered_map<std::string, std::tuple<std::uint32_t, std::uint32_t>>&
+    binding_info) -> void
 {
   std::vector<std::uint8_t> shader_code;
   if (!Shader::load_binary(file_path, shader_code)) {
@@ -94,6 +96,13 @@ reflect_shader_using_spirv_reflect(
       b.pImmutableSamplers = nullptr;
 
       merge_descriptor_binding(bindings, b);
+      if (std::strlen(refl->name) > 0) {
+
+        binding_info[refl->name] = std::make_tuple(ds->set, refl->binding);
+      } else {
+        const auto* type_name = refl->type_description->type_name;
+        binding_info[type_name] = std::make_tuple(ds->set, refl->binding);
+      }
     }
   }
 
@@ -127,12 +136,14 @@ Material::create(const Device& device,
 
   std::vector<VkDescriptorSetLayoutBinding> bindings;
   std::vector<VkPushConstantRange> push_constants;
+  std::unordered_map<std::string, std::tuple<std::uint32_t, std::uint32_t>>
+    binding_info;
 
   for (auto const& stage : blueprint.shader_stages) {
     if (stage.empty)
       continue;
     reflect_shader_using_spirv_reflect(
-      stage.filepath, bindings, push_constants);
+      stage.filepath, bindings, push_constants, binding_info);
   }
 
   const bool is_compute =
@@ -226,28 +237,40 @@ Material::create(const Device& device,
                  std::move(descriptor_sets),
                  std::span(descriptor_set_layouts),
                  descriptor_pool,
-                 std::move(pipeline)));
+                 std::move(pipeline),
+                 std::move(binding_info)));
 }
 
-Material::Material(const Device& dev,
-                   frame_array<VkDescriptorSet>&& sets,
-                   std::span<const VkDescriptorSetLayout> ls,
-                   VkDescriptorPool p,
-                   std::unique_ptr<CompiledPipeline> pipe)
+Material::Material(
+  const Device& dev,
+  frame_array<VkDescriptorSet>&& sets,
+  std::span<const VkDescriptorSetLayout> ls,
+  VkDescriptorPool p,
+  std::unique_ptr<CompiledPipeline> pipe,
+  std::unordered_map<std::string, std::tuple<std::uint32_t, std::uint32_t>>&&
+    binds)
   : device(&dev)
   , descriptor_sets(std::move(sets))
   , descriptor_set_layout(ls[0])
   , descriptor_pool(p)
   , pipeline(std::move(pipe))
+  , binding_info(binds)
+
 {
 }
 
 auto
-Material::upload(const std::string_view name, const GPUBuffer* buffer) -> void
+Material::upload(std::string_view name, const GPUBuffer* buffer) -> void
 {
   auto key = std::string(name);
   if (buffers[key] != buffer) {
     buffers[key] = buffer;
+
+    auto it = binding_info.find(key);
+    if (it != binding_info.end()) {
+      binding_info[key] = it->second;
+    }
+
     for (auto& dirty : per_frame_dirty_flags) {
       dirty.insert(key);
     }
@@ -278,18 +301,25 @@ Material::prepare_for_rendering(std::uint32_t frame_index)
   std::vector<VkDescriptorBufferInfo> buffer_infos;
 
   for (const auto& name : dirty_bindings) {
-    const auto it = buffers.find(name);
-    if (it != buffers.end()) {
-      const GPUBuffer* buffer = it->second;
+    const auto buffer_it = buffers.find(name);
+    if (buffer_it != buffers.end()) {
+      const GPUBuffer* buffer = buffer_it->second;
 
-      VkDescriptorBufferInfo buffer_info{
+      const auto binding_it = binding_info.find(name);
+      if (binding_it == binding_info.end())
+        continue; // Should not happen
+
+      const auto [set, binding] = binding_it->second;
+      if (set != 1)
+        continue; // Material descriptor sets are always set = 1
+
+      auto& buffer_info = buffer_infos.emplace_back();
+      buffer_info = {
         .buffer = buffer->get(),
         .offset = 0,
         .range = VK_WHOLE_SIZE,
       };
-      buffer_infos.push_back(buffer_info);
 
-      std::uint32_t binding = 0;
       VkWriteDescriptorSet write{
         .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
         .pNext = nullptr,
@@ -297,9 +327,12 @@ Material::prepare_for_rendering(std::uint32_t frame_index)
         .dstBinding = binding,
         .dstArrayElement = 0,
         .descriptorCount = 1,
-        .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+        .descriptorType =
+          VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, // Assume STORAGE_BUFFER, unless
+                                             // you store descriptor type as
+                                             // well
         .pImageInfo = nullptr,
-        .pBufferInfo = &buffer_infos.back(),
+        .pBufferInfo = &buffer_info,
         .pTexelBufferView = nullptr,
       };
       writes.push_back(write);

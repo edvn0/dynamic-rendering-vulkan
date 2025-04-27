@@ -28,6 +28,21 @@ endfunction()
 
 generate_imgui()
 
+function(generate_implot)
+    set(IMPLOT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/implot)
+
+    add_library(implot STATIC
+        ${IMPLOT_DIR}/implot.cpp
+        ${IMPLOT_DIR}/implot_items.cpp
+        ${IMPLOT_DIR}/implot.h
+        ${IMPLOT_DIR}/implot_internal.h
+    )
+    target_include_directories(implot PUBLIC ${IMPLOT_DIR})
+    target_link_libraries(implot PRIVATE imgui)
+endfunction()
+
+generate_implot()
+
 function(generate_vma)
     add_library(VulkanMemoryAllocator STATIC ${CMAKE_CURRENT_SOURCE_DIR}/vma.cpp)
     target_include_directories(VulkanMemoryAllocator PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/VulkanMemoryAllocator/include)

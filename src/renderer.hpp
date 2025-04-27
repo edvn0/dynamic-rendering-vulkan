@@ -40,6 +40,7 @@ struct DrawCommand
   GPUBuffer* vertex_buffer;
   IndexBuffer* index_buffer;
   Material* override_material{ nullptr };
+  bool casts_shadows{ true };
 
   bool operator==(const DrawCommand& rhs) const = default;
 };
@@ -51,7 +52,8 @@ struct DrawCommandHasher
     std::size_t h1 = std::hash<GPUBuffer*>{}(dc.vertex_buffer);
     std::size_t h2 = std::hash<IndexBuffer*>{}(dc.index_buffer);
     std::size_t h3 = std::hash<Material*>{}(dc.override_material);
-    return h1 ^ (h2 << 1) ^ (h3 << 2);
+    std::size_t h4 = std::hash<bool>{}(dc.casts_shadows);
+    return h1 ^ (h2 << 1) ^ (h3 << 2) ^ (h4 << 3);
   }
 };
 
@@ -64,9 +66,7 @@ public:
 
   auto submit(const DrawCommand&, const glm::mat4& = glm::mat4{ 1.0F }) -> void;
   auto submit_lines(const LineDrawCommand&, const glm::mat4&) -> void;
-  auto begin_frame(std::uint32_t,
-                   const glm::mat4& projection,
-                   const glm::mat4& view) -> void;
+  auto begin_frame(std::uint32_t, const glm::mat4&, const glm::mat4&) -> void;
   auto end_frame(std::uint32_t) -> void;
   auto resize(std::uint32_t, std::uint32_t) -> void;
   auto get_output_image() const -> const Image&;
@@ -107,19 +107,22 @@ private:
 
   std::unique_ptr<Material> line_material;
 
-  std::unique_ptr<GPUBuffer> test_compute_buffer;
-  std::unique_ptr<Material> test_compute_material;
+  std::uint32_t instance_count_this_frame{ 0 };
+  std::unique_ptr<Material> cull_instances_compute_material;
+  std::unique_ptr<GPUBuffer> culled_instance_vertex_buffer;
+  std::unique_ptr<GPUBuffer> culled_instance_count_buffer;
 
   std::vector<std::pair<LineDrawCommand, glm::mat4>> line_draw_commands{};
   std::unordered_map<DrawCommand, std::vector<InstanceData>, DrawCommandHasher>
     draw_commands{};
 
-  auto run_compute_pass(std::uint32_t) -> void;
-  auto update_uniform_buffers(std::uint32_t, const glm::mat4&) -> void;
+  auto update_uniform_buffers(std::uint32_t, const glm::mat4&, const glm::mat4&)
+    -> void;
   auto update_shadow_buffers(std::uint32_t) -> void;
 
   std::unique_ptr<GPUBuffer> camera_uniform_buffer;
   std::unique_ptr<GPUBuffer> shadow_camera_buffer;
+  std::unique_ptr<GPUBuffer> frustum_buffer;
   frame_array<VkDescriptorSet> renderer_descriptor_sets{};
   VkDescriptorSetLayout renderer_descriptor_set_layout{};
   VkDescriptorPool descriptor_pool{};
@@ -164,7 +167,10 @@ private:
 
   bool destroyed{ false };
 
-  using DrawList = std::vector<std::pair<DrawCommand, std::uint32_t>>;
+  using DrawList =
+    std::vector<std::tuple<DrawCommand, std::uint32_t, std::uint32_t>>;
+
+  auto run_culling_compute_pass(std::uint32_t) -> void;
   auto run_shadow_pass(std::uint32_t, const DrawList&) -> void;
   auto run_z_prepass(std::uint32_t, const DrawList&) -> void;
   auto run_geometry_pass(std::uint32_t, const DrawList&) -> void;

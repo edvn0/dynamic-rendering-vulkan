@@ -179,6 +179,7 @@ Layer::on_render(Renderer& renderer) -> void
     {
       .vertex_buffer = quad_vertex_buffer.get(),
       .index_buffer = quad_index_buffer.get(),
+      .casts_shadows = true,
     },
     transforms.at(0));
 
@@ -188,6 +189,7 @@ Layer::on_render(Renderer& renderer) -> void
       {
         .vertex_buffer = cube_vertex_buffer.get(),
         .index_buffer = cube_index_buffer.get(),
+        .casts_shadows = true,
       },
       transforms.at(i));
   }

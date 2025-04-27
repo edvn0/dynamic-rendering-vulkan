@@ -1,0 +1,52 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#extension GL_EXT_nonuniform_qualifier : enable
+
+#include "set0.glsl"
+
+layout(std430, set = 1, binding = 1) readonly buffer InstanceInput
+{
+  mat4 instance_transforms[];
+};
+
+layout(std430, set = 1, binding = 2) buffer InstanceOutput
+{
+  mat4 culled_instance_transforms[];
+};
+
+layout(std430, set = 1, binding = 3) buffer CounterBuffer
+{
+  uint culled_instance_count;
+};
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+bool
+is_inside_frustum(vec3 center, float radius)
+{
+  for (int i = 0; i < 6; ++i) {
+    if (dot(frustum_ubo.planes[i].xyz, center) + frustum_ubo.planes[i].w +
+          radius <
+        0.0)
+      return false;
+  }
+  return true;
+}
+
+void
+main()
+{
+  uint id = gl_GlobalInvocationID.x;
+
+  if (id >= instance_transforms.length())
+    return;
+
+  mat4 transform = instance_transforms[id];
+  vec3 center = vec3(transform[3]);
+  float radius = length(transform[0].xyz); // assume uniform scaling
+
+  if (is_inside_frustum(center, radius)) {
+    uint index = atomicAdd(culled_instance_count, 1);
+    culled_instance_transforms[index] = transform;
+  }
+}

@@ -31,6 +31,79 @@
 
 #include "GLFW/glfw3.h"
 #include "imgui.h"
+#include <implot.h>
+
+struct FrameTimePlotter
+{
+  static constexpr std::size_t history_size = 1000;
+  std::array<float, history_size> history{};
+  std::size_t index = 0;
+  bool filled_once = false;
+
+  static constexpr float target_frametime_ms = 16.6667f; // 60 FPS = 16.66ms
+
+  auto add_sample(double frame_time_seconds) -> void
+  {
+    history[index] = static_cast<float>(frame_time_seconds * 1000.0);
+    index = (index + 1) % history_size;
+    if (index == 0)
+      filled_once = true;
+  }
+
+  auto plot(const char* label = "Frametime (ms)") const -> void
+  {
+    const auto* data = history.data();
+    const std::size_t count = filled_once ? history_size : index;
+
+    if (ImPlot::BeginPlot(label, ImVec2(-1, 150))) {
+      ImPlot::SetupAxes(nullptr,
+                        "Frame Time (ms)",
+                        ImPlotAxisFlags_NoGridLines,
+                        ImPlotAxisFlags_AutoFit);
+      ImPlot::SetupAxes("Frame #",
+                        "Frame Time (ms)",
+                        ImPlotAxisFlags_NoGridLines |
+                          ImPlotAxisFlags_NoTickLabels,
+                        ImPlotAxisFlags_NoGridLines);
+
+      ImPlot::SetupAxisLimits(
+        ImAxis_X1, 0, static_cast<double>(history_size), ImGuiCond_Always);
+      ImPlot::SetupAxisLimits(ImAxis_Y1, 0.0, 5.0, ImGuiCond_Always);
+
+      ImPlot::PlotLine("Frametime",
+                       data,
+                       static_cast<int>(count),
+                       1.0,
+                       0,
+                       ImPlotLineFlags_None);
+
+      const float target_line[] = { target_frametime_ms, target_frametime_ms };
+      const float x_positions[] = { 0.0f, static_cast<float>(count - 1) };
+
+      ImPlot::PushStyleColor(ImPlotCol_Line, ImVec4(1.0f, 1.0f, 0.0f, 0.5f));
+      ImPlot::PlotLine("60 FPS Line", x_positions, target_line, 2);
+      ImPlot::PopStyleColor();
+
+      ImPlot::EndPlot();
+    }
+  }
+};
+
+struct FrametimeSmoother
+{
+  double smoothed_dt = 0.0;
+  static constexpr double alpha = 0.1;
+
+  auto add_sample(double frame_time) -> void
+  {
+    if (smoothed_dt == 0.0)
+      smoothed_dt = frame_time;
+    else
+      smoothed_dt = alpha * frame_time + (1.0 - alpha) * smoothed_dt;
+  }
+
+  auto get_smoothed() const -> double { return smoothed_dt; }
+};
 
 struct FrametimeCalculator
 {
@@ -135,6 +208,8 @@ main(int argc, char** argv) -> std::int32_t
     };
   window.set_event_callback(std::move(event_callback));
 
+  FrametimeSmoother timer_smoother;
+  FrameTimePlotter frame_time_plotter;
   FrametimeCalculator timer;
   while (!window.should_close()) {
     if (window.framebuffer_resized()) {
@@ -156,12 +231,15 @@ main(int argc, char** argv) -> std::int32_t
     }
 
     const auto dt = timer.get_delta_and_restart_ms();
+    timer_smoother.add_sample(dt);
+    frame_time_plotter.add_sample(dt);
 
     camera.on_update(dt);
     std::ranges::for_each(layers, [&dt](auto& layer) { layer->on_update(dt); });
     const auto frame_index = swapchain.get_frame_index();
-    renderer.begin_frame(
-      frame_index, camera.get_projection(), camera.get_view());
+    renderer.begin_frame(frame_index,
+                         camera.compute_view_projection(),
+                         camera.compute_inverse_view_projection());
     std::ranges::for_each(
       layers, [&r = renderer](auto& layer) { layer->on_render(r); });
     renderer.end_frame(frame_index);
@@ -169,13 +247,13 @@ main(int argc, char** argv) -> std::int32_t
     gui_system.begin_frame();
     std::ranges::for_each(layers, [](auto& layer) { layer->on_interface(); });
 
-    if (ImGui::Begin("Renderer output",
-                     nullptr,
-                     ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
-                       ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
-                       ImGuiWindowFlags_NoScrollWithMouse |
-                       ImGuiWindowFlags_NoCollapse |
-                       ImGuiWindowFlags_NoBackground)) {
+    constexpr auto flags =
+      ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+      ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
+      ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoCollapse |
+      ImGuiWindowFlags_NoBackground;
+
+    if (ImGui::Begin("Renderer output", nullptr, flags)) {
       auto size = ImGui::GetWindowSize();
 
       ImGui::Image(renderer.get_output_image().get_texture_id<ImTextureID>(),
@@ -184,17 +262,19 @@ main(int argc, char** argv) -> std::int32_t
       ImGui::End();
     }
 
-    if (ImGui::Begin("Shadow output",
-                     nullptr,
-                     ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
-                       ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
-                       ImGuiWindowFlags_NoScrollWithMouse |
-                       ImGuiWindowFlags_NoCollapse |
-                       ImGuiWindowFlags_NoBackground)) {
+    if (ImGui::Begin("Shadow output", nullptr, flags)) {
       auto size = ImGui::GetWindowSize();
 
       ImGui::Image(renderer.get_shadow_image().get_texture_id<ImTextureID>(),
                    size);
+      ImGui::End();
+    }
+
+    if (ImGui::Begin("Performance Metrics")) {
+      frame_time_plotter.plot();
+      ImGui::Text("Smoothed FPS: %.2f", 1.0 / timer_smoother.get_smoothed());
+      ImGui::Text("Smoothed Frame Time: %.2f ms",
+                  timer_smoother.get_smoothed() * 1000.0);
       ImGui::End();
     }
 
@@ -208,34 +288,33 @@ main(int argc, char** argv) -> std::int32_t
       auto compute_timings =
         compute_command_buffer.resolve_timers(swapchain.get_frame_index());
 
-      ImGui::Text("Frame time: %.2f ms", dt * 1000.0f);
-      ImGui::Text("FPS: %.2f", 1.0f / dt);
-
       ImGui::BeginTable("GPU Timings", 3);
       ImGui::TableSetupColumn("Name");
-      ImGui::TableSetupColumn("Duration (ms)");
+      ImGui::TableSetupColumn("Duration (us)");
       ImGui::TableSetupColumn("Command Buffer");
       ImGui::TableHeadersRow();
+
       for (const auto& section : raster_timings) {
         ImGui::TableNextRow();
         ImGui::TableNextColumn();
         ImGui::Text("%s", section.name.c_str());
         ImGui::TableNextColumn();
-        ImGui::Text("%.2f", section.duration_ms);
+        ImGui::Text("%.0f", section.duration_ms * 1000.0); // <-- MICROSECONDS
         ImGui::TableNextColumn();
         ImGui::Text("Raster");
       }
+
       for (const auto& section : compute_timings) {
         ImGui::TableNextRow();
         ImGui::TableNextColumn();
         ImGui::Text("%s", section.name.c_str());
         ImGui::TableNextColumn();
-        ImGui::Text("%.2f", section.duration_ms);
+        ImGui::Text("%.0f", section.duration_ms * 1000.0); // <-- MICROSECONDS
         ImGui::TableNextColumn();
         ImGui::Text("Compute");
       }
-      ImGui::EndTable();
 
+      ImGui::EndTable();
       ImGui::End();
     }
 

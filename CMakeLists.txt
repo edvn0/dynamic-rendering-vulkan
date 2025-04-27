@@ -45,6 +45,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
   vk-bootstrap::vk-bootstrap
   glfw
   imgui
+  implot
   imguizmo::imguizmo
   VulkanMemoryAllocator
   yaml-cpp

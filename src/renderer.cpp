@@ -10,9 +10,16 @@
 #define GLM_ENABLE_EXPERIMENTAL
 #include <glm/gtx/quaternion.hpp>
 
+struct FrustumBuffer
+{
+  std::array<glm::vec4, 6> planes{};
+  std::array<glm::vec4, 2> _padding_{};
+};
+
 struct CameraBuffer
 {
-  glm::mat4 vp;
+  const glm::mat4 vp;
+  const glm::mat4 inverse_vp;
 };
 
 struct ShadowBuffer
@@ -39,7 +46,8 @@ Renderer::create_descriptor_set_layout() -> void
     .binding = 0,
     .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
     .descriptorCount = 1,
-    .stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+    .stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT |
+                  VK_SHADER_STAGE_COMPUTE_BIT,
     .pImmutableSamplers = nullptr,
   };
   VkDescriptorSetLayoutBinding shadow_binding{
@@ -49,7 +57,15 @@ Renderer::create_descriptor_set_layout() -> void
     .stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
     .pImmutableSamplers = nullptr,
   };
-  const std::array bindings{ binding, shadow_binding };
+  VkDescriptorSetLayoutBinding frustum_binding{
+    .binding = 2,
+    .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+    .descriptorCount = 1,
+    .stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT |
+                  VK_SHADER_STAGE_COMPUTE_BIT,
+    .pImmutableSamplers = nullptr,
+  };
+  const std::array bindings{ binding, shadow_binding, frustum_binding };
   VkDescriptorSetLayoutCreateInfo layout_info{
     .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
     .pNext = nullptr,
@@ -62,8 +78,12 @@ Renderer::create_descriptor_set_layout() -> void
                               nullptr,
                               &renderer_descriptor_set_layout);
 
-  std::array<VkDescriptorPoolSize, 2> pool_sizes{
+  std::array<VkDescriptorPoolSize, bindings.size()> pool_sizes{
     { {
+        .type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+        .descriptorCount = image_count,
+      },
+      {
         .type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
         .descriptorCount = image_count,
       },
@@ -117,6 +137,16 @@ Renderer::create_descriptor_set_layout() -> void
       sizeof(ShadowBuffer) * image_count,
     });
   }
+  {
+    frustum_buffer = std::make_unique<GPUBuffer>(
+      *device, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, true);
+    const auto frustum_bytes =
+      std::make_unique<std::byte[]>(sizeof(FrustumBuffer) * image_count);
+    frustum_buffer->upload(std::span<std::byte>{
+      frustum_bytes.get(),
+      sizeof(FrustumBuffer) * image_count,
+    });
+  }
 
   for (std::size_t i = 0; i < image_count; ++i) {
     VkDescriptorBufferInfo camera_info{
@@ -128,6 +158,11 @@ Renderer::create_descriptor_set_layout() -> void
       .buffer = shadow_camera_buffer->get(),
       .offset = sizeof(ShadowBuffer) * i,
       .range = sizeof(ShadowBuffer),
+    };
+    VkDescriptorBufferInfo frustum_info{
+      .buffer = frustum_buffer->get(),
+      .offset = sizeof(FrustumBuffer) * i,
+      .range = sizeof(FrustumBuffer),
     };
 
     std::vector<VkWriteDescriptorSet> writes;
@@ -146,6 +181,14 @@ Renderer::create_descriptor_set_layout() -> void
     second.pBufferInfo = &shadow_info;
     second.dstBinding = 1;
     second.pImageInfo = nullptr;
+    auto& third = writes.emplace_back();
+    third.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    third.dstSet = renderer_descriptor_sets[i];
+    third.descriptorCount = 1;
+    third.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    third.pBufferInfo = &frustum_info;
+    third.dstBinding = 2;
+    third.pImageInfo = nullptr;
 
     vkUpdateDescriptorSets(device->get_device(),
                            static_cast<std::uint32_t>(writes.size()),
@@ -179,65 +222,55 @@ Renderer::Renderer(const Device& dev,
     vkCreateSemaphore(dev.get_device(), &sem_info, nullptr, &semaphore);
   }
 
-  geometry_image = Image::create(dev,
-                                 ImageConfiguration{
-                                   .extent = win.framebuffer_size(),
-                                   .format = VK_FORMAT_R32G32B32A32_SFLOAT,
-                                 });
-
-  auto sample_count = device->get_max_sample_count();
-
-  geometry_msaa_image =
-    Image::create(dev,
-                  ImageConfiguration{
-                    .extent = win.framebuffer_size(),
-                    .format = VK_FORMAT_R32G32B32A32_SFLOAT,
-                    .usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
-                             VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT,
-                    .sample_count = sample_count,
-                  });
-  geometry_depth_image =
-    Image::create(dev,
-                  ImageConfiguration{
-                    .extent = win.framebuffer_size(),
-                    .format = VK_FORMAT_D32_SFLOAT,
-                    .usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
-                    .aspect = VK_IMAGE_ASPECT_DEPTH_BIT,
-                    .sample_count = sample_count,
-                    .allow_in_ui = false,
-                  });
-
-  test_compute_material =
-    Material::create(*device,
-                     blueprint_registry->get("test_compute"),
-                     renderer_descriptor_set_layout);
-
-  geometry_material = Material::create(*device,
-                                       blueprint_registry->get("main_geometry"),
-                                       renderer_descriptor_set_layout);
-
-  z_prepass_material = Material::create(*device,
-                                        blueprint_registry->get("z_prepass"),
-                                        renderer_descriptor_set_layout);
-
-  line_material = Material::create(
-    *device, blueprint_registry->get("line"), renderer_descriptor_set_layout);
-
-  struct DataSSBO
   {
-    std::uint32_t count = 10 * 10;
-    std::uint32_t padding[3] = { 0, 0, 0 };
-    float data[10 * 10];
-  } ssbo;
-  test_compute_buffer = std::make_unique<GPUBuffer>(
-    *device, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, true);
-  test_compute_buffer->upload(std::span{ &ssbo, 1 });
+    geometry_image = Image::create(dev,
+                                   ImageConfiguration{
+                                     .extent = win.framebuffer_size(),
+                                     .format = VK_FORMAT_R32G32B32A32_SFLOAT,
+                                   });
 
-  test_compute_material->upload("data_ssbo", test_compute_buffer.get());
+    auto sample_count = device->get_max_sample_count();
+    geometry_msaa_image =
+      Image::create(dev,
+                    ImageConfiguration{
+                      .extent = win.framebuffer_size(),
+                      .format = VK_FORMAT_R32G32B32A32_SFLOAT,
+                      .usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
+                               VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT,
+                      .sample_count = sample_count,
+                    });
+    geometry_depth_image =
+      Image::create(dev,
+                    ImageConfiguration{
+                      .extent = win.framebuffer_size(),
+                      .format = VK_FORMAT_D32_SFLOAT,
+                      .usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+                      .aspect = VK_IMAGE_ASPECT_DEPTH_BIT,
+                      .sample_count = sample_count,
+                      .allow_in_ui = false,
+                    });
+    geometry_material =
+      Material::create(*device,
+                       blueprint_registry->get("main_geometry"),
+                       renderer_descriptor_set_layout);
+  }
 
   {
-    instance_vertex_buffer =
-      std::make_unique<GPUBuffer>(dev, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, true);
+    z_prepass_material = Material::create(*device,
+                                          blueprint_registry->get("z_prepass"),
+                                          renderer_descriptor_set_layout);
+  }
+
+  {
+    line_material = Material::create(
+      *device, blueprint_registry->get("line"), renderer_descriptor_set_layout);
+  }
+
+  {
+    instance_vertex_buffer = std::make_unique<GPUBuffer>(
+      dev,
+      VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+      true);
     static constexpr auto instance_size = sizeof(glm::mat4);
     static constexpr auto instance_count = 1'000'000;
     static constexpr auto instance_size_bytes = instance_size * instance_count;
@@ -305,6 +338,40 @@ Renderer::Renderer(const Device& dev,
                                        blueprint_registry->get("shadow"),
                                        renderer_descriptor_set_layout);
   }
+
+  {
+    cull_instances_compute_material =
+      Material::create(*device,
+                       blueprint_registry->get("compute_culling"),
+                       renderer_descriptor_set_layout);
+
+    culled_instance_count_buffer = std::make_unique<GPUBuffer>(
+      *device, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, true);
+    static constexpr std::uint32_t zero = 0;
+    culled_instance_count_buffer->upload(std::span{ &zero, 1 });
+
+    culled_instance_vertex_buffer = std::make_unique<GPUBuffer>(
+      *device,
+      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+      true);
+
+    {
+      static constexpr auto instance_size = sizeof(glm::mat4);
+      static constexpr auto instance_count = 1'000'000;
+      static constexpr auto instance_size_bytes =
+        instance_size * instance_count;
+      const auto bytes = std::make_unique<std::byte[]>(instance_size_bytes);
+      culled_instance_vertex_buffer->upload(
+        std::span<std::byte>{ bytes.get(), instance_size_bytes });
+    }
+
+    cull_instances_compute_material->upload("InstanceInput",
+                                            instance_vertex_buffer.get());
+    cull_instances_compute_material->upload(
+      "InstanceOutput", culled_instance_vertex_buffer.get());
+    cull_instances_compute_material->upload("CounterBuffer",
+                                            culled_instance_count_buffer.get());
+  }
 }
 
 auto
@@ -317,17 +384,19 @@ Renderer::destroy() -> void
   vkDestroyDescriptorSetLayout(
     device->get_device(), renderer_descriptor_set_layout, nullptr);
 
-  test_compute_material.reset();
   geometry_material.reset();
   z_prepass_material.reset();
   shadow_material.reset();
   line_material.reset();
   gizmo_material.reset();
+  cull_instances_compute_material.reset();
 
+  culled_instance_vertex_buffer.reset();
+  culled_instance_count_buffer.reset();
+  frustum_buffer.reset();
   shadow_camera_buffer.reset();
   shadow_depth_image.reset();
   gizmo_vertex_buffer.reset();
-  test_compute_buffer.reset();
   camera_uniform_buffer.reset();
   geometry_depth_image.reset();
   geometry_image.reset();
@@ -349,12 +418,6 @@ Renderer::~Renderer()
 auto
 Renderer::submit(const DrawCommand& cmd, const glm::mat4& transform) -> void
 {
-  const auto center_ws = glm::vec3(transform[3]);
-  const float radius_ws = 1.0f * glm::length(glm::vec3(transform[0]));
-
-  if (!current_frustum.intersects(center_ws, radius_ws))
-    return;
-
   draw_commands[cmd].emplace_back(transform);
 }
 
@@ -366,46 +429,92 @@ Renderer::submit_lines(const LineDrawCommand& cmd, const glm::mat4& transform)
 }
 
 static auto
-upload_instance_vertex_data(GPUBuffer& buffer, const auto& draw_commands)
-  -> std::vector<std::pair<DrawCommand, std::uint32_t>>
+upload_instance_vertex_data(GPUBuffer& buffer,
+                            const auto& draw_commands,
+                            const auto& frustum,
+                            auto& instance_count_this_frame)
+  -> std::vector<std::tuple<DrawCommand, std::uint32_t, std::uint32_t>>
 {
-  std::vector<std::pair<DrawCommand, std::uint32_t>> flat_draw_commands;
-  flat_draw_commands.reserve(draw_commands.size());
+  struct InstanceSubmit
+  {
+    const DrawCommand* cmd;
+    InstanceData data;
+  };
 
-  std::size_t total_instance_count = 0;
+  std::size_t total_estimated_instances = 0;
   for (const auto& [cmd, instances] : draw_commands)
-    total_instance_count += instances.size();
+    total_estimated_instances += instances.size();
 
-  std::vector<InstanceData> flattened_instances(total_instance_count);
+  // Preallocate the maximum possible number of instances
+  std::vector<InstanceSubmit> filtered_instances(total_estimated_instances);
+  std::atomic<std::size_t> filtered_count{ 0 };
 
-  std::vector<std::tuple<const DrawCommand*,
-                         const std::vector<InstanceData>*,
-                         std::size_t>>
-    jobs;
-  jobs.reserve(draw_commands.size());
+  {
+    std::vector<std::pair<const DrawCommand*, const std::vector<InstanceData>*>>
+      jobs;
+    jobs.reserve(draw_commands.size());
+    for (const auto& [cmd, instances] : draw_commands)
+      jobs.emplace_back(&cmd, &instances);
 
-  std::size_t current_offset = 0;
-  for (const auto& [cmd, instances] : draw_commands) {
-    flat_draw_commands.emplace_back(cmd,
-                                    static_cast<std::uint32_t>(current_offset));
-    jobs.emplace_back(&cmd, &instances, current_offset);
-    current_offset += instances.size();
+    // Parallel frustum culling and writing into filtered_instances
+    std::for_each(
+      std::execution::par_unseq,
+      jobs.begin(),
+      jobs.end(),
+      [&](const auto& job) {
+        auto [cmd, instances] = job;
+        for (const auto& instance : *instances) {
+          const glm::vec3 center_ws = glm::vec3(instance.transform[3]);
+          const float radius_ws =
+            1.0f * glm::length(glm::vec3(instance.transform[0]));
+
+          if (frustum.intersects(center_ws, radius_ws)) {
+            const std::size_t index =
+              filtered_count.fetch_add(1, std::memory_order_relaxed);
+            filtered_instances[index] = InstanceSubmit{ cmd, instance };
+          }
+        }
+      });
   }
 
-  std::for_each(std::execution::par_unseq,
-                jobs.begin(),
-                jobs.end(),
-                [&flattened_instances](const auto& job) {
-                  auto [cmd, instances, offset] = job;
-                  const auto count = instances->size();
-                  std::memcpy(flattened_instances.data() + offset,
-                              instances->data(),
-                              count * sizeof(InstanceData));
-                });
+  filtered_instances.resize(filtered_count);
+  instance_count_this_frame =
+    static_cast<std::uint32_t>(filtered_instances.size());
 
-  buffer.upload(std::span(flattened_instances));
+  if (filtered_instances.empty())
+    return {};
 
-  return flat_draw_commands;
+  // Flatten instance data to GPU uploadable buffer
+  std::vector<InstanceData> instance_data(filtered_instances.size());
+  std::transform(std::execution::par_unseq,
+                 filtered_instances.begin(),
+                 filtered_instances.end(),
+                 instance_data.begin(),
+                 [](const InstanceSubmit& s) { return s.data; });
+
+  buffer.upload(std::span(instance_data));
+
+  // Map DrawCommand to ranges inside the instance buffer
+  std::unordered_map<DrawCommand,
+                     std::tuple<std::uint32_t, std::uint32_t>,
+                     DrawCommandHasher>
+    draw_map;
+  for (std::size_t i = 0; i < filtered_instances.size(); ++i) {
+    const auto* cmd = filtered_instances[i].cmd;
+    auto& [start, count] = draw_map[*cmd];
+    if (count == 0)
+      start = static_cast<std::uint32_t>(i);
+    ++count;
+  }
+
+  // Flatten draw map into vector for submission
+  std::vector<std::tuple<DrawCommand, std::uint32_t, std::uint32_t>>
+    flat_draw_list;
+  flat_draw_list.reserve(draw_map.size());
+  for (const auto& [cmd, range] : draw_map)
+    flat_draw_list.emplace_back(cmd, std::get<0>(range), std::get<1>(range));
+
+  return flat_draw_list;
 }
 
 auto
@@ -422,12 +531,12 @@ Renderer::update_shadow_buffers(std::uint32_t frame_index) -> void
       constexpr float near_plane = 0.1f;
       constexpr float far_plane = 100.f;
 
-      const auto proj = glm::orthoLH_NO(-ortho_size,
-                                        ortho_size,
-                                        -ortho_size,
-                                        ortho_size,
-                                        near_plane,
-                                        far_plane);
+      const auto proj = glm::ortho(-ortho_size,
+                                   ortho_size,
+                                   -ortho_size,
+                                   ortho_size,
+                                   near_plane,
+                                   far_plane);
 
       return proj * view;
     };
@@ -445,23 +554,27 @@ Renderer::update_shadow_buffers(std::uint32_t frame_index) -> void
 }
 
 auto
-Renderer::update_uniform_buffers(std::uint32_t frame_index, const glm::mat4& vp)
-  -> void
+Renderer::update_uniform_buffers(std::uint32_t frame_index,
+                                 const glm::mat4& vp,
+                                 const glm::mat4& inverse_vp) -> void
 {
-  const CameraBuffer buffer{ .vp = vp };
+  const CameraBuffer buffer{ .vp = vp, .inverse_vp = inverse_vp };
   camera_uniform_buffer->upload_with_offset(std::span{ &buffer, 1 },
                                             sizeof(CameraBuffer) * frame_index);
+
+  const FrustumBuffer frustum{ current_frustum.planes };
+  frustum_buffer->upload_with_offset(std::span{ &frustum, 1 },
+                                     sizeof(FrustumBuffer) * frame_index);
 }
 
 auto
 Renderer::begin_frame(std::uint32_t frame_index,
-                      const glm::mat4& projection,
-                      const glm::mat4& view) -> void
+                      const glm::mat4& vp,
+                      const glm::mat4& inverse_vp) -> void
 {
-  const auto view_projection = projection * view;
-  update_uniform_buffers(frame_index, view_projection);
+  update_uniform_buffers(frame_index, vp, inverse_vp);
   update_shadow_buffers(frame_index);
-  update_frustum(view_projection);
+  update_frustum(vp);
   draw_commands.clear();
 }
 
@@ -471,14 +584,25 @@ Renderer::end_frame(std::uint32_t frame_index) -> void
   if (draw_commands.empty())
     return;
 
-  run_compute_pass(frame_index);
-
   {
     auto flat_draw_commands =
-      upload_instance_vertex_data(*instance_vertex_buffer, draw_commands);
+      upload_instance_vertex_data(*instance_vertex_buffer,
+                                  draw_commands,
+                                  current_frustum,
+                                  instance_count_this_frame);
+
+    run_culling_compute_pass(frame_index);
+
+    DrawList shadow_casting_draws;
+    for (const auto& draw : flat_draw_commands) {
+      auto& [cmd, offset, count] = draw;
+      if (cmd.casts_shadows)
+        shadow_casting_draws.push_back(draw);
+    }
+
     command_buffer->begin_frame(frame_index);
 
-    run_shadow_pass(frame_index, flat_draw_commands);
+    run_shadow_pass(frame_index, shadow_casting_draws);
     run_z_prepass(frame_index, flat_draw_commands);
     run_geometry_pass(frame_index, flat_draw_commands);
     run_line_pass(frame_index);
@@ -568,7 +692,7 @@ Renderer::run_z_prepass(std::uint32_t frame_index, const DrawList& draw_list)
                           &renderer_descriptor_sets[frame_index],
                           0,
                           nullptr);
-  for (const auto& [cmd_info, offset] : draw_list) {
+  for (const auto& [cmd_info, offset, count] : draw_list) {
     const std::array vertex_buffers = {
       cmd_info.vertex_buffer->get(),
       instance_vertex_buffer->get(),
@@ -587,7 +711,7 @@ Renderer::run_z_prepass(std::uint32_t frame_index, const DrawList& draw_list)
     vkCmdDrawIndexed(
       cmd,
       static_cast<std::uint32_t>(cmd_info.index_buffer->get_count()),
-      static_cast<std::uint32_t>(draw_commands[cmd_info].size()),
+      static_cast<std::uint32_t>(count),
       0,
       0,
       offset);
@@ -666,8 +790,8 @@ Renderer::run_geometry_pass(std::uint32_t frame_index,
   vkCmdSetViewport(cmd, 0, 1, &viewport);
   vkCmdSetScissor(cmd, 0, 1, &render_info.renderArea);
 
-  for (const auto& [cmd_info, offset] : draw_list) {
-    auto&& [vertex_buffer, index_buffer, override_material] = cmd_info;
+  for (const auto& [cmd_info, offset, instance_count] : draw_list) {
+    auto&& [vertex_buffer, index_buffer, override_material, shadows] = cmd_info;
 
     const auto& material =
       override_material ? *override_material : *geometry_material;
@@ -682,9 +806,6 @@ Renderer::run_geometry_pass(std::uint32_t frame_index,
                             0,
                             nullptr);
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.pipeline);
-
-    const auto instance_count =
-      static_cast<std::uint32_t>(draw_commands[cmd_info].size());
 
     const std::array vertex_buffers = {
       vertex_buffer->get(),
@@ -714,37 +835,43 @@ Renderer::run_geometry_pass(std::uint32_t frame_index,
 }
 
 auto
-Renderer::run_compute_pass(std::uint32_t frame_index) -> void
+Renderer::run_culling_compute_pass(std::uint32_t frame_index) -> void
 {
   compute_command_buffer->begin_frame(frame_index);
-  compute_command_buffer->begin_timer(frame_index, "test_compute_pass");
+  compute_command_buffer->begin_timer(frame_index, "cull_instances");
 
   const auto cmd = compute_command_buffer->get(frame_index);
-  // Optional: insert debug marker or timestamp
-  // vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, ...)
 
-  const auto& material_set =
-    test_compute_material->prepare_for_rendering(frame_index);
-  auto& test_compute_pipeline = test_compute_material->get_pipeline();
+  // Reset the output counter to zero
+  static constexpr std::uint32_t zero = 0;
+  culled_instance_count_buffer->upload(std::span{ &zero, 1 });
 
-  vkCmdBindPipeline(
-    cmd, test_compute_pipeline.bind_point, test_compute_pipeline.pipeline);
+  auto& cull_pipeline = cull_instances_compute_material->get_pipeline();
+  const auto cull_descriptor_set =
+    cull_instances_compute_material->prepare_for_rendering(frame_index);
+
   const std::array descriptor_sets{
     renderer_descriptor_sets[frame_index],
-    material_set,
+    cull_descriptor_set,
   };
+
+  vkCmdBindPipeline(cmd, cull_pipeline.bind_point, cull_pipeline.pipeline);
+
   vkCmdBindDescriptorSets(cmd,
-                          test_compute_pipeline.bind_point,
-                          test_compute_pipeline.layout,
+                          cull_pipeline.bind_point,
+                          cull_pipeline.layout,
                           0,
                           static_cast<std::uint32_t>(descriptor_sets.size()),
                           descriptor_sets.data(),
                           0,
                           nullptr);
 
-  vkCmdDispatch(cmd, 1, 1, 1);
+  const uint32_t num_instances =
+    instance_count_this_frame; // whatever your max is
+  const uint32_t group_count = (num_instances + 63) / 64;
+  vkCmdDispatch(cmd, group_count, 1, 1);
 
-  compute_command_buffer->end_timer(frame_index, "test_compute_pass");
+  compute_command_buffer->end_timer(frame_index, "cull_instances");
 
   compute_command_buffer->submit_and_end(
     frame_index,
@@ -874,7 +1001,7 @@ Renderer::run_gizmo_pass(std::uint32_t frame_index) -> void
     .resolveImageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
     .loadOp = VK_ATTACHMENT_LOAD_OP_LOAD,
     .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
-    .clearValue = { .color = { { 0.f, 0.f, 0.f, 1.f } } }
+    .clearValue = {}
   };
 
   VkRenderingAttachmentInfo depth_attachment{
@@ -887,7 +1014,7 @@ Renderer::run_gizmo_pass(std::uint32_t frame_index) -> void
     .resolveImageLayout = VK_IMAGE_LAYOUT_UNDEFINED,
     .loadOp = VK_ATTACHMENT_LOAD_OP_LOAD,
     .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
-    .clearValue = { .depthStencil = { 1.0f, 0 } }
+    .clearValue = {}
   };
 
   VkRenderingInfo rendering_info{
@@ -1015,7 +1142,7 @@ Renderer::run_shadow_pass(std::uint32_t frame_index, const DrawList& draw_list)
                           0,
                           nullptr);
 
-  for (const auto& [cmd_info, offset] : draw_list) {
+  for (const auto& [cmd_info, offset, count] : draw_list) {
     const std::array vertex_buffers = {
       cmd_info.vertex_buffer->get(),
       instance_vertex_buffer->get(),
@@ -1034,7 +1161,7 @@ Renderer::run_shadow_pass(std::uint32_t frame_index, const DrawList& draw_list)
     vkCmdDrawIndexed(
       cmd,
       static_cast<std::uint32_t>(cmd_info.index_buffer->get_count()),
-      static_cast<std::uint32_t>(draw_commands[cmd_info].size()),
+      static_cast<std::uint32_t>(count),
       0,
       0,
       offset);

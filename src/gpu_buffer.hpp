@@ -140,7 +140,7 @@ private:
   const Device& device;
   VkBufferUsageFlags usage_flags{};
   bool mapped_on_create{};
-  std::size_t current_size{};
+  std::size_t current_size{ 0 };
 };
 
 class IndexBuffer

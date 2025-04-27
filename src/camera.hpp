@@ -60,6 +60,12 @@ public:
   auto get_view() const -> const glm::mat4& { return view; }
   auto get_projection() const -> const glm::mat4& { return projection; }
 
+  auto compute_view_projection() const { return projection * view; }
+  auto compute_inverse_view_projection() const
+  {
+    return inverse_projection * view;
+  }
+
   virtual auto resize(std::uint32_t width, std::uint32_t height) -> void
   {
     if (std::holds_alternative<InfiniteProjection>(projection_config)) {
@@ -75,6 +81,7 @@ public:
 protected:
   glm::mat4 view{ 1.0f };
   glm::mat4 projection{ 1.0f };
+  glm::mat4 inverse_projection{ 1.0f };
   float fov_degrees{ 60.0f };
   ProjectionConfig projection_config{
     InfiniteProjection{ 60.0f, 16.0f / 9.0f, 0.1f }
@@ -129,6 +136,8 @@ protected:
         } else if constexpr (std::is_same_v<T, FloatFarProjection>) {
           projection = make_float_far_proj(
             config.fov, config.aspect, config.znear, config.zfar);
+          inverse_projection = make_float_far_proj(
+            config.fov, config.aspect, config.zfar, config.znear);
         }
       },
       projection_config);

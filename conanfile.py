@@ -4,6 +4,7 @@ from conan import ConanFile
 from conan.tools.cmake import cmake_layout, CMake
 from conan.tools.files import copy
 
+
 class VulkanAppConan(ConanFile):
     name = "vulkan_app"
     version = "0.1.0"
@@ -20,9 +21,8 @@ class VulkanAppConan(ConanFile):
         self.requires("imguizmo/1.83")
         self.requires("yaml-cpp/0.8.0")
         self.requires("glm/1.0.1")
-        
+
     def build(self):
         cmake = CMake(self)
         cmake.configure()
         cmake.build()
-

@@ -7,7 +7,9 @@
 #include <imgui_impl_vulkan.h>
 
 #include "config.hpp"
+
 #include <ImGuizmo.h>
+#include <implot.h>
 
 auto
 GUISystem::begin_frame() const -> void
@@ -82,6 +84,7 @@ GUISystem::init_for_vulkan(const Core::Instance& instance,
                            Window& window) const -> void
 {
   ImGui::CreateContext();
+  ImPlot::CreateContext();
   ImGui::StyleColorsDark();
 
   ImGui_ImplGlfw_InitForVulkan(window.window(), true);
@@ -130,6 +133,7 @@ GUISystem::shutdown() -> void
   ImGui_ImplVulkan_Shutdown();
   ImGui_ImplGlfw_Shutdown();
   ImGui::DestroyContext();
+  ImPlot::DestroyContext();
 
   destroyed = true;
 }
