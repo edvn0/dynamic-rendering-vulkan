@@ -1,9 +1,9 @@
-#include "blueprint_registry.hpp"
+#include "pipeline/blueprint_registry.hpp"
 
 #include <cassert>
 #include <yaml-cpp/yaml.h>
 
-#include "yaml_converters.hpp"
+#include "pipeline/yaml_converters.hpp"
 
 auto
 BlueprintRegistry::load_from_directory(const std::filesystem::path& path)

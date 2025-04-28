@@ -1,0 +1,114 @@
+cmake_minimum_required(VERSION 3.21)
+project(VulkanApp LANGUAGES CXX)
+
+set(CMAKE_CXX_STANDARD 23)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+set(DISABLE_EXCEPTIONS ON)
+
+find_package(Vulkan REQUIRED)
+find_package(glfw3 REQUIRED CONFIG)
+find_package(imguizmo REQUIRED CONFIG)
+find_package(yaml-cpp REQUIRED CONFIG)
+find_package(glm REQUIRED CONFIG)
+
+add_subdirectory(third_party)
+
+add_executable(${PROJECT_NAME}
+  src/main.cpp
+  src/window.cpp
+  src/swapchain.cpp
+  src/gui_system.cpp
+  src/command_buffer.cpp
+  src/allocator.cpp
+  src/pipeline/blueprint_configuration.cpp
+  src/pipeline/blueprint_registry.cpp
+  src/pipeline/shader.cpp
+  src/pipeline/pipeline_factory.cpp
+  src/image.cpp
+  src/device.cpp
+  src/gpu_buffer.cpp
+  src/renderer.cpp
+  src/pipeline/compute_pipeline_factory.cpp
+  src/pipeline/compiled_pipeline.cpp
+  src/layer.cpp
+  src/camera.cpp
+  src/material.cpp
+  src/material_bindings.cpp
+  src/input.cpp
+)
+
+target_link_libraries(${PROJECT_NAME} PRIVATE
+  Vulkan::Vulkan
+  glm::glm
+  vk-bootstrap::vk-bootstrap
+  glfw
+  imgui
+  implot
+  imguizmo::imguizmo
+  VulkanMemoryAllocator
+  yaml-cpp
+  spirv-reflect-static
+)
+
+target_compile_definitions(${PROJECT_NAME} PRIVATE GLM_FORCE_LEFT_HANDED GLM_FORCE_DEPTH_ZERO_TO_ONE)
+
+target_include_directories(${PROJECT_NAME} PRIVATE src)
+
+if(CMAKE_BUILD_TYPE STREQUAL "Debug" OR CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo")
+  target_compile_definitions(${PROJECT_NAME} PRIVATE IS_DEBUG)
+endif()
+
+if(MSVC)
+  target_compile_options(${PROJECT_NAME} PRIVATE /W4 /WX)
+
+  if(DISABLE_EXCEPTIONS)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE _HAS_EXCEPTIONS=0)
+  endif()
+else()
+  target_compile_options(${PROJECT_NAME} PRIVATE -Wall -Wextra -Werror -Wno-unused-command-line-argument)
+
+  if(DISABLE_EXCEPTIONS)
+    target_compile_options(${PROJECT_NAME} PRIVATE -fno-exceptions)
+  endif()
+endif()
+
+function(generate_shaders)
+  add_custom_command(
+    OUTPUT shaders_compiled
+    COMMAND ${CMAKE_COMMAND} -E echo "Compiling shaders using Python script..."
+    COMMAND ${CMAKE_COMMAND} -E env PYTHONPATH=${CMAKE_SOURCE_DIR}/scripts python ${CMAKE_SOURCE_DIR}/scripts/compile_shaders.py
+    --source ${CMAKE_SOURCE_DIR}/assets/shaders
+    --output ${CMAKE_BINARY_DIR}/assets/shaders
+    COMMAND ${CMAKE_COMMAND} -E touch shaders_compiled
+    DEPENDS ${CMAKE_SOURCE_DIR}/assets/shaders
+    COMMENT "Running shader compiler"
+    VERBATIM
+  )
+
+  add_custom_target(compile_shaders_target ALL DEPENDS shaders_compiled)
+  add_dependencies(${PROJECT_NAME} compile_shaders_target)
+endfunction()
+
+function(copy_blueprints)
+  set(blueprint_source_dir ${CMAKE_SOURCE_DIR}/assets/blueprints)
+  set(blueprint_binary_dir ${CMAKE_BINARY_DIR}/assets/blueprints)
+
+  file(GLOB_RECURSE blueprint_files ${blueprint_source_dir}/*)
+
+  add_custom_command(
+    OUTPUT ${blueprint_binary_dir}
+    COMMAND ${CMAKE_COMMAND} -E copy_directory ${blueprint_source_dir} ${blueprint_binary_dir}
+    DEPENDS ${blueprint_files}
+    COMMENT "Copying blueprint YAMLs to output directory"
+    VERBATIM
+  )
+
+  add_custom_target(copy_blueprints_target ALL DEPENDS ${blueprint_binary_dir})
+  add_dependencies(${PROJECT_NAME} copy_blueprints_target)
+endfunction()
+
+set_property(GLOBAL PROPERTY JOB_POOLS compile_shaders=8)
+
+generate_shaders()
+copy_blueprints()

@@ -1,4 +1,4 @@
-#include "blueprint_configuration.hpp"
+#include "pipeline/blueprint_configuration.hpp"
 
 #include <filesystem>
 

@@ -12,22 +12,7 @@
 #include <thread>
 #include <vulkan/vulkan.h>
 
-#include "allocator.hpp"
-#include "camera.hpp"
-#include "command_buffer.hpp"
-#include "device.hpp"
-#include "editor_camera.hpp"
-#include "gui_system.hpp"
-#include "image.hpp"
-#include "instance.hpp"
-#include "pipeline/blueprint_registry.hpp"
-#include "pipeline/compute_pipeline_factory.hpp"
-#include "pipeline/pipeline_factory.hpp"
-#include "renderer.hpp"
-#include "swapchain.hpp"
-#include "window.hpp"
-
-#include "layer.hpp"
+#include <dynamic_rendering/dynamic_rendering.hpp>
 
 #include "GLFW/glfw3.h"
 #include "imgui.h"
