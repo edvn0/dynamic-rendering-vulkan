@@ -1,8 +1,6 @@
-#include "renderer/layer.hpp"
+#include "app_layer.hpp"
 
-#include "core/event_system.hpp"
-#include "core/gpu_buffer.hpp"
-#include "renderer/renderer.hpp"
+#include <dynamic_rendering/renderer/renderer.hpp>
 
 #include <array>
 #include <execution>
@@ -13,16 +11,17 @@
 
 #include <imgui.h>
 
+struct Vertex
+{
+  glm::vec3 position;
+  glm::vec3 normal;
+  glm::vec2 uv;
+};
+
 auto
 generate_cube_counter_clockwise(const Device& device)
   -> std::tuple<std::unique_ptr<GPUBuffer>, std::unique_ptr<IndexBuffer>>
 {
-  struct Vertex
-  {
-    glm::vec3 position;
-    glm::vec3 normal;
-    glm::vec2 uv;
-  };
 
   static constexpr std::array<Vertex, 24> vertices = { {
     { { -1.f, -1.f, 1.f }, { 0.f, 0.f, 1.f }, { 0.f, 0.f } },
@@ -67,7 +66,7 @@ generate_cube_counter_clockwise(const Device& device)
   return { std::move(vertex_buffer), std::move(index_buffer) };
 }
 
-Layer::Layer(const Device& dev)
+AppLayer::AppLayer(const Device& dev)
 {
   quad_vertex_buffer = std::make_unique<GPUBuffer>(
     dev,
@@ -109,7 +108,7 @@ Layer::Layer(const Device& dev)
 }
 
 auto
-Layer::on_destroy() -> void
+AppLayer::on_destroy() -> void
 {
   quad_vertex_buffer.reset();
   quad_index_buffer.reset();
@@ -119,7 +118,7 @@ Layer::on_destroy() -> void
 }
 
 auto
-Layer::on_event(Event& event) -> bool
+AppLayer::on_event(Event& event) -> bool
 {
   EventDispatcher dispatch(event);
   dispatch.dispatch<MouseButtonPressedEvent>([](auto&) { return true; });
@@ -129,7 +128,7 @@ Layer::on_event(Event& event) -> bool
 }
 
 auto
-Layer::on_interface() -> void
+AppLayer::on_interface() -> void
 {
   static constexpr auto window = [](const std::string_view name, auto&& fn) {
     ImGui::Begin(name.data());
@@ -146,7 +145,7 @@ Layer::on_interface() -> void
 }
 
 auto
-Layer::on_update(double ts) -> void
+AppLayer::on_update(double ts) -> void
 {
   static float angle = 0.f;
   angle += rotation_speed * static_cast<float>(ts);
@@ -166,7 +165,7 @@ Layer::on_update(double ts) -> void
 }
 
 auto
-Layer::on_render(Renderer& renderer) -> void
+AppLayer::on_render(Renderer& renderer) -> void
 {
   auto& light_env = renderer.get_light_environment();
   light_env.light_position = light_position;
@@ -204,19 +203,19 @@ Layer::on_render(Renderer& renderer) -> void
 }
 
 auto
-Layer::on_resize(std::uint32_t w, std::uint32_t h) -> void
+AppLayer::on_resize(std::uint32_t w, std::uint32_t h) -> void
 {
   bounds.x = static_cast<float>(w);
   bounds.y = static_cast<float>(h);
 }
 
 auto
-Layer::generate_scene() -> void
+AppLayer::generate_scene() -> void
 {
   transforms.clear();
 
   // Ground plane
-  transforms.emplace_back(glm::mat4(1.f)); // Identity, no transform
+  transforms.emplace_back(1.F); // Identity, no transform
 
   // Some cubes
   transforms.emplace_back(glm::translate(glm::mat4(1.f), { -3.f, 1.f, -3.f }));

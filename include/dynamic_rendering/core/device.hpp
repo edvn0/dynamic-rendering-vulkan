@@ -1,8 +1,8 @@
 #pragma once
 
-#include "instance.hpp"
+#include "core/forward.hpp"
 
-#include "allocator.hpp"
+#include <VkBootstrap.h>
 #include <optional>
 
 class Device
@@ -39,11 +39,7 @@ public:
   auto destroy() -> void;
 
 private:
-  explicit Device(const Core::Instance& instance, const vkb::Device& dev)
-    : device(dev)
-    , allocator(std::make_unique<Allocator>(instance, *this))
-  {
-  }
+  explicit Device(const Core::Instance&, const vkb::Device&);
 
   vkb::Device device;
   std::unique_ptr<Allocator> allocator;

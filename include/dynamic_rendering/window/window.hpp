@@ -5,7 +5,7 @@
 #include <vulkan/vulkan.h>
 
 #include "core/event_system.hpp"
-#include "core/instance.hpp"
+#include "core/forward.hpp"
 
 extern "C"
 {

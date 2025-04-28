@@ -1,11 +1,11 @@
 #pragma once
 
-#include "config.hpp"
-#include "device.hpp"
-#include "image_configuration.hpp"
+#include "core/config.hpp"
+#include "core/device.hpp"
+#include "core/image_configuration.hpp"
 
-#include "allocator.hpp"
-#include "sampler_manager.hpp"
+#include "core/allocator.hpp"
+#include "core/sampler_manager.hpp"
 
 #include <bit>
 #include <memory>

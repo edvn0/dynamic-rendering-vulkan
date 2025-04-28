@@ -5,7 +5,7 @@
 
 #include "core/forward.hpp"
 
-#include "blueprint_configuration.hpp"
+#include "pipeline/blueprint_configuration.hpp"
 
 struct IPipelineFactory
 {

@@ -1,14 +1,13 @@
 #pragma once
 
+#include "core/forward.hpp"
+
 #include <span>
 #include <vulkan/vulkan.h>
 
-#include "blueprint_configuration.hpp"
-#include "compiled_pipeline.hpp"
-#include "ipipeline_factory.hpp"
-
-class Device;
-class Shader;
+#include "pipeline/blueprint_configuration.hpp"
+#include "pipeline/compiled_pipeline.hpp"
+#include "pipeline/ipipeline_factory.hpp"
 
 class ComputePipelineFactory : public IPipelineFactory
 {

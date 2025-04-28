@@ -1,5 +1,8 @@
 #pragma once
 
+// Client
+#include <dynamic_rendering/core/app.hpp>
+
 // Core
 #include <dynamic_rendering/core/allocator.hpp>
 #include <dynamic_rendering/core/command_buffer.hpp>
@@ -24,7 +27,6 @@
 #include <dynamic_rendering/pipeline/ipipeline_factory.hpp>
 #include <dynamic_rendering/pipeline/pipeline_factory.hpp>
 #include <dynamic_rendering/pipeline/shader.hpp>
-#include <dynamic_rendering/pipeline/yaml_converters.hpp>
 
 // Renderer
 #include <dynamic_rendering/renderer/camera.hpp>

@@ -1,6 +1,7 @@
 #include "window/window.hpp"
 
 #include "core/input.hpp"
+#include "core/instance.hpp"
 
 #include <GLFW/glfw3.h>
 #include <VkBootstrap.h>

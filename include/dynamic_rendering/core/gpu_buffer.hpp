@@ -127,11 +127,7 @@ public:
   }
   auto get() const -> const VkBuffer& { return buffer; }
 
-  ~GPUBuffer()
-  {
-    if (buffer)
-      vmaDestroyBuffer(device.get_allocator().get(), buffer, allocation);
-  }
+  ~GPUBuffer();
 
 private:
   auto recreate(size_t size) -> void;

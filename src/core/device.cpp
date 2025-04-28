@@ -1,9 +1,16 @@
 #include "core/device.hpp"
 
 #include "core/allocator.hpp"
+#include "core/instance.hpp"
 
 #include <VkBootstrap.h>
 #include <cassert>
+
+Device::Device(const Core::Instance& instance, const vkb::Device& dev)
+  : device(dev)
+  , allocator(std::make_unique<Allocator>(instance, *this))
+{
+}
 
 auto
 Device::create(const Core::Instance& instance, const VkSurfaceKHR& surface)

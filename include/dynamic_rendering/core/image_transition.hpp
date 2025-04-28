@@ -1,4 +1,3 @@
-// image_transition.hpp
 #pragma once
 
 #include <vulkan/vulkan.h>

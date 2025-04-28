@@ -1,5 +1,7 @@
 #include "core/gpu_buffer.hpp"
 
+#include "core/allocator.hpp"
+
 auto
 upload_to_device_buffer(const Device& device,
                         GPUBuffer& target_buffer,
@@ -21,6 +23,12 @@ upload_to_device_buffer(const Device& device,
     command_buffer, staging.get(), target_buffer.get(), 1, &copy_region);
 
   device.flush(command_buffer, command_pool);
+}
+
+GPUBuffer::~GPUBuffer()
+{
+  if (buffer)
+    vmaDestroyBuffer(device.get_allocator().get(), buffer, allocation);
 }
 
 auto

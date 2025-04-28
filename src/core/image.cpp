@@ -1,7 +1,10 @@
 #include "core/image.hpp"
+
 #include "pipeline/blueprint_configuration.hpp"
 
 #include "imgui_impl_vulkan.h"
+
+#include "core/allocator.hpp"
 
 auto
 Image::recreate() -> void
