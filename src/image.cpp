@@ -121,6 +121,12 @@ Image::recreate() -> void
       std::bit_cast<std::uint64_t>(ImGui_ImplVulkan_AddTexture(
         sampler, default_view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL));
   }
+
+  image_descriptor_info = VkDescriptorImageInfo{
+    .sampler = sampler,
+    .imageView = default_view,
+    .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+  };
 }
 
 auto

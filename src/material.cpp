@@ -2,6 +2,7 @@
 #include "device.hpp"
 #include "gpu_buffer.hpp"
 #include "image.hpp"
+#include "material_bindings.hpp"
 
 #include <algorithm>
 #include <cassert>
@@ -249,12 +250,12 @@ Material::Material(
   std::unique_ptr<CompiledPipeline> pipe,
   std::unordered_map<std::string, std::tuple<std::uint32_t, std::uint32_t>>&&
     binds)
-  : device(&dev)
+  : binding_info(std::move(binds))
+  , device(&dev)
   , descriptor_sets(std::move(sets))
   , descriptor_set_layout(ls[0])
   , descriptor_pool(p)
   , pipeline(std::move(pipe))
-  , binding_info(binds)
 
 {
 }
@@ -263,14 +264,30 @@ auto
 Material::upload(std::string_view name, const GPUBuffer* buffer) -> void
 {
   auto key = std::string(name);
-  if (buffers[key] != buffer) {
-    buffers[key] = buffer;
+  auto it = bindings.find(key);
 
-    auto it = binding_info.find(key);
-    if (it != binding_info.end()) {
-      binding_info[key] = it->second;
+  const bool is_uniform =
+    (buffer->get_usage_flags() & VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT);
+  auto descriptor_type = is_uniform ? VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER
+                                    : VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+
+  const auto binding_it = binding_info.find(key);
+  if (binding_it == binding_info.end())
+    return;
+
+  const uint32_t binding_index = std::get<1>(binding_it->second);
+
+  bool needs_update = true;
+  if (it != bindings.end()) {
+    const auto* existing = dynamic_cast<BufferBinding*>(it->second.get());
+    if (existing && existing->get_underlying_buffer() == buffer) {
+      needs_update = false;
     }
+  }
 
+  if (needs_update) {
+    bindings[key] =
+      std::make_unique<BufferBinding>(buffer, descriptor_type, binding_index);
     for (auto& dirty : per_frame_dirty_flags) {
       dirty.insert(key);
     }
@@ -278,11 +295,28 @@ Material::upload(std::string_view name, const GPUBuffer* buffer) -> void
 }
 
 auto
-Material::upload(const std::string_view name, const Image* image) -> void
+Material::upload(std::string_view name, const Image* image) -> void
 {
   auto key = std::string(name);
-  if (images[key] != image) {
-    images[key] = image;
+  auto it = bindings.find(key);
+
+  const auto binding_it = binding_info.find(key);
+  if (binding_it == binding_info.end())
+    return;
+
+  const uint32_t binding_index = std::get<1>(binding_it->second);
+
+  bool needs_update = true;
+  if (it != bindings.end()) {
+    const auto* existing = dynamic_cast<ImageBinding*>(it->second.get());
+    if (existing && existing->get_underlying_image() == image) {
+      needs_update = false;
+    }
+  }
+
+  if (needs_update) {
+    bindings[key] = std::make_unique<ImageBinding>(
+      image, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, binding_index);
     for (auto& dirty : per_frame_dirty_flags) {
       dirty.insert(key);
     }
@@ -293,50 +327,19 @@ auto
 Material::prepare_for_rendering(std::uint32_t frame_index)
   -> const VkDescriptorSet&
 {
-  auto& dirty_bindings = per_frame_dirty_flags[frame_index];
-  if (dirty_bindings.empty())
+  auto& dirty = per_frame_dirty_flags[frame_index];
+  if (dirty.empty())
     return descriptor_sets[frame_index];
 
   std::vector<VkWriteDescriptorSet> writes;
-  std::vector<VkDescriptorBufferInfo> buffer_infos;
+  writes.reserve(dirty.size());
 
-  writes.reserve(dirty_bindings.size());
-  buffer_infos.reserve(dirty_bindings.size());
-
-  for (const auto& name : dirty_bindings) {
-    const auto buffer_it = buffers.find(name);
-    if (buffer_it != buffers.end()) {
-      const GPUBuffer* buffer = buffer_it->second;
-
-      const auto binding_it = binding_info.find(name);
-      if (binding_it == binding_info.end())
-        continue;
-
-      const auto [set, binding] = binding_it->second;
-      if (set != 1)
-        continue;
-
-      auto& buffer_info = buffer_infos.emplace_back();
-      buffer_info = {
-        .buffer = buffer->get(),
-        .offset = 0,
-        .range = VK_WHOLE_SIZE,
-      };
-
-      VkWriteDescriptorSet write{
-        .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-        .pNext = nullptr,
-        .dstSet = descriptor_sets[frame_index],
-        .dstBinding = binding,
-        .dstArrayElement = 0,
-        .descriptorCount = 1,
-        .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-        .pImageInfo = nullptr,
-        .pBufferInfo = &buffer_info,
-        .pTexelBufferView = nullptr,
-      };
-      writes.push_back(write);
-    }
+  for (const auto& name : dirty) {
+    auto it = bindings.find(name);
+    if (it == bindings.end())
+      continue;
+    writes.push_back(
+      it->second->write_descriptor(frame_index, descriptor_sets[frame_index]));
   }
 
   vkUpdateDescriptorSets(device->get_device(),
@@ -345,10 +348,9 @@ Material::prepare_for_rendering(std::uint32_t frame_index)
                          0,
                          nullptr);
 
-  dirty_bindings.clear();
+  dirty.clear();
   return descriptor_sets[frame_index];
 }
-
 Material::~Material()
 {
   destroy();
@@ -367,6 +369,4 @@ Material::destroy() -> void
   descriptor_sets.fill(VK_NULL_HANDLE);
 
   pipeline.reset();
-  buffers.clear();
-  images.clear();
 }

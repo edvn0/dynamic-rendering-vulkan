@@ -31,6 +31,8 @@ public:
   {
   }
 
+  auto get_usage_flags() const -> VkBufferUsageFlags { return usage_flags; }
+
   template<AdmitsGPUBuffer T, std::size_t N = std::dynamic_extent>
   auto upload(std::span<const T, N> data) -> void
   {

@@ -38,10 +38,9 @@ public:
   }
 
 private:
-  std::unordered_map<std::string, const GPUBuffer*> buffers;
+  std::unordered_map<std::string, std::unique_ptr<GPUBinding>> bindings;
   std::unordered_map<std::string, std::tuple<std::uint32_t, std::uint32_t>>
     binding_info;
-  std::unordered_map<std::string, const Image*> images;
   frame_array<std::unordered_set<std::string>> per_frame_dirty_flags;
 
   const Device* device{ nullptr };

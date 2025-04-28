@@ -10,7 +10,7 @@
 #include <bit>
 #include <memory>
 #include <vector>
-#include <vulkan/vulkan_core.h>
+#include <vulkan/vulkan.h>
 
 class Image
 {
@@ -57,8 +57,12 @@ public:
   auto height() const -> uint32_t { return extent.height; }
   auto layers() const -> uint32_t { return array_layers; }
   auto mips() const -> uint32_t { return mip_levels; }
+  auto get_descriptor_info() const -> const VkDescriptorImageInfo&
+  {
+    return image_descriptor_info;
+  }
 
-  void resize(uint32_t new_width, uint32_t new_height)
+  auto resize(uint32_t new_width, uint32_t new_height)
   {
     extent.width = new_width;
     extent.height = new_height;
@@ -104,7 +108,8 @@ private:
   VkFormat format{};
   VkImageUsageFlags usage{};
   VkImageAspectFlags aspect{};
-  VkSampleCountFlags sample_count{}; // For MSAA images.
+  VkSampleCountFlags sample_count{};             // For MSAA images.
+  VkDescriptorImageInfo image_descriptor_info{}; // For descriptor sets.
 
   // For UI systems.
   bool allow_in_ui{ true }; // For UI systems

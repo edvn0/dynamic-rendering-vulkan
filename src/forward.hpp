@@ -11,3 +11,7 @@ class GPUBuffer;
 class Image;
 class Shader;
 struct CompiledPipeline;
+
+class GPUBinding;
+class BufferBinding;
+class ImageBinding;

@@ -4,9 +4,7 @@ project(VulkanApp LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-
 set(DISABLE_EXCEPTIONS ON)
-
 
 find_package(Vulkan REQUIRED)
 find_package(glfw3 REQUIRED CONFIG)
@@ -36,6 +34,7 @@ add_executable(${PROJECT_NAME}
   src/layer.cpp
   src/camera.cpp
   src/material.cpp
+  src/material_bindings.cpp
   src/input.cpp
 )
 
@@ -63,47 +62,31 @@ endif()
 if(MSVC)
   target_compile_options(${PROJECT_NAME} PRIVATE /W4 /WX)
 
-  if (DISABLE_EXCEPTIONS)
+  if(DISABLE_EXCEPTIONS)
     target_compile_definitions(${PROJECT_NAME} PRIVATE _HAS_EXCEPTIONS=0)
   endif()
 else()
   target_compile_options(${PROJECT_NAME} PRIVATE -Wall -Wextra -Werror -Wno-unused-command-line-argument)
 
-  if (DISABLE_EXCEPTIONS)
+  if(DISABLE_EXCEPTIONS)
     target_compile_options(${PROJECT_NAME} PRIVATE -fno-exceptions)
   endif()
 endif()
 
 function(generate_shaders)
-  set(shader_source_dir ${CMAKE_SOURCE_DIR}/assets/shaders)
-  set(shader_binary_dir ${CMAKE_BINARY_DIR}/assets/shaders)
-
-  file(GLOB_RECURSE glsl_shaders
-    ${shader_source_dir}/*.vert
-    ${shader_source_dir}/*.frag
-    ${shader_source_dir}/*.comp
+  add_custom_command(
+    OUTPUT shaders_compiled
+    COMMAND ${CMAKE_COMMAND} -E echo "Compiling shaders using Python script..."
+    COMMAND ${CMAKE_COMMAND} -E env PYTHONPATH=${CMAKE_SOURCE_DIR}/scripts python ${CMAKE_SOURCE_DIR}/scripts/compile_shaders.py
+    --source ${CMAKE_SOURCE_DIR}/assets/shaders
+    --output ${CMAKE_BINARY_DIR}/assets/shaders
+    COMMAND ${CMAKE_COMMAND} -E touch shaders_compiled
+    DEPENDS ${CMAKE_SOURCE_DIR}/assets/shaders
+    COMMENT "Running shader compiler"
+    VERBATIM
   )
 
-  set(compiled_shaders)
-
-  foreach(glsl_shader ${glsl_shaders})
-    get_filename_component(file_name ${glsl_shader} NAME)
-    set(spirv_shader ${shader_binary_dir}/${file_name}.spv)
-
-    add_custom_command(
-      OUTPUT ${spirv_shader}
-      COMMAND ${CMAKE_COMMAND} -E make_directory ${shader_binary_dir}
-      COMMAND glslangValidator -V ${glsl_shader} -o ${spirv_shader} -gVS -I${shader_source_dir}/include
-      DEPENDS ${glsl_shader}
-      JOB_POOL compile_shaders
-      COMMENT "Compiling shader ${file_name}"
-      VERBATIM
-    )
-
-    list(APPEND compiled_shaders ${spirv_shader})
-  endforeach()
-
-  add_custom_target(compile_shaders_target ALL DEPENDS ${compiled_shaders})
+  add_custom_target(compile_shaders_target ALL DEPENDS shaders_compiled)
   add_dependencies(${PROJECT_NAME} compile_shaders_target)
 endfunction()
 
