@@ -1,4 +1,4 @@
-#include "shader.hpp"
+#include "pipeline/shader.hpp"
 
 #include <array>
 #include <cassert>
@@ -6,7 +6,7 @@
 #include <fstream>
 #include <stdexcept>
 
-#include "device.hpp"
+#include "core/device.hpp"
 
 namespace {
 

@@ -1,8 +1,7 @@
-#include "compute_pipeline_factory.hpp"
-#include "device.hpp"
-#include "shader.hpp"
+#include "pipeline/compute_pipeline_factory.hpp"
 
-#include <array>
+#include "core/device.hpp"
+#include "pipeline/shader.hpp"
 
 ComputePipelineFactory::ComputePipelineFactory(const Device& dev)
   : device(&dev)

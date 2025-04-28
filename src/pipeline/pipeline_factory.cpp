@@ -2,7 +2,7 @@
 
 #include "pipeline/compiled_pipeline.hpp"
 
-#include "device.hpp"
+#include "core/device.hpp"
 
 #include <array>
 #include <vulkan/vulkan_core.h>

@@ -1,8 +1,7 @@
-#include "compiled_pipeline.hpp"
+#include "pipeline/compiled_pipeline.hpp"
 
-#include <device.hpp>
-
-#include "shader.hpp"
+#include "core/device.hpp"
+#include "pipeline/shader.hpp"
 
 CompiledPipeline::~CompiledPipeline()
 {
