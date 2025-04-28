@@ -300,6 +300,9 @@ Material::prepare_for_rendering(std::uint32_t frame_index)
   std::vector<VkWriteDescriptorSet> writes;
   std::vector<VkDescriptorBufferInfo> buffer_infos;
 
+  writes.reserve(dirty_bindings.size());
+  buffer_infos.reserve(dirty_bindings.size());
+
   for (const auto& name : dirty_bindings) {
     const auto buffer_it = buffers.find(name);
     if (buffer_it != buffers.end()) {
@@ -307,11 +310,11 @@ Material::prepare_for_rendering(std::uint32_t frame_index)
 
       const auto binding_it = binding_info.find(name);
       if (binding_it == binding_info.end())
-        continue; // Should not happen
+        continue;
 
       const auto [set, binding] = binding_it->second;
       if (set != 1)
-        continue; // Material descriptor sets are always set = 1
+        continue;
 
       auto& buffer_info = buffer_infos.emplace_back();
       buffer_info = {
@@ -327,10 +330,7 @@ Material::prepare_for_rendering(std::uint32_t frame_index)
         .dstBinding = binding,
         .dstArrayElement = 0,
         .descriptorCount = 1,
-        .descriptorType =
-          VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, // Assume STORAGE_BUFFER, unless
-                                             // you store descriptor type as
-                                             // well
+        .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
         .pImageInfo = nullptr,
         .pBufferInfo = &buffer_info,
         .pTexelBufferView = nullptr,

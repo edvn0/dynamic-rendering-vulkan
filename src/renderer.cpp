@@ -148,18 +148,24 @@ Renderer::create_descriptor_set_layout() -> void
     });
   }
 
+  std::vector<VkDescriptorBufferInfo> buffer_infos;
+  buffer_infos.resize(bindings.size() * image_count);
+
   for (std::size_t i = 0; i < image_count; ++i) {
-    VkDescriptorBufferInfo camera_info{
+    VkDescriptorBufferInfo& camera_info = buffer_infos[i * 3 + 0];
+    camera_info = {
       .buffer = camera_uniform_buffer->get(),
       .offset = sizeof(CameraBuffer) * i,
       .range = sizeof(CameraBuffer),
     };
-    VkDescriptorBufferInfo shadow_info{
+    VkDescriptorBufferInfo& shadow_info = buffer_infos[i * 3 + 1];
+    shadow_info = {
       .buffer = shadow_camera_buffer->get(),
       .offset = sizeof(ShadowBuffer) * i,
       .range = sizeof(ShadowBuffer),
     };
-    VkDescriptorBufferInfo frustum_info{
+    VkDescriptorBufferInfo& frustum_info = buffer_infos[i * 3 + 2];
+    frustum_info = {
       .buffer = frustum_buffer->get(),
       .offset = sizeof(FrustumBuffer) * i,
       .range = sizeof(FrustumBuffer),
