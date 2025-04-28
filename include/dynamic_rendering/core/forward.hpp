@@ -4,6 +4,10 @@ namespace Core {
 class Instance;
 }
 
+namespace DynamicRendering {
+class App;
+}
+
 class Event;
 class Device;
 class Window;
@@ -17,6 +21,7 @@ class Swapchain;
 class EditorCamera;
 class Camera;
 struct ILayer;
+class MaterialYAMLFileWatcher;
 
 class Renderer;
 class BlueprintRegistry;

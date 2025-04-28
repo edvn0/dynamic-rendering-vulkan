@@ -23,3 +23,19 @@ struct string_hash
     return std::hash<std::string_view>{}(txt);
   }
 };
+
+// WHat could i call type aliases for unordered_map and unordered_set with
+// custom hash functions?
+
+using string_hash_set =
+  std::unordered_set<std::string, string_hash, std::equal_to<>>;
+template<typename T>
+using string_hash_map =
+  std::unordered_map<std::string, T, string_hash, std::equal_to<>>;
+
+template<typename T>
+class Badge
+{
+  friend T;
+  Badge() {}
+};

@@ -48,6 +48,7 @@ struct Attachment
 struct PipelineBlueprint
 {
   std::string name;
+  std::filesystem::path full_path;
   std::vector<ShaderStageInfo> shader_stages;
   std::vector<VertexBinding> bindings{};
   std::vector<VertexAttribute> attributes{};

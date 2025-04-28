@@ -1,5 +1,6 @@
 #include "core/app.hpp"
 
+#include <dynamic_rendering/core/material_yaml_file_watcher.hpp>
 #include <dynamic_rendering/dynamic_rendering.hpp>
 
 #include <cassert>
@@ -133,6 +134,13 @@ App::App(std::string_view /*title*/)
   smoother = std::make_unique<FrametimeSmoother>();
   plotter = std::make_unique<FrameTimePlotter>();
   timer = std::make_unique<FrametimeCalculator>();
+
+  file_watcher = std::make_unique<MaterialYAMLFileWatcher>();
+  file_watcher->start_monitoring("assets/blueprints/");
+
+  for (const auto& [name, blueprint] : blueprint_registry->get_all()) {
+    filename_to_material_name[blueprint.full_path.filename().string()] = name;
+  }
 }
 
 App::~App() = default;
@@ -178,6 +186,38 @@ App::run(int argc, char** argv) -> std::error_code
     update(dt);
     interface();
     render();
+
+    const auto dirty_files = file_watcher->collect_dirty();
+    if (dirty_files.empty()) {
+      continue;
+    }
+
+    device->wait_idle();
+    for (const auto& filename : dirty_files) {
+      auto it = filename_to_material_name.find(filename);
+      if (it == filename_to_material_name.end()) {
+        std::cerr << "Could not find material name for file: " << filename
+                  << std::endl;
+        continue;
+      }
+
+      const auto& material_name = it->second;
+
+      using fs = std::filesystem::path;
+      auto result =
+        blueprint_registry->update(fs("assets/blueprints") / filename);
+      if (!result.has_value()) {
+        std::cerr << "Failed to update blueprint: " << filename << std::endl;
+        continue;
+      }
+      std::cout << "Reloaded blueprint: " << filename << std::endl;
+
+      const auto& blueprint = blueprint_registry->get(material_name);
+      if (auto* mat = renderer->get_material_by_name(material_name)) {
+        mat->reload(blueprint,
+                    renderer->get_renderer_descriptor_set_layout({}));
+      }
+    }
   }
 
   vkDeviceWaitIdle(device->get_device());

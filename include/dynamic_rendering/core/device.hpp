@@ -35,6 +35,7 @@ public:
   auto create_one_time_command_buffer() const
     -> std::tuple<VkCommandBuffer, VkCommandPool>;
   auto flush(VkCommandBuffer, VkCommandPool) const -> void;
+  auto wait_idle() const -> void;
 
   auto destroy() -> void;
 

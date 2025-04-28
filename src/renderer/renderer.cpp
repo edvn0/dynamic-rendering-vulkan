@@ -383,6 +383,13 @@ Renderer::Renderer(const Device& dev,
 }
 
 auto
+Renderer::get_renderer_descriptor_set_layout(Badge<DynamicRendering::App>) const
+  -> VkDescriptorSetLayout
+{
+  return renderer_descriptor_set_layout;
+}
+
+auto
 Renderer::destroy() -> void
 {
   for (auto& semaphore : compute_finished_semaphore) {

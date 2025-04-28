@@ -223,6 +223,12 @@ Device::transfer_queue() const -> VkQueue
 }
 
 auto
+Device::wait_idle() const -> void
+{
+  vkDeviceWaitIdle(device.device);
+}
+
+auto
 Device::destroy() -> void
 {
   allocator.reset();

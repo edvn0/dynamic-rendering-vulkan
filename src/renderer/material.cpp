@@ -131,10 +131,9 @@ Material::create(const Device& device,
                  VkDescriptorSetLayout renderer_set_layout)
   -> std::unique_ptr<Material>
 {
-  if (!Material::pipeline_factory || !Material::compute_pipeline_factory) {
-    Material::pipeline_factory = std::make_unique<PipelineFactory>(device);
-    Material::compute_pipeline_factory =
-      std::make_unique<ComputePipelineFactory>(device);
+  if (!pipeline_factory || !compute_pipeline_factory) {
+    pipeline_factory = std::make_unique<PipelineFactory>(device);
+    compute_pipeline_factory = std::make_unique<ComputePipelineFactory>(device);
   }
 
   std::vector<VkDescriptorSetLayoutBinding> bindings;
@@ -142,35 +141,18 @@ Material::create(const Device& device,
   std::unordered_map<std::string, std::tuple<std::uint32_t, std::uint32_t>>
     binding_info;
 
-  for (auto const& stage : blueprint.shader_stages) {
+  for (const auto& stage : blueprint.shader_stages) {
     if (stage.empty)
       continue;
     reflect_shader_using_spirv_reflect(
       stage.filepath, bindings, push_constants, binding_info);
   }
 
-  const bool is_compute =
-    blueprint.shader_stages.size() == 1 &&
-    blueprint.shader_stages[0].stage == ShaderStage::compute;
-
-#ifdef ACCEPT_DEBUG
-  if (bindings.empty() && is_compute) {
-    VkDescriptorSetLayoutBinding ssbo_binding{
-      .binding = 0,
-      .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-      .descriptorCount = 1,
-      .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT,
-      .pImmutableSamplers = nullptr,
-    };
-    bindings.push_back(ssbo_binding);
-  }
-#endif
-
   VkDescriptorSetLayoutCreateInfo layout_info{
     .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
     .pNext = nullptr,
     .flags = 0,
-    .bindingCount = static_cast<uint32_t>(bindings.size()),
+    .bindingCount = static_cast<std::uint32_t>(bindings.size()),
     .pBindings = bindings.data(),
   };
 
@@ -178,27 +160,25 @@ Material::create(const Device& device,
   vkCreateDescriptorSetLayout(
     device.get_device(), &layout_info, nullptr, &material_set_layout);
 
-  frame_array<VkDescriptorSet> descriptor_sets;
+  frame_array<VkDescriptorSet> descriptor_sets{};
   descriptor_sets.fill(VK_NULL_HANDLE);
 
-  std::unordered_map<VkDescriptorType, uint32_t> type_counts;
-  for (auto const& b : bindings) {
+  std::unordered_map<VkDescriptorType, std::uint32_t> type_counts;
+  for (const auto& b : bindings)
     type_counts[b.descriptorType] += b.descriptorCount;
-  }
 
   std::vector<VkDescriptorPoolSize> pool_sizes;
   pool_sizes.reserve(type_counts.size());
-  for (auto const& [type, count_per_set] : type_counts) {
-    pool_sizes.push_back(VkDescriptorPoolSize{
-      .type = type, .descriptorCount = count_per_set * image_count });
-  }
+  for (const auto& [type, count] : type_counts)
+    pool_sizes.push_back(
+      { .type = type, .descriptorCount = count * image_count });
 
   VkDescriptorPoolCreateInfo pool_info{
     .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
     .pNext = nullptr,
     .flags = 0,
     .maxSets = image_count,
-    .poolSizeCount = static_cast<uint32_t>(pool_sizes.size()),
+    .poolSizeCount = static_cast<std::uint32_t>(pool_sizes.size()),
     .pPoolSizes = pool_sizes.data(),
   };
 
@@ -206,7 +186,7 @@ Material::create(const Device& device,
   vkCreateDescriptorPool(
     device.get_device(), &pool_info, nullptr, &descriptor_pool);
 
-  std::array<VkDescriptorSetLayout, image_count> layouts;
+  std::array<VkDescriptorSetLayout, image_count> layouts{};
   layouts.fill(material_set_layout);
 
   VkDescriptorSetAllocateInfo alloc_info{
@@ -220,28 +200,34 @@ Material::create(const Device& device,
   vkAllocateDescriptorSets(
     device.get_device(), &alloc_info, descriptor_sets.data());
 
-  std::vector<VkDescriptorSetLayout> descriptor_set_layouts{
-    material_set_layout
-  };
-  const auto* chosen_factory =
-    is_compute ? compute_pipeline_factory.get() : pipeline_factory.get();
+  auto pipeline_factory_to_use =
+    blueprint.shader_stages.size() == 1 &&
+        blueprint.shader_stages[0].stage == ShaderStage::compute
+      ? compute_pipeline_factory.get()
+      : pipeline_factory.get();
 
-  auto pipeline = chosen_factory->create_pipeline(
+  auto pipeline = pipeline_factory_to_use->create_pipeline(
     blueprint,
     {
       .renderer_set_layout = renderer_set_layout,
-      .material_sets = descriptor_set_layouts,
+      .material_sets = { material_set_layout },
       .push_constants = push_constants,
     });
 
-  assert(pipeline != nullptr && "Pipeline creation failed.");
   return std::unique_ptr<Material>(
     new Material(device,
                  std::move(descriptor_sets),
-                 std::span(descriptor_set_layouts),
+                 std::span{ &material_set_layout, 1 },
                  descriptor_pool,
                  std::move(pipeline),
                  std::move(binding_info)));
+}
+
+auto
+Material::reload(const PipelineBlueprint& blueprint,
+                 VkDescriptorSetLayout renderer_set_layout) -> void
+{
+  pipeline = rebuild_pipeline(blueprint, renderer_set_layout);
 }
 
 Material::Material(
@@ -260,6 +246,39 @@ Material::Material(
   , pipeline(std::move(pipe))
 
 {
+}
+
+auto
+Material::rebuild_pipeline(const PipelineBlueprint& blueprint,
+                           VkDescriptorSetLayout renderer_set_layout)
+  -> std::unique_ptr<CompiledPipeline>
+{
+  std::vector<VkPushConstantRange> push_constants;
+  std::vector<VkDescriptorSetLayoutBinding> new_bindings;
+
+  binding_info.clear();
+
+  for (const auto& stage : blueprint.shader_stages) {
+    if (stage.empty)
+      continue;
+    reflect_shader_using_spirv_reflect(
+      stage.filepath, new_bindings, push_constants, binding_info);
+  }
+
+  const bool is_compute =
+    blueprint.shader_stages.size() == 1 &&
+    blueprint.shader_stages[0].stage == ShaderStage::compute;
+
+  const auto* factory_to_use =
+    is_compute ? compute_pipeline_factory.get() : pipeline_factory.get();
+
+  return factory_to_use->create_pipeline(
+    blueprint,
+    PipelineLayoutInfo{
+      .renderer_set_layout = renderer_set_layout,
+      .material_sets = { descriptor_set_layout },
+      .push_constants = push_constants,
+    });
 }
 
 auto

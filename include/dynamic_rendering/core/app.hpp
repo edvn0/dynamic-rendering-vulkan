@@ -51,6 +51,9 @@ private:
 
   std::vector<std::unique_ptr<ILayer>> layers;
   bool running = true;
+
+  std::unique_ptr<MaterialYAMLFileWatcher> file_watcher;
+  std::unordered_map<std::string, std::string> filename_to_material_name;
 };
 
 }

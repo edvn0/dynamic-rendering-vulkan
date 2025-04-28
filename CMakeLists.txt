@@ -35,6 +35,7 @@ find_package(glfw3 REQUIRED CONFIG)
 find_package(imguizmo REQUIRED CONFIG)
 find_package(yaml-cpp REQUIRED CONFIG)
 find_package(glm REQUIRED CONFIG)
+find_package(efsw REQUIRED CONFIG)
 
 add_subdirectory(third_party)
 add_subdirectory(client)
@@ -49,6 +50,7 @@ add_library(DynamicRendering_Core STATIC
   src/core/input.cpp
   src/core/event_system.cpp
   src/core/app.cpp
+  src/core/material_yaml_file_watcher.cpp
 )
 
 target_include_directories(DynamicRendering_Core PUBLIC
@@ -67,6 +69,7 @@ target_link_libraries(DynamicRendering_Core PUBLIC
   VulkanMemoryAllocator
   PRIVATE
   implot
+  efsw::efsw
 )
 
 target_precompile_headers(DynamicRendering_Core PUBLIC include/dynamic_rendering/dynamic_rendering_pch.hpp)

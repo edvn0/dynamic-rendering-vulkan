@@ -37,6 +37,8 @@ public:
     return descriptor_sets[frame_index];
   }
 
+  auto reload(const PipelineBlueprint&, VkDescriptorSetLayout) -> void;
+
 private:
   std::unordered_map<std::string, std::unique_ptr<GPUBinding>> bindings;
   std::unordered_map<std::string, std::tuple<std::uint32_t, std::uint32_t>>
@@ -66,4 +68,6 @@ private:
   static inline std::unique_ptr<IPipelineFactory> compute_pipeline_factory{
     nullptr
   };
+  auto rebuild_pipeline(const PipelineBlueprint&, VkDescriptorSetLayout)
+    -> std::unique_ptr<CompiledPipeline>;
 };

@@ -6,6 +6,8 @@
 #include <vector>
 #include <vulkan/vulkan.h>
 
+#include "core/forward.hpp"
+
 #include "core/command_buffer.hpp"
 #include "core/config.hpp"
 #include "core/device.hpp"
@@ -16,6 +18,33 @@
 #include "pipeline/pipeline_factory.hpp"
 #include "renderer/material.hpp"
 #include "window/window.hpp"
+
+enum class RenderPass : std::uint8_t
+{
+  MainGeometry,
+  Shadow,
+  Gizmo,
+  Line,
+  ZPrepass,
+};
+inline auto
+to_renderpass(std::string_view name) -> RenderPass
+{
+  if (name == "main_geometry") {
+    return RenderPass::MainGeometry;
+  } else if (name == "shadow") {
+    return RenderPass::Shadow;
+  } else if (name == "gizmo") {
+    return RenderPass::Gizmo;
+  } else if (name == "line") {
+    return RenderPass::Line;
+  } else if (name == "z_prepass") {
+    return RenderPass::ZPrepass;
+  }
+
+  assert(false && "Unknown render pass name");
+  return RenderPass::MainGeometry;
+}
 
 struct InstanceData
 {
@@ -81,6 +110,28 @@ public:
     current_frustum.update(vp);
   }
   auto get_light_environment() -> auto& { return light_environment; }
+  auto get_material_by_name(const std::string& name) -> Material*
+  {
+    auto renderpass = ::to_renderpass(name);
+    switch (renderpass) {
+      using enum RenderPass;
+      case MainGeometry:
+        return geometry_material.get();
+      case Shadow:
+        return shadow_material.get();
+      case Gizmo:
+        return gizmo_material.get();
+      case Line:
+        return line_material.get();
+      case ZPrepass:
+        return z_prepass_material.get();
+      default:
+        assert(false && "Unknown render pass name");
+        return nullptr;
+    }
+  }
+  auto get_renderer_descriptor_set_layout(Badge<DynamicRendering::App>) const
+    -> VkDescriptorSetLayout;
 
 private:
   const Device* device{ nullptr };
