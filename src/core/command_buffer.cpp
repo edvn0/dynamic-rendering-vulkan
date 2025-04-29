@@ -28,17 +28,12 @@ CommandBuffer::CommandBuffer(const Device& dev,
 CommandBuffer::~CommandBuffer()
 {
   for (auto& pool : query_pools) {
-    if (pool)
-      vkDestroyQueryPool(device->get_device(), pool, nullptr);
+    vkDestroyQueryPool(device->get_device(), pool, nullptr);
   }
 
-  if (command_pool) {
-    vkDestroyCommandPool(device->get_device(), command_pool, nullptr);
-  }
-
+  vkDestroyCommandPool(device->get_device(), command_pool, nullptr);
   for (auto& fence : fences) {
-    if (fence)
-      vkDestroyFence(device->get_device(), fence, nullptr);
+    vkDestroyFence(device->get_device(), fence, nullptr);
   }
 }
 

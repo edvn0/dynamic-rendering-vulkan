@@ -63,6 +63,15 @@ struct LineDrawCommand
   std::uint32_t vertex_count;
   Material* override_material{ nullptr };
 };
+struct LineInstanceData
+{
+  glm::vec3 start;
+  float width;
+  glm::vec3 end;
+  std::uint32_t packed_color;
+};
+static_assert(sizeof(LineInstanceData) == 32,
+              "LineInstanceData must be 32 bytes.");
 
 struct DrawCommand
 {
@@ -91,10 +100,10 @@ class Renderer
 public:
   Renderer(const Device&, const BlueprintRegistry&, const Window&);
   ~Renderer();
-  auto destroy() -> void;
 
   auto submit(const DrawCommand&, const glm::mat4& = glm::mat4{ 1.0F }) -> void;
-  auto submit_lines(const LineDrawCommand&, const glm::mat4&) -> void;
+  auto submit_lines(const glm::vec3&, const glm::vec3&, float, const glm::vec4&)
+    -> void;
   auto begin_frame(std::uint32_t, const glm::mat4&, const glm::mat4&) -> void;
   auto end_frame(std::uint32_t) -> void;
   auto resize(std::uint32_t, std::uint32_t) -> void;
@@ -136,6 +145,7 @@ public:
 private:
   const Device* device{ nullptr };
   const BlueprintRegistry* blueprint_registry{ nullptr };
+
   LightEnvironment light_environment;
 
   std::unique_ptr<CommandBuffer> command_buffer;
@@ -163,7 +173,11 @@ private:
   std::unique_ptr<GPUBuffer> culled_instance_vertex_buffer;
   std::unique_ptr<GPUBuffer> culled_instance_count_buffer;
 
-  std::vector<std::pair<LineDrawCommand, glm::mat4>> line_draw_commands{};
+  std::vector<LineInstanceData> line_instances{};
+  std::unique_ptr<GPUBuffer> line_instance_buffer{};
+  std::uint32_t line_instance_count_this_frame{};
+  auto upload_line_instance_data() -> void;
+
   std::unordered_map<DrawCommand, std::vector<InstanceData>, DrawCommandHasher>
     draw_commands{};
 
@@ -178,6 +192,16 @@ private:
   VkDescriptorSetLayout renderer_descriptor_set_layout{};
   VkDescriptorPool descriptor_pool{};
   auto create_descriptor_set_layout() -> void;
+
+  using DrawList =
+    std::vector<std::tuple<DrawCommand, std::uint32_t, std::uint32_t>>;
+
+  auto run_culling_compute_pass(std::uint32_t) -> void;
+  auto run_shadow_pass(std::uint32_t, const DrawList&) -> void;
+  auto run_z_prepass(std::uint32_t, const DrawList&) -> void;
+  auto run_geometry_pass(std::uint32_t, const DrawList&) -> void;
+  auto run_line_pass(std::uint32_t) -> void;
+  auto run_gizmo_pass(std::uint32_t) -> void;
 
   struct Frustum
   {
@@ -213,18 +237,7 @@ private:
         });
     }
   };
-
   Frustum current_frustum;
 
-  bool destroyed{ false };
-
-  using DrawList =
-    std::vector<std::tuple<DrawCommand, std::uint32_t, std::uint32_t>>;
-
-  auto run_culling_compute_pass(std::uint32_t) -> void;
-  auto run_shadow_pass(std::uint32_t, const DrawList&) -> void;
-  auto run_z_prepass(std::uint32_t, const DrawList&) -> void;
-  auto run_geometry_pass(std::uint32_t, const DrawList&) -> void;
-  auto run_line_pass(std::uint32_t) -> void;
-  auto run_gizmo_pass(std::uint32_t) -> void;
+  auto destroy() -> void;
 };

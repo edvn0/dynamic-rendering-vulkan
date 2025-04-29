@@ -53,6 +53,7 @@ private:
 
   // Materials own the pipeline.
   std::unique_ptr<CompiledPipeline> pipeline{ nullptr };
+  std::size_t pipeline_hash{ 0 };
 
   Material(const Device& device,
            frame_array<VkDescriptorSet>&&,

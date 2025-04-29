@@ -12,10 +12,13 @@ BlueprintRegistry::load_from_directory(const std::filesystem::path& path)
   const auto assets_path = std::filesystem::current_path() / path;
   for (const auto& entry : std::filesystem::directory_iterator(assets_path)) {
     if (entry.is_regular_file() && entry.path().extension() == ".yaml") {
-      YAML::Node yaml = YAML::LoadFile(entry.path().string());
-      PipelineBlueprint blueprint = yaml.as<PipelineBlueprint>();
-      blueprint.full_path = entry.path();
-      blueprints[blueprint.name] = std::move(blueprint);
+
+      PipelineBlueprint blueprint;
+      if (load_one(entry.path(), blueprint)) {
+        blueprints[blueprint.name] = std::move(blueprint);
+      } else {
+        std::cerr << "Failed to load blueprint: " << entry.path() << std::endl;
+      }
     }
   }
 }
@@ -52,13 +55,10 @@ auto
 BlueprintRegistry::load_one(const std::filesystem::path& file_path,
                             PipelineBlueprint& output_blueprint) const -> bool
 {
-  try {
-    YAML::Node node = YAML::LoadFile(file_path.string());
-    output_blueprint = node.as<PipelineBlueprint>();
-    output_blueprint.full_path = file_path;
-    return true;
-  } catch (const YAML::Exception& e) {
-    std::cerr << "YAML parsing error: " << e.what() << std::endl;
+  if (auto node = YAML::LoadFile(file_path.string());
+      !YAML::convert<PipelineBlueprint>::decode(node, output_blueprint)) {
     return false;
   }
+  output_blueprint.full_path = file_path;
+  return true;
 }

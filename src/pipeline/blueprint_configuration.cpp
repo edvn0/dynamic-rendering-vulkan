@@ -34,9 +34,32 @@ PipelineBlueprint::hash() const -> std::size_t
 
   for (const auto& s : shader_stages) {
     hash_combine(s.stage);
-    hash_combine(
-      std::filesystem::last_write_time(s.filepath).time_since_epoch().count());
+
+    std::ifstream stream(s.filepath, std::ios::binary);
+    if (stream) {
+      std::array<char, 64> head{};
+      stream.read(head.data(), head.size());
+      std::size_t content_hash = std::hash<std::string_view>{}(std::string_view{
+        head.data(), static_cast<std::size_t>(stream.gcount()) });
+      hash_combine(content_hash);
+    }
   }
+
+  for (const auto& att : attachments) {
+    hash_combine(static_cast<std::uint32_t>(att.format));
+    hash_combine(att.blend_enable);
+    hash_combine(att.write_mask_rgba);
+  }
+
+  if (depth_attachment.has_value()) {
+    const auto& d = depth_attachment.value();
+    hash_combine(static_cast<std::uint32_t>(d.format));
+    hash_combine(d.blend_enable);
+    hash_combine(d.write_mask_rgba);
+  }
+
+  hash_combine(static_cast<std::uint32_t>(msaa_samples));
+  hash_combine(static_cast<std::uint32_t>(depth_compare_op));
 
   return h;
 }

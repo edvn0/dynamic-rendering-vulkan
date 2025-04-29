@@ -13,8 +13,8 @@ upload_to_device_buffer(const Device& device,
 
   VkBufferCopy copy_region{
     .srcOffset = 0,
-    .dstOffset = static_cast<VkDeviceSize>(offset),
-    .size = static_cast<VkDeviceSize>(data.size_bytes()),
+    .dstOffset = offset,
+    .size = data.size_bytes(),
   };
 
   auto&& [command_buffer, command_pool] =
@@ -27,8 +27,7 @@ upload_to_device_buffer(const Device& device,
 
 GPUBuffer::~GPUBuffer()
 {
-  if (buffer)
-    vmaDestroyBuffer(device.get_allocator().get(), buffer, allocation);
+  vmaDestroyBuffer(device.get_allocator().get(), buffer, allocation);
 }
 
 auto

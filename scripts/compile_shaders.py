@@ -22,12 +22,14 @@ def compile_shader(args: tuple[pathlib.Path, pathlib.Path, pathlib.Path]) -> tup
 
     result = subprocess.run(
         [
-            'glslangValidator',
-            '-V', str(shader_path),
+            'glslc',
+            str(shader_path),
             '-o', str(output_spv),
-            '-gVS',
-            f'-I{include_dir}',
-            '-t'
+            '-g',
+            '-I', str(include_dir),
+            '--target-env=vulkan1.4',
+            '-x', 'glsl',
+            '-Werror'
         ],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -40,7 +42,7 @@ def compile_shader(args: tuple[pathlib.Path, pathlib.Path, pathlib.Path]) -> tup
     return shader_path, True, ''
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description='Compile GLSL shaders to SPIR-V.')
+    parser = argparse.ArgumentParser(description='Compile GLSL shaders to SPIR-V using glslc.')
     parser.add_argument('--source', required=True, help='Path to the shader source directory')
     parser.add_argument('--output', required=True, help='Path to the shader output directory')
     args = parser.parse_args()
@@ -81,4 +83,3 @@ def main() -> None:
 
 if __name__ == '__main__':
     main()
-

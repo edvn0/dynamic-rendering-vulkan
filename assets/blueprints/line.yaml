@@ -8,7 +8,7 @@ shaders:
 rasterization:
   cull_mode: none
 
-topology: line-list
+topology: triangle-strip
 
 depth_stencil:
   depth_test: true
@@ -25,17 +25,21 @@ vertex_input:
   bindings:
     - binding: 0
       stride: 32
-      input_rate: vertex
+      input_rate: instance # <--- CHANGED
   attributes:
     - location: 0
       binding: 0
       format: vec3
-      offset: 0
+      offset: 0 # start
     - location: 1
       binding: 0
-      format: vec3
-      offset: 12
+      format: r32_sfloat
+      offset: 12 # width
     - location: 2
       binding: 0
-      format: vec2
-      offset: 24
+      format: vec3
+      offset: 16 # end
+    - location: 3
+      binding: 0
+      format: r32_uint
+      offset: 28 # packed_color

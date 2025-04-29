@@ -225,12 +225,13 @@ App::run(int argc, char** argv) -> std::error_code
   for (auto& layer : layers)
     layer->on_destroy();
 
-  renderer->destroy();
+  renderer.reset();
   gui_system->shutdown();
-  swapchain->destroy();
-  window->destroy(*instance);
-  device->destroy();
-  instance->destroy();
+  swapchain.reset();
+  window->destroy_surface({}, *instance);
+  window.reset();
+  device.reset();
+  instance.reset();
 
   std::cout << "System closed safely." << std::endl;
 

@@ -272,6 +272,17 @@ Renderer::Renderer(const Device& dev,
   {
     line_material = Material::create(
       *device, blueprint_registry->get("line"), renderer_descriptor_set_layout);
+
+    line_instance_buffer = std::make_unique<GPUBuffer>(
+      *device, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, true);
+
+    auto&& [bytes, instance_size_bytes] =
+      make_bytes<LineInstanceData, 100'000>();
+    if (!bytes) {
+      assert(false && "Failed to allocate line instance buffer.");
+    }
+    line_instance_buffer->upload(
+      std::span<std::byte>{ bytes.get(), instance_size_bytes });
   }
 
   {
@@ -279,10 +290,10 @@ Renderer::Renderer(const Device& dev,
       dev,
       VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
       true);
-    static constexpr auto instance_size = sizeof(glm::mat4);
-    static constexpr auto instance_count = 1'000'000;
-    static constexpr auto instance_size_bytes = instance_size * instance_count;
-    const auto bytes = std::make_unique<std::byte[]>(instance_size_bytes);
+    auto&& [bytes, instance_size_bytes] = make_bytes<InstanceData, 1'000'000>();
+    if (!bytes) {
+      assert(false && "Failed to allocate instance vertex buffer.");
+    }
     instance_vertex_buffer->upload(
       std::span<std::byte>{ bytes.get(), instance_size_bytes });
   }
@@ -364,11 +375,9 @@ Renderer::Renderer(const Device& dev,
       true);
 
     {
-      static constexpr auto instance_size = sizeof(glm::mat4);
-      static constexpr auto instance_count = 1'000'000;
-      static constexpr auto instance_size_bytes =
-        instance_size * instance_count;
-      const auto bytes = std::make_unique<std::byte[]>(instance_size_bytes);
+      // This was a glm::mat4 before, lets strongly type instead.
+      auto&& [bytes, instance_size_bytes] =
+        make_bytes<InstanceData, 1'000'000>();
       culled_instance_vertex_buffer->upload(
         std::span<std::byte>{ bytes.get(), instance_size_bytes });
     }
@@ -398,36 +407,11 @@ Renderer::destroy() -> void
   vkDestroyDescriptorPool(device->get_device(), descriptor_pool, nullptr);
   vkDestroyDescriptorSetLayout(
     device->get_device(), renderer_descriptor_set_layout, nullptr);
-
-  geometry_material.reset();
-  z_prepass_material.reset();
-  shadow_material.reset();
-  line_material.reset();
-  gizmo_material.reset();
-  cull_instances_compute_material.reset();
-
-  culled_instance_vertex_buffer.reset();
-  culled_instance_count_buffer.reset();
-  frustum_buffer.reset();
-  shadow_camera_buffer.reset();
-  shadow_depth_image.reset();
-  gizmo_vertex_buffer.reset();
-  camera_uniform_buffer.reset();
-  geometry_depth_image.reset();
-  geometry_image.reset();
-  geometry_msaa_image.reset();
-  compute_command_buffer.reset();
-  instance_vertex_buffer.reset();
-  command_buffer.reset();
-
-  destroyed = true;
 }
 
 Renderer::~Renderer()
 {
-  if (!destroyed) {
-    destroy();
-  }
+  destroy();
 }
 
 auto
@@ -437,10 +421,23 @@ Renderer::submit(const DrawCommand& cmd, const glm::mat4& transform) -> void
 }
 
 auto
-Renderer::submit_lines(const LineDrawCommand& cmd, const glm::mat4& transform)
-  -> void
+Renderer::submit_lines(const glm::vec3& start,
+                       const glm::vec3& end,
+                       float width,
+                       const glm::vec4& color) -> void
 {
-  line_draw_commands.emplace_back(cmd, transform);
+  std::uint32_t packed_color =
+    (static_cast<std::uint32_t>(color.r * 255.0f) << 24) |
+    (static_cast<std::uint32_t>(color.g * 255.0f) << 16) |
+    (static_cast<std::uint32_t>(color.b * 255.0f) << 8) |
+    (static_cast<std::uint32_t>(color.a * 255.0f) << 0);
+
+  line_instances.push_back(LineInstanceData{
+    .start = start,
+    .width = width,
+    .end = end,
+    .packed_color = packed_color,
+  });
 }
 
 static auto
@@ -533,6 +530,18 @@ upload_instance_vertex_data(GPUBuffer& buffer,
 }
 
 auto
+Renderer::upload_line_instance_data() -> void
+{
+  line_instance_count_this_frame =
+    static_cast<std::uint32_t>(line_instances.size());
+  if (line_instance_count_this_frame == 0)
+    return;
+
+  line_instance_buffer->upload(std::span(line_instances));
+  line_instances.clear();
+}
+
+auto
 Renderer::update_shadow_buffers(std::uint32_t frame_index) -> void
 {
   static constexpr auto calculate_light_view_projection =
@@ -605,6 +614,7 @@ Renderer::end_frame(std::uint32_t frame_index) -> void
                                   draw_commands,
                                   current_frustum,
                                   instance_count_this_frame);
+    upload_line_instance_data();
 
     run_culling_compute_pass(frame_index);
 
@@ -979,24 +989,15 @@ Renderer::run_line_pass(std::uint32_t frame_index) -> void
                           0,
                           nullptr);
 
-  for (const auto& [submission, transform] : line_draw_commands) {
-    const std::array<VkDeviceSize, 1> offsets = { 0 };
-    const std::array<VkBuffer, 1> buffer = { submission.vertex_buffer->get() };
-    vkCmdBindVertexBuffers(cmd,
-                           0,
-                           static_cast<std::uint32_t>(buffer.size()),
-                           buffer.data(),
-                           offsets.data());
+  const std::array<VkDeviceSize, 1> offsets = { 0 };
+  const std::array<VkBuffer, 1> buffers = { line_instance_buffer->get() };
+  vkCmdBindVertexBuffers(cmd, 0, 1, buffers.data(), offsets.data());
 
-    vkCmdDraw(cmd, submission.vertex_count, 1, 0, 0);
-  }
+  vkCmdDraw(cmd, 4, line_instance_count_this_frame, 0, 0);
 
   vkCmdEndRendering(cmd);
-
   CoreUtils::cmd_transition_to_shader_read(cmd, geometry_image->get_image());
-
   command_buffer->end_timer(frame_index, "line_pass");
-  line_draw_commands.clear();
 }
 
 auto

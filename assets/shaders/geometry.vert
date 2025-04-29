@@ -1,5 +1,4 @@
 #version 460
-#extension GL_GOOGLE_include_directive : require
 
 #include "matrix_math.glsl"
 #include "set0.glsl"
@@ -16,7 +15,8 @@ layout(location = 0) out vec3 v_normal;
 layout(location = 1) out vec3 v_world_pos;
 layout(location = 2) out vec4 v_light_space_pos;
 
-void main() {
+void main()
+{
   mat4 model_matrix = RECONSTRUCT();
   vec4 world_position = model_matrix * vec4(a_position, 1.0);
 

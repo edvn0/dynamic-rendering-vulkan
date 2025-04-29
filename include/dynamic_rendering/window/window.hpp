@@ -6,6 +6,7 @@
 
 #include "core/event_system.hpp"
 #include "core/forward.hpp"
+#include "core/util.hpp"
 
 extern "C"
 {
@@ -30,7 +31,8 @@ public:
   auto is_iconified() const -> bool;
   auto wait_for_events() const -> void;
 
-  auto destroy(const Core::Instance&) -> void;
+  auto destroy_surface(Badge<DynamicRendering::App>, const Core::Instance&)
+    -> void;
 
   auto set_event_callback(std::function<void(Event&)> callback) -> void;
 
@@ -39,7 +41,6 @@ private:
   VkSurfaceKHR vk_surface{ VK_NULL_HANDLE };
   struct WindowData;
   std::unique_ptr<WindowData> user_data;
-  bool destroyed{ false };
 
   auto cleanup() -> void;
   auto hookup_events() -> void;

@@ -1,6 +1,7 @@
 #pragma once
 
-#include "device.hpp"
+#include "core/device.hpp"
+#include "core/util.hpp"
 #include "vulkan/vulkan.h"
 
 #include <span>
@@ -30,6 +31,7 @@ public:
     , mapped_on_create(mapped_on_create)
   {
   }
+  ~GPUBuffer();
 
   auto get_usage_flags() const -> VkBufferUsageFlags { return usage_flags; }
 
@@ -127,14 +129,12 @@ public:
   }
   auto get() const -> const VkBuffer& { return buffer; }
 
-  ~GPUBuffer();
-
 private:
   auto recreate(size_t size) -> void;
 
   VkBuffer buffer{};
   VmaAllocation allocation{};
-  void* persistent_ptr{};
+  Pointers::transparent persistent_ptr{};
   const Device& device;
   VkBufferUsageFlags usage_flags{};
   bool mapped_on_create{};

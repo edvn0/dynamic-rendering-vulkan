@@ -194,12 +194,10 @@ AppLayer::on_render(Renderer& renderer) -> void
       transforms.at(i));
   }
 
-  renderer.submit_lines(
-    {
-      .vertex_buffer = axes_vertex_buffer.get(),
-      .vertex_count = 6,
-    },
-    glm::scale(glm::mat4{ 1.0F }, glm::vec3{ 5.0F }));
+  renderer.submit_lines({ -5.f, 0.f, 0.f },
+                        { 5.f, 0.f, 0.f },
+                        0.1f,
+                        glm::vec4{ 1.f, 0.f, 0.f, 1.f });
 }
 
 auto

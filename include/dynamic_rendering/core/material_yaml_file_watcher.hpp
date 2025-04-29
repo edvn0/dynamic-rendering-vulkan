@@ -4,7 +4,7 @@
 
 #include <chrono>
 #include <efsw/efsw.hpp>
-#include <mutex>
+#include <shared_mutex>
 #include <string>
 #include <unordered_set>
 
@@ -28,7 +28,7 @@ private:
   std::unique_ptr<efsw::FileWatcher> file_watcher;
   efsw::WatchID watch_id{};
 
-  std::mutex dirty_mutex;
+  std::shared_mutex dirty_mutex;
 
   string_hash_map<std::chrono::steady_clock::time_point>
     pending_changes{}; // map of filename to last modified time

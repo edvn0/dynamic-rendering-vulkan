@@ -133,6 +133,10 @@ std::
     return VK_FORMAT_R32G32B32_SFLOAT;
   else if (fmt == "vec4")
     return VK_FORMAT_R32G32B32A32_SFLOAT;
+  else if (fmt == "r32_sfloat")
+    return VK_FORMAT_R32_SFLOAT;
+  else if (fmt == "r32_uint")
+    return VK_FORMAT_R32_UINT;
 
   return std::unexpected(
     ConversionError("Unsupported vertex attribute format: " + fmt));
@@ -222,6 +226,18 @@ std::expected<ShaderStage, ConversionError> inline string_to_shader_stage(
 }
 
 // YAML converters that use the expected-based helpers
+inline void
+log_error(const std::string& msg)
+{
+  std::cerr << "[Pipeline YAML Error] " << msg << std::endl;
+}
+
+inline void
+log_warning(const std::string& msg)
+{
+  std::cerr << "[Pipeline YAML Warning] " << msg << std::endl;
+}
+
 template<>
 struct convert<VkFormat>
 {
@@ -231,7 +247,7 @@ struct convert<VkFormat>
     if (result.has_value()) {
       return Node(result.value());
     }
-    assert(false && result.error().message.c_str());
+    log_error(result.error().message);
     return Node{};
   }
 
@@ -243,7 +259,7 @@ struct convert<VkFormat>
       rhs = result.value();
       return true;
     }
-    assert(false && result.error().message.c_str());
+    log_error(result.error().message);
     return false;
   }
 };
@@ -256,7 +272,7 @@ struct convert<ShaderStageInfo>
     const auto stage_str = node["stage"].as<std::string>();
     auto stage_result = string_to_shader_stage(stage_str);
     if (!stage_result.has_value()) {
-      assert(false && stage_result.error().message.c_str());
+      log_error(stage_result.error().message);
       return false;
     }
 
@@ -281,7 +297,7 @@ struct convert<Attachment>
     const auto format_str = node["format"].as<std::string>();
     auto format_result = string_to_vk_format(format_str);
     if (!format_result.has_value()) {
-      assert(false && format_result.error().message.c_str());
+      log_error(format_result.error().message);
       return false;
     }
 
@@ -324,7 +340,7 @@ struct convert<VertexAttribute>
     auto format_result =
       string_to_vertex_attribute_format(node["format"].as<std::string>());
     if (!format_result.has_value()) {
-      assert(false && format_result.error().message.c_str());
+      log_error(format_result.error().message);
       return false;
     }
 
@@ -338,11 +354,9 @@ struct convert<PipelineBlueprint>
 {
   static bool decode(const Node& node, PipelineBlueprint& rhs)
   {
-    // Basic properties
     rhs.name = node["name"].as<std::string>();
     rhs.shader_stages = node["shaders"].as<std::vector<ShaderStageInfo>>();
 
-    // Vertex input handling
     if (node["vertex_input"]) {
       if (node["vertex_input"]["bindings"])
         rhs.bindings =
@@ -354,7 +368,6 @@ struct convert<PipelineBlueprint>
       set_default_vertex_input(rhs);
     }
 
-    // Rasterization settings
     if (node["rasterization"]) {
       auto& rast = node["rasterization"];
 
@@ -362,7 +375,7 @@ struct convert<PipelineBlueprint>
         string_to_cull_mode(rast["cull_mode"].as<std::string>("back"));
 
       if (!cull_result.has_value()) {
-        assert(false && cull_result.error().message.c_str());
+        log_error("Invalid cull mode: " + rast["cull_mode"].as<std::string>());
         return false;
       }
       rhs.cull_mode = cull_result.value();
@@ -371,7 +384,7 @@ struct convert<PipelineBlueprint>
         string_to_polygon_mode(rast["polygon_mode"].as<std::string>("fill"));
 
       if (!polygon_result.has_value()) {
-        assert(false && polygon_result.error().message.c_str());
+        log_error(polygon_result.error().message);
         return false;
       }
       rhs.polygon_mode = polygon_result.value();
@@ -380,7 +393,7 @@ struct convert<PipelineBlueprint>
         rast["winding"].as<std::string>("counter-clockwise"));
 
       if (!winding_result.has_value()) {
-        assert(false && winding_result.error().message.c_str());
+        log_error(winding_result.error().message);
         return false;
       }
       rhs.winding = winding_result.value();
@@ -390,16 +403,14 @@ struct convert<PipelineBlueprint>
       string_to_topology(node["topology"].as<std::string>("triangle-list"));
 
     if (!topology_result.has_value()) {
-      assert(false && topology_result.error().message.c_str());
+      log_error(topology_result.error().message);
       return false;
     }
     rhs.topology = topology_result.value();
 
-    // Blend settings
     if (node["blend"])
       rhs.blend_enable = node["blend"]["enable"].as<bool>(false);
 
-    // Depth/stencil settings
     if (node["depth_stencil"]) {
       auto& depth_stencil = node["depth_stencil"];
       rhs.depth_test = depth_stencil["depth_test"].as<bool>(false);
@@ -415,33 +426,30 @@ struct convert<PipelineBlueprint>
           string_to_compare_op(depth_stencil["compare_op"].as<std::string>());
 
         if (!compare_result.has_value()) {
-          assert(false && compare_result.error().message.c_str());
+          log_error(compare_result.error().message);
           return false;
         }
         rhs.depth_compare_op = compare_result.value();
       }
 
-      // Validation checks
       if (!rhs.depth_test && rhs.depth_write) {
-        assert(false &&
-               "Invalid pipeline config: depth_write requires depth_test");
+        log_error("Invalid pipeline config: depth_write requires depth_test");
         return false;
       }
 
       if (depth_stencil["compare_op"] && !rhs.depth_test) {
-        assert(false && "Warning: Using depth compare_op without depth_test "
-                        "may lead to undefined behavior");
-        // You might want to just warn here, not fail
+        log_warning("Using depth compare_op without depth_test may lead to "
+                    "undefined behavior");
       }
 
       if ((rhs.depth_compare_op == VK_COMPARE_OP_GREATER ||
            rhs.depth_compare_op == VK_COMPARE_OP_GREATER_OR_EQUAL) &&
           !rhs.depth_write) {
-        // You might want to just warn here, not fail
+        log_warning("Greater depth compare used but depth_write is false. This "
+                    "may be unintended.");
       }
     }
 
-    // Color attachments
     if (node["attachments"])
       rhs.attachments = node["attachments"].as<std::vector<Attachment>>();
 
@@ -462,7 +470,7 @@ struct convert<PipelineBlueprint>
       else if (samples == "64x" || samples == "64")
         rhs.msaa_samples = VK_SAMPLE_COUNT_64_BIT;
       else {
-        assert(false && "Invalid sample count specified");
+        log_error("Invalid sample count specified: " + samples);
         return false;
       }
     }

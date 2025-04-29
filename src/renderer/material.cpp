@@ -227,7 +227,19 @@ auto
 Material::reload(const PipelineBlueprint& blueprint,
                  VkDescriptorSetLayout renderer_set_layout) -> void
 {
-  pipeline = rebuild_pipeline(blueprint, renderer_set_layout);
+  const auto new_hash = blueprint.hash();
+  if (new_hash != 0 && new_hash == pipeline_hash)
+    return;
+
+  auto rebuilt = rebuild_pipeline(blueprint, renderer_set_layout);
+  if (!rebuilt) {
+    std::cerr << "Failed to rebuild pipeline for material\n";
+    return;
+  }
+
+  std::cout << "Rebuilt pipeline for material\n";
+  pipeline = std::move(rebuilt);
+  pipeline_hash = new_hash;
 }
 
 Material::Material(

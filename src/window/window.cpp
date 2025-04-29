@@ -102,24 +102,20 @@ Window::~Window()
 }
 
 auto
-Window::destroy(const Core::Instance& instance) -> void
+Window::destroy_surface(Badge<DynamicRendering::App>,
+                        const Core::Instance& instance) -> void
 {
   if (vk_surface != VK_NULL_HANDLE)
     vkb::destroy_surface(instance.vkb(), vk_surface);
-  cleanup();
 }
 
 auto
 Window::cleanup() -> void
 {
-  if (destroyed)
-    return;
-
   if (glfw_window)
     glfwDestroyWindow(glfw_window);
 
   glfwTerminate();
-  destroyed = true;
 
   Input::destroy();
 }
