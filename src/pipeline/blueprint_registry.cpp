@@ -43,8 +43,7 @@ BlueprintRegistry::update(const std::filesystem::path& path)
 
   PipelineBlueprint blueprint;
   if (load_one(path, blueprint)) {
-    const auto filename_stem = path.stem().string();
-    blueprints[filename_stem] = std::move(blueprint);
+    blueprints[blueprint.name] = std::move(blueprint);
     return {};
   } else {
     return std::unexpected<PipelineLoadError>{ { "Failed to load blueprint" } };

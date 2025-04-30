@@ -228,8 +228,10 @@ Material::reload(const PipelineBlueprint& blueprint,
                  VkDescriptorSetLayout renderer_set_layout) -> void
 {
   const auto new_hash = blueprint.hash();
-  if (new_hash != 0 && new_hash == pipeline_hash)
+  if (new_hash != 0 && new_hash == pipeline_hash) {
+    std::cout << "Pipeline already up to date\n";
     return;
+  }
 
   auto rebuilt = rebuild_pipeline(blueprint, renderer_set_layout);
   if (!rebuilt) {

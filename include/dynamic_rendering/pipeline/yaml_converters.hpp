@@ -186,11 +186,11 @@ std::expected<VkCompareOp, ConversionError> inline string_to_compare_op(
 {
   if (cmp == "less")
     return VK_COMPARE_OP_LESS;
-  else if (cmp == "less_equal")
+  else if (cmp == "less_equal" || cmp == "less_or_equal")
     return VK_COMPARE_OP_LESS_OR_EQUAL;
   else if (cmp == "greater")
     return VK_COMPARE_OP_GREATER;
-  else if (cmp == "greater_equal")
+  else if (cmp == "greater_equal" || cmp == "greater_or_equal")
     return VK_COMPARE_OP_GREATER_OR_EQUAL;
   else if (cmp == "always")
     return VK_COMPARE_OP_ALWAYS;

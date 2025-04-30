@@ -5,6 +5,10 @@ shaders:
   - stage: fragment
     empty: true
 
+rasterization:
+  cull_mode: back
+  winding: cw
+
 depth_stencil:
   depth_test: true
   depth_write: true

@@ -246,10 +246,11 @@ App::interface() -> void
     layer->on_interface();
 
   constexpr auto flags =
-    ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
-    ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
-    ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoCollapse |
-    ImGuiWindowFlags_NoBackground;
+    (ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+     ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
+     ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoCollapse |
+     ImGuiWindowFlags_NoBackground) &
+    0;
 
   if (ImGui::Begin("Renderer Output", nullptr, flags)) {
     auto size = ImGui::GetWindowSize();

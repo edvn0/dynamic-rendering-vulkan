@@ -7,7 +7,7 @@ shaders:
 
 rasterization:
   cull_mode: back
-  winding: ccw
+  winding: cw
 
 depth_stencil:
   depth_test: true
