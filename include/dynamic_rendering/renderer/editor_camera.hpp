@@ -73,7 +73,7 @@ public:
       // Calculate a stable right vector for movement
       glm::vec3 world_up_vector(0.0f, 1.0f, 0.0f); // +Y is up in Vulkan
       glm::vec3 movement_right =
-        glm::normalize(glm::cross(direction, world_up_vector));
+        glm::normalize(glm::cross(world_up_vector, direction));
 
       // Handle keyboard movement
       if (Input::key_pressed(KeyCode::Q))

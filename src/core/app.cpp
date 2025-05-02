@@ -362,7 +362,7 @@ parse_command_line_args(int argc, char** argv)
   auto cli =
     lyra::opt(args.title, "title")["--title"]("Window title") |
     lyra::opt(args.working_directory,
-              "dir")["--working-dir"]("Working directory") |
+              "dir")["--working-dir"]["--wd"]("Working directory") |
     lyra::opt(args.window_size.width, "width")["--width"]("Window width") |
     lyra::opt(args.window_size.height, "height")["--height"]("Window height");
 
