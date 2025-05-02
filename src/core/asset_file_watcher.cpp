@@ -100,7 +100,7 @@ AssetFileWatcher::collect_dirty() -> string_hash_set
 
 void
 AssetFileWatcher::handleFileAction(efsw::WatchID /*watchid*/,
-                                   const std::string&,
+                                   const std::string& directory,
                                    const std::string& filename,
                                    efsw::Action action,
                                    std::string /*old_filename*/)
@@ -110,5 +110,6 @@ AssetFileWatcher::handleFileAction(efsw::WatchID /*watchid*/,
   }
 
   std::unique_lock lock(dirty_mutex);
-  pending_changes[filename] = std::chrono::steady_clock::now();
+  auto full_path = std::filesystem::path{ directory } / filename;
+  pending_changes[full_path.string()] = std::chrono::steady_clock::now();
 }

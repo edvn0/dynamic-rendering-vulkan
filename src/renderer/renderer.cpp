@@ -423,7 +423,7 @@ Renderer::Renderer(const Device& dev,
 }
 
 auto
-Renderer::get_renderer_descriptor_set_layout(Badge<DynamicRendering::App>) const
+Renderer::get_renderer_descriptor_set_layout(Badge<AssetReloader>) const
   -> VkDescriptorSetLayout
 {
   return renderer_descriptor_set_layout;

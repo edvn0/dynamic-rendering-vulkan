@@ -1,4 +1,3 @@
-name: compute_culling
 shaders:
   - stage: compute
     path: compute_culling.comp

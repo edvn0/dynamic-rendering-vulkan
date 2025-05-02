@@ -1,4 +1,3 @@
-name: line
 shaders:
   - stage: vertex
     path: line.vert

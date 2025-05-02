@@ -20,11 +20,10 @@ private:
   float rotation_speed = 90.f;
   glm::vec2 bounds{};
 
-  std::unique_ptr<GPUBuffer> quad_vertex_buffer;
+  std::unique_ptr<VertexBuffer> quad_vertex_buffer;
   std::unique_ptr<IndexBuffer> quad_index_buffer;
-  std::unique_ptr<GPUBuffer> cube_vertex_buffer;
+  std::unique_ptr<VertexBuffer> cube_vertex_buffer;
   std::unique_ptr<IndexBuffer> cube_index_buffer;
-  std::unique_ptr<GPUBuffer> axes_vertex_buffer;
 
   glm::vec3 light_position{ 0.f, 0.f, 1.f };
   // Orange color

@@ -1,4 +1,3 @@
-name: gizmo
 shaders:
   - stage: vertex
     path: gizmo.vert

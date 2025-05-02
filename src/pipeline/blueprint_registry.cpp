@@ -93,6 +93,8 @@ BlueprintRegistry::load_one(const std::filesystem::path& file_path,
       !YAML::convert<PipelineBlueprint>::decode(node, output_blueprint)) {
     return false;
   }
+
   output_blueprint.full_path = file_path;
+  output_blueprint.name = file_path.stem().string();
   return true;
 }

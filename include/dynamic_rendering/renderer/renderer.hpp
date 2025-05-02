@@ -76,7 +76,7 @@ static_assert(sizeof(LineInstanceData) == 32,
 
 struct DrawCommand
 {
-  GPUBuffer* vertex_buffer;
+  VertexBuffer* vertex_buffer;
   IndexBuffer* index_buffer;
   Material* override_material{ nullptr };
   bool casts_shadows{ true };
@@ -88,7 +88,7 @@ struct DrawCommandHasher
 {
   auto operator()(const DrawCommand& dc) const -> std::size_t
   {
-    std::size_t h1 = std::hash<GPUBuffer*>{}(dc.vertex_buffer);
+    std::size_t h1 = std::hash<VertexBuffer*>{}(dc.vertex_buffer);
     std::size_t h2 = std::hash<IndexBuffer*>{}(dc.index_buffer);
     std::size_t h3 = std::hash<Material*>{}(dc.override_material);
     std::size_t h4 = std::hash<bool>{}(dc.casts_shadows);
@@ -140,7 +140,7 @@ public:
         return nullptr;
     }
   }
-  auto get_renderer_descriptor_set_layout(Badge<DynamicRendering::App>) const
+  auto get_renderer_descriptor_set_layout(Badge<AssetReloader>) const
     -> VkDescriptorSetLayout;
 
 private:

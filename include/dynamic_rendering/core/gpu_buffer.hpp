@@ -14,6 +14,46 @@ concept AdmitsGPUBuffer =
 
 class GPUBuffer;
 
+#define MAKE_GPU_BUFFER(buffer_member)                                         \
+  auto get_buffer() const -> const GPUBuffer&                                  \
+  {                                                                            \
+    return buffer_member;                                                      \
+  }                                                                            \
+  template<AdmitsGPUBuffer T>                                                  \
+  auto upload(std::span<const T> data) -> void                                 \
+  {                                                                            \
+    buffer_member.upload(data);                                                \
+  }                                                                            \
+  template<AdmitsGPUBuffer T, std::size_t N = std::dynamic_extent>             \
+  auto upload(std::span<T, N> data) -> void                                    \
+  {                                                                            \
+    buffer_member.upload(data);                                                \
+  }                                                                            \
+  template<AdmitsGPUBuffer T, std::size_t N = std::dynamic_extent>             \
+  auto upload_with_offset(std::span<const T, N> data, std::size_t offset)      \
+    -> void                                                                    \
+  {                                                                            \
+    buffer_member.upload_with_offset(data, offset);                            \
+  }                                                                            \
+  template<AdmitsGPUBuffer T, std::size_t N = std::dynamic_extent>             \
+  auto upload_with_offset(std::span<T, N> data, std::size_t offset) -> void    \
+  {                                                                            \
+    buffer_member.upload_with_offset(data, offset);                            \
+  }                                                                            \
+  template<AdmitsGPUBuffer T>                                                  \
+  auto read_into_with_offset(T& user_allocated, std::size_t offset) -> bool    \
+  {                                                                            \
+    return buffer_member.read_into_with_offset(user_allocated, offset);        \
+  }                                                                            \
+  auto get_usage_flags() const -> VkBufferUsageFlags                           \
+  {                                                                            \
+    return buffer_member.get_usage_flags();                                    \
+  }                                                                            \
+  auto get() const -> const VkBuffer&                                          \
+  {                                                                            \
+    return buffer_member.get();                                                \
+  }
+
 auto
 upload_to_device_buffer(const Device& device,
                         GPUBuffer& target_buffer,
@@ -180,4 +220,23 @@ private:
   GPUBuffer buffer;
   std::size_t count{};
   VkIndexType index_type;
+};
+
+class VertexBuffer
+{
+public:
+  VertexBuffer(const Device& device, bool mapped_on_create = false)
+    : buffer(device,
+             VK_BUFFER_USAGE_VERTEX_BUFFER_BIT |
+               VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+             mapped_on_create)
+  {
+  }
+
+  ~VertexBuffer() = default;
+
+  MAKE_GPU_BUFFER(buffer)
+
+private:
+  GPUBuffer buffer;
 };

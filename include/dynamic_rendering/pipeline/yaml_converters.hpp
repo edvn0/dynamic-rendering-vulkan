@@ -354,7 +354,6 @@ struct convert<PipelineBlueprint>
 {
   static bool decode(const Node& node, PipelineBlueprint& rhs)
   {
-    rhs.name = node["name"].as<std::string>();
     rhs.shader_stages = node["shaders"].as<std::vector<ShaderStageInfo>>();
 
     if (node["vertex_input"]) {

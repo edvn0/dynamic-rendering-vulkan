@@ -22,4 +22,5 @@ private:
   BlueprintRegistry& blueprint_registry;
   Renderer& renderer;
   string_hash_map<std::unordered_set<std::string>> shader_to_pipeline;
+  string_hash_map<std::string> filename_to_material;
 };

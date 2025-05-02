@@ -20,7 +20,6 @@ struct Vertex
 
 auto
 generate_cube_counter_clockwise(const Device& device)
-  -> std::tuple<std::unique_ptr<GPUBuffer>, std::unique_ptr<IndexBuffer>>
 {
 
   static constexpr std::array<Vertex, 24> vertices = { {
@@ -55,23 +54,19 @@ generate_cube_counter_clockwise(const Device& device)
     12, 13, 14, 14, 15, 12, 16, 17, 18, 18, 19, 16, 20, 21, 22, 22, 23, 20,
   };
 
-  auto vertex_buffer = std::make_unique<GPUBuffer>(
-    device, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, true);
-  vertex_buffer->upload(std::span(vertices.data(), vertices.size()));
+  auto vertex_buffer = std::make_unique<VertexBuffer>(device, false);
+  vertex_buffer->upload(std::span(vertices));
 
   auto index_buffer =
     std::make_unique<IndexBuffer>(device, VK_INDEX_TYPE_UINT32);
-  index_buffer->upload(std::span(indices.data(), indices.size()));
+  index_buffer->upload(std::span(indices));
 
-  return { std::move(vertex_buffer), std::move(index_buffer) };
+  return std::make_pair(std::move(vertex_buffer), std::move(index_buffer));
 }
 
 AppLayer::AppLayer(const Device& dev)
 {
-  quad_vertex_buffer = std::make_unique<GPUBuffer>(
-    dev,
-    VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-    true);
+  quad_vertex_buffer = std::make_unique<VertexBuffer>(dev, false);
 
   std::array<Vertex, 4> square_vertices = {
     Vertex{ { -0.5f, -0.5f, 0.f }, { 0.f, 0.f, 1.f }, { 0.f, 0.f } },
@@ -89,20 +84,6 @@ AppLayer::AppLayer(const Device& dev)
   cube_vertex_buffer = std::move(cube_vertex);
   cube_index_buffer = std::move(cube_index);
 
-  std::array<Vertex, 6> axes_vertices = {
-    Vertex{ { 0.f, 0.f, 0.f }, { 1.f, 0.f, 0.f }, { 0.f, 0.f } },
-    Vertex{ { 1.f, 0.f, 0.f }, { 1.f, 0.f, 0.f }, { 1.f, 0.f } },
-    Vertex{ { 0.f, 0.f, 0.f }, { 0.f, 1.f, 0.f }, { 0.f, 0.f } },
-    Vertex{ { 0.f, 1.f, 0.f }, { 0.f, 1.f, 0.f }, { 1.f, 0.f } },
-    Vertex{ { 0.f, 0.f, 0.f }, { 0.f, 0.f, 1.f }, { 0.f, 0.f } },
-    Vertex{ { 0.f, 0.f, 1.f }, { 0.f, 0.f, 1.f }, { 1.f, 0.f } },
-  };
-  axes_vertex_buffer = std::make_unique<GPUBuffer>(
-    dev,
-    VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-    true);
-  axes_vertex_buffer->upload(std::span(axes_vertices));
-
   generate_scene();
 }
 
@@ -113,7 +94,6 @@ AppLayer::on_destroy() -> void
   quad_index_buffer.reset();
   cube_vertex_buffer.reset();
   cube_index_buffer.reset();
-  axes_vertex_buffer.reset();
 }
 
 auto
@@ -162,7 +142,7 @@ AppLayer::on_update(double ts) -> void
     transforms.begin(),
     transforms.end(),
     [root = transforms.data(), angle = angle_xyz](glm::mat4& mat) {
-      const std::size_t i = &mat - root;
+      const std::ptrdiff_t i = std::distance(root, &mat);
       const auto x = static_cast<std::int32_t>(i % grid_size_x);
       const auto y = static_cast<std::int32_t>((i / grid_size_x) % grid_size_y);
       const auto z = static_cast<std::int32_t>(i / (grid_size_x * grid_size_y));

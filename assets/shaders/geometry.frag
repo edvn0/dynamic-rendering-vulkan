@@ -8,7 +8,7 @@ layout(location = 2) in vec4 v_light_space_pos;
 
 layout(location = 0) out vec4 frag_colour;
 
-#define AMBIENT_LIGHT 0.2
+#define AMBIENT_LIGHT 0.1
 
 void main()
 {

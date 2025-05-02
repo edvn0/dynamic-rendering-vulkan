@@ -12,6 +12,11 @@ AssetReloader::AssetReloader(BlueprintRegistry& registry, Renderer& renderer)
   : blueprint_registry(registry)
   , renderer(renderer)
 {
+  // Seed the shader_to_pipeline map with the current blueprints
+  for (const auto& [name, blueprint] : blueprint_registry.get_all()) {
+    track_shader_dependencies(blueprint);
+  }
+
   blueprint_registry.register_callback(
     [this](BlueprintRegistry::BlueprintChangeType,
            const PipelineBlueprint& blueprint) {
@@ -22,6 +27,7 @@ AssetReloader::AssetReloader(BlueprintRegistry& registry, Renderer& renderer)
 void
 AssetReloader::track_shader_dependencies(const PipelineBlueprint& blueprint)
 {
+  filename_to_material[blueprint.full_path.string()] = blueprint.name;
   for (const auto& stage : blueprint.shader_stages) {
     if (stage.empty)
       continue;
@@ -60,6 +66,20 @@ AssetReloader::handle_dirty_files(const string_hash_set& dirty_files)
     if (auto result = blueprint_registry.update(blueprint_path);
         !result.has_value()) {
       std::cerr << "Failed to reload blueprint: " << filename << std::endl;
+    }
+
+    std::cout << "Reloaded blueprint: " << filename << std::endl;
+
+    const auto& found_and_maybe_updated_blueprint =
+      blueprint_registry.get(filename_to_material.at(blueprint_path.string()));
+    auto* mat =
+      renderer.get_material_by_name(found_and_maybe_updated_blueprint.name);
+    if (mat) {
+      mat->reload(found_and_maybe_updated_blueprint,
+                  renderer.get_renderer_descriptor_set_layout({}));
+    } else {
+      std::cerr << "Failed to find material for blueprint: " << filename
+                << std::endl;
     }
   }
 }
