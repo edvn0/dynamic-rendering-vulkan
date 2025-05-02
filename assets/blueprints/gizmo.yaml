@@ -1,9 +1,9 @@
 name: gizmo
 shaders:
   - stage: vertex
-    path: gizmo.vert.spv
+    path: gizmo.vert
   - stage: fragment
-    path: gizmo.frag.spv
+    path: line.frag
 
 rasterization:
   cull_mode: none

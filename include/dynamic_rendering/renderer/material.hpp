@@ -16,13 +16,30 @@
 
 #include <vulkan/vulkan.h>
 
+struct MaterialError
+{
+  std::string message;
+
+  enum class Code : std::uint8_t
+  {
+    pipeline_error,
+    descriptor_allocation_failed,
+    descriptor_layout_failed,
+    pool_creation_failed,
+    unknown_error
+  };
+  Code code{ Code::unknown_error };
+
+  std::optional<PipelineError> inner_pipeline_error;
+};
+
 class Material
 {
 public:
   static auto create(const Device& device,
                      const PipelineBlueprint& blueprint,
                      VkDescriptorSetLayout renderer_set_layout)
-    -> std::unique_ptr<Material>;
+    -> std::expected<std::unique_ptr<Material>, MaterialError>;
 
   ~Material();
 
@@ -70,5 +87,5 @@ private:
     nullptr
   };
   auto rebuild_pipeline(const PipelineBlueprint&, VkDescriptorSetLayout)
-    -> std::unique_ptr<CompiledPipeline>;
+    -> std::expected<std::unique_ptr<CompiledPipeline>, MaterialError>;
 };

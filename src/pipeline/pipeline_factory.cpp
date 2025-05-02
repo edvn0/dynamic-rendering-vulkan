@@ -9,17 +9,18 @@
 
 static auto to_vk_stage = [](ShaderStage stage) {
   switch (stage) {
-    case ShaderStage::vertex:
+    using enum ShaderStage;
+    case vertex:
       return VK_SHADER_STAGE_VERTEX_BIT;
-    case ShaderStage::fragment:
+    case fragment:
       return VK_SHADER_STAGE_FRAGMENT_BIT;
-    case ShaderStage::compute:
+    case compute:
       return VK_SHADER_STAGE_COMPUTE_BIT;
-    case ShaderStage::raygen:
+    case raygen:
       return VK_SHADER_STAGE_RAYGEN_BIT_KHR;
-    case ShaderStage::closest_hit:
+    case closest_hit:
       return VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
-    case ShaderStage::miss:
+    case miss:
       return VK_SHADER_STAGE_MISS_BIT_KHR;
     default:
       assert(false && "Unsupported shader stage");
@@ -36,12 +37,11 @@ auto
 PipelineFactory::create_pipeline_layout(
   const PipelineBlueprint&,
   std::span<const VkDescriptorSetLayout> layouts,
-  std::span<const VkPushConstantRange> ranges) const -> VkPipelineLayout
+  std::span<const VkPushConstantRange> ranges) const
+  -> std::expected<VkPipelineLayout, PipelineError>
 {
   VkPipelineLayoutCreateInfo layout_info{
     .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
-    .pNext = nullptr,
-    .flags = 0,
     .setLayoutCount = static_cast<std::uint32_t>(layouts.size()),
     .pSetLayouts = layouts.data(),
     .pushConstantRangeCount = static_cast<std::uint32_t>(ranges.size()),
@@ -49,17 +49,28 @@ PipelineFactory::create_pipeline_layout(
   };
 
   VkPipelineLayout layout{};
-  vkCreatePipelineLayout(device->get_device(), &layout_info, nullptr, &layout);
+  if (vkCreatePipelineLayout(
+        device->get_device(), &layout_info, nullptr, &layout) != VK_SUCCESS)
+    return std::unexpected(PipelineError{
+      .message = "Failed to create pipeline layout",
+      .code = PipelineError::Code::pipeline_layout_creation_failed });
+
   return layout;
 }
 
 auto
 PipelineFactory::create_pipeline(const PipelineBlueprint& blueprint,
                                  const PipelineLayoutInfo& layout_info) const
-  -> std::unique_ptr<CompiledPipeline>
+  -> std::expected<std::unique_ptr<CompiledPipeline>, PipelineError>
 {
-  auto shader = Shader::create(*device, blueprint.shader_stages);
+  auto shader_result = Shader::create(*device, blueprint.shader_stages);
+  if (!shader_result) {
+    return std::unexpected(PipelineError{
+      .message = "Shader creation failed: " + shader_result.error().message,
+      .code = PipelineError::Code::pipeline_creation_failed });
+  }
 
+  auto shader = std::move(shader_result.value());
   std::vector<VkPipelineShaderStageCreateInfo> shader_infos;
   for (const auto& info : blueprint.shader_stages) {
     shader_infos.push_back({
@@ -209,7 +220,7 @@ PipelineFactory::create_pipeline(const PipelineBlueprint& blueprint,
     .sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
     .pNext = nullptr,
     .flags = 0,
-    .rasterizationSamples = static_cast<VkSampleCountFlagBits>(sample_count),
+    .rasterizationSamples = sample_count,
     .sampleShadingEnable = VK_FALSE,
     .minSampleShading = 0.0f,
     .pSampleMask = nullptr,
@@ -244,9 +255,12 @@ PipelineFactory::create_pipeline(const PipelineBlueprint& blueprint,
   layouts.insert(layouts.end(),
                  layout_info.material_sets.begin(),
                  layout_info.material_sets.end());
-  VkPipelineLayout layout =
+  auto layout_result =
     create_pipeline_layout(blueprint, layouts, layout_info.push_constants);
+  if (!layout_result)
+    return std::unexpected(layout_result.error());
 
+  auto layout = layout_result.value();
   VkGraphicsPipelineCreateInfo pipeline_info{
     .sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
     .pNext = &rendering_info,
@@ -269,15 +283,16 @@ PipelineFactory::create_pipeline(const PipelineBlueprint& blueprint,
     .basePipelineIndex = -1,
   };
 
-  VkPipeline pipeline;
+  VkPipeline pipeline{};
   if (vkCreateGraphicsPipelines(device->get_device(),
                                 VK_NULL_HANDLE,
                                 1,
                                 &pipeline_info,
                                 nullptr,
                                 &pipeline) != VK_SUCCESS) {
-    std::cerr << "What" << std::endl;
-    assert(false && "Could not create pipeline");
+    return std::unexpected(
+      PipelineError{ .message = "Failed to create graphics pipeline",
+                     .code = PipelineError::Code::pipeline_creation_failed });
   }
 
   return std::make_unique<CompiledPipeline>(pipeline,

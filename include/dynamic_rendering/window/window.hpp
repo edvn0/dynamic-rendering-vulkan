@@ -5,6 +5,7 @@
 #include <vulkan/vulkan.h>
 
 #include "core/event_system.hpp"
+#include "core/extent.hpp"
 #include "core/forward.hpp"
 #include "core/util.hpp"
 
@@ -13,10 +14,18 @@ extern "C"
   struct GLFWwindow;
 }
 
+struct WindowConfiguration
+{
+  std::string title{ "Dynamic Rendering" };
+  Extent2D size{ 1280, 720 };
+  bool resizable{ true };
+  bool decorated{ true };
+  bool fullscreen{ false };
+};
+
 class Window
 {
 public:
-  Window();
   ~Window();
 
   auto create_surface(const Core::Instance&) -> void;
@@ -35,6 +44,8 @@ public:
     -> void;
 
   auto set_event_callback(std::function<void(Event&)> callback) -> void;
+  static auto create(const WindowConfiguration& config)
+    -> std::unique_ptr<Window>;
 
 private:
   GLFWwindow* glfw_window{ nullptr };
@@ -42,6 +53,7 @@ private:
   struct WindowData;
   std::unique_ptr<WindowData> user_data;
 
+  Window(const WindowConfiguration&);
   auto cleanup() -> void;
   auto hookup_events() -> void;
 };

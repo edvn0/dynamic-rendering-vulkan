@@ -1,7 +1,7 @@
 name: z_prepass
 shaders:
   - stage: vertex
-    path: z_prepass.vert.spv
+    path: z_prepass.vert
   - stage: fragment
     empty: true
 

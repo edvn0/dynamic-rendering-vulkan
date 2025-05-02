@@ -7,12 +7,6 @@
 #include <vector>
 #include <vulkan/vulkan.h>
 
-struct ShaderPaths
-{
-  std::string vertex;
-  std::string fragment;
-};
-
 struct VertexBinding
 {
   std::uint32_t binding;

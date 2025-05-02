@@ -7,7 +7,7 @@ layout(location = 1) in float instance_width;
 layout(location = 2) in vec3 instance_end;
 layout(location = 3) in uint instance_packed_color;
 
-layout(location = 0) out vec4 frag_color;
+layout(location = 0) out vec3 frag_color;
 
 void main()
 {
@@ -17,16 +17,24 @@ void main()
 
   // pick start or end per instance vertex index
   bool is_end = bool((gl_VertexIndex >> 1) & 1);
+  float sign = (gl_VertexIndex & 1) == 0 ? 1.0 : -1.0;
   vec3 center = mix(instance_start, instance_end, is_end ? 1.0 : 0.0);
 
   // screen‐aligned quad offset
   vec3 line_dir = normalize(instance_end - instance_start);
-  vec3 side = normalize(cross(cam_up, line_dir));
-  float sign = (gl_VertexIndex & 1) == 0 ? 1.0 : -1.0;
+  vec3 side = cross(line_dir, cam_up);
+  if (length(side) < 0.001)
+  {
+    side = cam_right;
+  }
+  else
+  {
+    side = normalize(side);
+  }
   vec3 offset = side * instance_width * 0.5 * sign;
 
   vec3 position = center + offset;
   gl_Position = camera_ubo.vp * vec4(position, 1.0);
 
-  frag_color = unpackUnorm4x8(instance_packed_color);
+  frag_color = unpackUnorm4x8(instance_packed_color).rgb;
 }

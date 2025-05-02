@@ -1,9 +1,9 @@
 name: line
 shaders:
   - stage: vertex
-    path: line.vert.spv
+    path: line.vert
   - stage: fragment
-    path: line.frag.spv
+    path: line.frag
 
 rasterization:
   cull_mode: none
@@ -11,10 +11,10 @@ rasterization:
 topology: triangle-strip
 
 depth_stencil:
-  depth_test: true
+  depth_test: false
   depth_write: false
   format: d32_sfloat
-  compare_op: less
+  compare_op: always
 
 attachments:
   - format: r32g32b32a32_sfloat
@@ -25,21 +25,21 @@ vertex_input:
   bindings:
     - binding: 0
       stride: 32
-      input_rate: instance # <--- CHANGED
+      input_rate: instance
   attributes:
     - location: 0
       binding: 0
       format: vec3
-      offset: 0 # start
+      offset: 0
     - location: 1
       binding: 0
       format: r32_sfloat
-      offset: 12 # width
+      offset: 12
     - location: 2
       binding: 0
       format: vec3
-      offset: 16 # end
+      offset: 16
     - location: 3
       binding: 0
       format: r32_uint
-      offset: 28 # packed_color
+      offset: 28

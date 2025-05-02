@@ -17,16 +17,37 @@ struct PipelineLoadError
 class BlueprintRegistry
 {
 public:
+  enum class BlueprintChangeType : std::uint8_t
+  {
+    Added,
+    Removed,
+    Updated,
+  };
+
+  using BlueprintChangeCallback =
+    std::function<void(BlueprintChangeType, const PipelineBlueprint&)>;
+
   auto load_from_directory(const std::filesystem::path&) -> void;
   auto get(const std::string&) const -> const PipelineBlueprint&;
   [[nodiscard]] auto update(const std::filesystem::path&)
     -> std::expected<void, PipelineLoadError>;
   auto get_all() const -> const auto& { return blueprints; }
+  auto register_callback(BlueprintChangeCallback callback) -> void
+  {
+    callbacks.push_back(std::move(callback));
+  }
 
 private:
-  std::
-    unordered_map<std::string, PipelineBlueprint, string_hash, std::equal_to<>>
-      blueprints;
-
+  string_hash_map<PipelineBlueprint> blueprints;
+  string_hash_map<std::unordered_set<std::string>> shader_to_pipeline;
   auto load_one(const std::filesystem::path&, PipelineBlueprint&) const -> bool;
+
+  std::vector<BlueprintChangeCallback> callbacks;
+  auto notify_callbacks(BlueprintChangeType type,
+                        const PipelineBlueprint& blueprint) const -> void
+  {
+    for (const auto& callback : callbacks) {
+      callback(type, blueprint);
+    }
+  }
 };

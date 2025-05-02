@@ -29,7 +29,8 @@ struct ShadowBuffer
   glm::mat4 light_vp;
   glm::vec4 light_position;
   glm::vec4 light_color;
-  std::array<glm::vec4, 2> padding{};
+  glm::vec4 ambient_color{ 0.1F, 0.1F, 0.1F, 1.0F };
+  std::array<glm::vec4, 1> padding{};
 };
 
 template<typename T, std::size_t N = image_count>
@@ -257,21 +258,36 @@ Renderer::Renderer(const Device& dev,
                       .sample_count = sample_count,
                       .allow_in_ui = false,
                     });
-    geometry_material =
-      Material::create(*device,
-                       blueprint_registry->get("main_geometry"),
-                       renderer_descriptor_set_layout);
+
+    auto result = Material::create(*device,
+                                   blueprint_registry->get("main_geometry"),
+                                   renderer_descriptor_set_layout);
+    if (result.has_value()) {
+      geometry_material = std::move(result.value());
+    } else {
+      assert(false && "Failed to create main geometry material.");
+    }
   }
 
   {
-    z_prepass_material = Material::create(*device,
-                                          blueprint_registry->get("z_prepass"),
-                                          renderer_descriptor_set_layout);
+    auto result = Material::create(*device,
+                                   blueprint_registry->get("z_prepass"),
+                                   renderer_descriptor_set_layout);
+    if (result.has_value()) {
+      z_prepass_material = std::move(result.value());
+    } else {
+      assert(false && "Failed to create z prepass material.");
+    }
   }
 
   {
-    line_material = Material::create(
+    auto result = Material::create(
       *device, blueprint_registry->get("line"), renderer_descriptor_set_layout);
+    if (result.has_value()) {
+      line_material = std::move(result.value());
+    } else {
+      assert(false && "Failed to create line material.");
+    }
 
     line_instance_buffer = std::make_unique<GPUBuffer>(
       *device, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, true);
@@ -299,9 +315,14 @@ Renderer::Renderer(const Device& dev,
   }
 
   {
-    gizmo_material = Material::create(*device,
-                                      blueprint_registry->get("gizmo"),
-                                      renderer_descriptor_set_layout);
+    auto result = Material::create(*device,
+                                   blueprint_registry->get("gizmo"),
+                                   renderer_descriptor_set_layout);
+    if (result.has_value()) {
+      gizmo_material = std::move(result.value());
+    } else {
+      assert(false && "Failed to create gizmo material.");
+    }
 
     {
       struct GizmoVertex
@@ -353,16 +374,26 @@ Renderer::Renderer(const Device& dev,
                       .aspect = VK_IMAGE_ASPECT_DEPTH_BIT,
                     });
 
-    shadow_material = Material::create(*device,
-                                       blueprint_registry->get("shadow"),
-                                       renderer_descriptor_set_layout);
+    auto result = Material::create(*device,
+                                   blueprint_registry->get("shadow"),
+                                   renderer_descriptor_set_layout);
+    if (result.has_value()) {
+      shadow_material = std::move(result.value());
+    } else {
+      assert(false && "Failed to create shadow material.");
+    }
   }
 
   {
-    cull_instances_compute_material =
-      Material::create(*device,
-                       blueprint_registry->get("compute_culling"),
-                       renderer_descriptor_set_layout);
+    auto result = Material::create(*device,
+                                   blueprint_registry->get("compute_culling"),
+                                   renderer_descriptor_set_layout);
+
+    if (result.has_value()) {
+      cull_instances_compute_material = std::move(result.value());
+    } else {
+      assert(false && "Failed to create compute culling material.");
+    }
 
     culled_instance_count_buffer = std::make_unique<GPUBuffer>(
       *device, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, true);
@@ -427,10 +458,10 @@ Renderer::submit_lines(const glm::vec3& start,
                        const glm::vec4& color) -> void
 {
   std::uint32_t packed_color =
-    (static_cast<std::uint32_t>(color.r * 255.0f) << 24) |
-    (static_cast<std::uint32_t>(color.g * 255.0f) << 16) |
-    (static_cast<std::uint32_t>(color.b * 255.0f) << 8) |
-    (static_cast<std::uint32_t>(color.a * 255.0f) << 0);
+    (static_cast<std::uint32_t>(color.a * 255.0f) << 24) |
+    (static_cast<std::uint32_t>(color.b * 255.0f) << 16) |
+    (static_cast<std::uint32_t>(color.g * 255.0f) << 8) |
+    (static_cast<std::uint32_t>(color.r * 255.0f) << 0);
 
   line_instances.push_back(LineInstanceData{
     .start = start,
@@ -570,7 +601,8 @@ Renderer::update_shadow_buffers(std::uint32_t frame_index) -> void
   ShadowBuffer shadow_data{
     .light_vp = vp,
     .light_position = glm::vec4{ light_environment.light_position, 1.0F },
-    .light_color = glm::vec4{ light_environment.light_color, 1.0F },
+    .light_color = light_environment.light_color,
+    .ambient_color = light_environment.ambient_color,
   };
 
   shadow_camera_buffer->upload_with_offset(std::span{ &shadow_data, 1 },

@@ -7,6 +7,7 @@
 #include <stdexcept>
 
 #include "core/device.hpp"
+#include "core/fs.hpp"
 
 namespace {
 
@@ -39,21 +40,29 @@ constexpr std::array<unsigned char, 180> empty_frag_spv = {
 };
 
 auto
-read_spirv_file(const std::string& path) -> std::vector<std::uint32_t>
+read_spirv_file(const std::filesystem::path& path)
+  -> std::expected<std::vector<std::uint32_t>, ShaderError>
 {
   std::ifstream file(path, std::ios::binary | std::ios::ate);
   if (!file) {
-    assert(!file.fail() && "Failed to open SPIR-V file");
+    ShaderError error;
+    error.message = "Failed to open SPIR-V file: " + path.string();
+    error.code = ShaderError::Code::file_not_found;
+    return std::unexpected(error);
   }
 
   const auto size = static_cast<std::size_t>(file.tellg());
   if (size % 4 != 0) {
-    assert(size % 4 == 0 && "SPIR-V file size is not a multiple of 4");
+    ShaderError error;
+    error.message = "SPIR-V file size not multiple of 4: " + path.string();
+    error.code = ShaderError::Code::invalid_spirv_format;
+    return std::unexpected(error);
   }
 
   std::vector<std::uint32_t> buffer(size / 4);
   file.seekg(0);
   file.read(reinterpret_cast<char*>(buffer.data()), size);
+
   return buffer;
 }
 
@@ -61,31 +70,46 @@ read_spirv_file(const std::string& path) -> std::vector<std::uint32_t>
 
 auto
 Shader::load_binary(const std::string_view file_path,
-                    std::vector<std::uint32_t>& output) -> bool
+                    std::vector<std::uint32_t>& output)
+  -> std::expected<void, ShaderError>
 {
-  namespace fs = std::filesystem;
-  auto base_path = fs::current_path() / fs::path("assets") /
-                   fs::path("shaders") / fs::path(file_path);
+  std::filesystem::path path = file_path;
 
-  auto spirv = read_spirv_file(base_path.string());
-  output.resize(spirv.size());
-  std::memcpy(
-    output.data(), spirv.data(), spirv.size() * sizeof(std::uint32_t));
-  return true;
+  if (path.extension() != ".spv") {
+    path += ".spv";
+  }
+
+  auto base_path =
+    std::filesystem::current_path() / "assets" / "shaders" / path;
+  auto result = read_spirv_file(base_path);
+  if (!result)
+    return std::unexpected(result.error());
+
+  output = std::move(*result);
+  return {};
 }
 
 auto
 Shader::load_binary(const std::string_view file_path,
-                    std::vector<std::uint8_t>& output) -> bool
+                    std::vector<std::uint8_t>& output)
+  -> std::expected<void, ShaderError>
 {
-  namespace fs = std::filesystem;
-  auto base_path = fs::current_path() / fs::path("assets") /
-                   fs::path("shaders") / fs::path(file_path);
+  std::filesystem::path path = file_path;
 
-  auto spirv = read_spirv_file(base_path.string());
+  if (path.extension() != ".spv") {
+    path += ".spv";
+  }
+
+  auto base_path =
+    std::filesystem::current_path() / "assets" / "shaders" / path;
+  auto result = read_spirv_file(base_path);
+  if (!result)
+    return std::unexpected(result.error());
+
+  const auto& spirv = *result;
   output.resize(spirv.size() * sizeof(std::uint32_t));
   std::memcpy(output.data(), spirv.data(), output.size());
-  return true;
+  return {};
 }
 
 Shader::Shader(const Device& dev)
@@ -101,23 +125,35 @@ Shader::~Shader()
 
 auto
 Shader::create(const Device& device, const std::vector<ShaderStageInfo>& stages)
-  -> std::unique_ptr<Shader>
+  -> std::expected<std::unique_ptr<Shader>, ShaderError>
 {
   auto shader = std::unique_ptr<Shader>(new Shader(device));
-  for (const auto& info : stages)
-    shader->load_stage(info);
+  for (const auto& info : stages) {
+    if (auto err = shader->load_stage(info); !err.has_value())
+      return std::unexpected(err.error());
+  }
   return shader;
 }
 
 auto
-Shader::load_stage(const ShaderStageInfo& info) -> void
+Shader::load_stage(const ShaderStageInfo& info)
+  -> std::expected<void, ShaderError>
 {
-  std::vector<std::uint32_t> spirv{};
+  std::vector<std::uint32_t> spirv;
+
   if (!info.empty) {
-    namespace fs = std::filesystem;
-    auto base_path = fs::current_path() / fs::path("assets") /
-                     fs::path("shaders") / fs::path(info.filepath);
-    spirv = read_spirv_file(base_path.string());
+    // FIXME: We append .spv here. When we support runtime shader compilation,
+    // we won't need this.
+    auto shader_path = assets_path() / "shaders" / (info.filepath + ".spv");
+    auto abs_path = std::filesystem::canonical(shader_path);
+    auto result = read_spirv_file(abs_path);
+    if (!result) {
+      ShaderError error;
+      error.message = "Failed to load shader stage: " + info.filepath;
+      error.code = ShaderError::Code::file_not_found;
+      return std::unexpected(error);
+    }
+    spirv = std::move(*result);
   } else {
     spirv.resize(empty_frag_spv.size() / sizeof(std::uint32_t));
     std::memcpy(spirv.data(), empty_frag_spv.data(), empty_frag_spv.size());
@@ -134,11 +170,16 @@ Shader::load_stage(const ShaderStageInfo& info) -> void
   VkShaderModule shader_module{};
   if (vkCreateShaderModule(
         device->get_device(), &create_info, nullptr, &shader_module) !=
-      VK_SUCCESS)
-    assert(false && "Failed to create shader module");
+      VK_SUCCESS) {
+    ShaderError error;
+    error.message = "Failed to create shader module: " + info.filepath;
+    error.code = ShaderError::Code::invalid_shader_module;
+    return std::unexpected(error);
+  }
 
   spirv_cache_[info.stage] = std::move(spirv);
   modules_[info.stage] = shader_module;
+  return {};
 }
 
 auto

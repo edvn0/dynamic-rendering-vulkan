@@ -21,10 +21,12 @@ class Swapchain;
 class EditorCamera;
 class Camera;
 struct ILayer;
-class MaterialYAMLFileWatcher;
+class AssetFileWatcher;
+class AssetReloader;
 
 class Renderer;
 class BlueprintRegistry;
+struct PipelineBlueprint;
 
 class Allocator;
 

@@ -15,15 +15,21 @@ layout(location = 0) out vec3 v_normal;
 layout(location = 1) out vec3 v_world_pos;
 layout(location = 2) out vec4 v_light_space_pos;
 
+const int SHADOW_MAP_SIZE = 2048;
+const mat4 shadow_bias_matrix = mat4(
+    0.5, 0.0, 0.0, 0.0,
+    0.0, 0.5, 0.0, 0.0,
+    0.0, 0.0, 0.5, 0.0,
+    0.5, 0.5, 0.5, 1.0);
+
 void main()
 {
   mat4 model_matrix = RECONSTRUCT();
   vec4 world_position = model_matrix * vec4(a_position, 1.0);
 
-  gl_Position = camera_ubo.inverse_vp * world_position;
-  // TODO: This obviously is wrong.
-  v_normal = a_normal;
+  gl_Position = camera_ubo.vp * world_position;
+  v_normal = mat3(transpose(inverse(model_matrix))) * a_normal;
   v_world_pos = world_position.xyz;
 
-  v_light_space_pos = shadow_ubo.light_vp * world_position;
+  v_light_space_pos = shadow_bias_matrix * shadow_ubo.light_vp * world_position;
 }

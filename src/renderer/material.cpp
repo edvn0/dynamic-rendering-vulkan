@@ -44,6 +44,20 @@ merge_push_constant_range(std::vector<VkPushConstantRange>& dst,
   dst.push_back(range);
 }
 
+static auto
+handle_block_declaration_naming(const SpvReflectDescriptorBinding* refl,
+                                auto& binding_info,
+                                const SpvReflectDescriptorSet* ds)
+{
+  if (std::strlen(refl->name) > 0) {
+
+    binding_info[refl->name] = std::make_tuple(ds->set, refl->binding);
+  } else {
+    const auto* type_name = refl->type_description->type_name;
+    binding_info[type_name] = std::make_tuple(ds->set, refl->binding);
+  }
+}
+
 auto
 reflect_shader_using_spirv_reflect(
   std::string_view file_path,
@@ -99,13 +113,13 @@ reflect_shader_using_spirv_reflect(
       b.pImmutableSamplers = nullptr;
 
       merge_descriptor_binding(bindings, b);
-      if (std::strlen(refl->name) > 0) {
 
-        binding_info[refl->name] = std::make_tuple(ds->set, refl->binding);
-      } else {
-        const auto* type_name = refl->type_description->type_name;
-        binding_info[type_name] = std::make_tuple(ds->set, refl->binding);
-      }
+      /** This business logic handles
+      ** layout(set = 1, binding = 0) uniform SomeUBO { some stuff... } ubo;
+      ** layout(set = 1, binding = 1) uniform SomeOtherUBO { some stuff... };
+      ** we prio the declaration name "ubo" over the block name "SomeUBO".
+      */
+      handle_block_declaration_naming(refl, binding_info, ds);
     }
   }
 
@@ -124,103 +138,117 @@ reflect_shader_using_spirv_reflect(
     merge_push_constant_range(push_constant_ranges, r);
   }
 }
-
 auto
 Material::create(const Device& device,
                  const PipelineBlueprint& blueprint,
                  VkDescriptorSetLayout renderer_set_layout)
-  -> std::unique_ptr<Material>
+  -> std::expected<std::unique_ptr<Material>, MaterialError>
 {
   if (!pipeline_factory || !compute_pipeline_factory) {
     pipeline_factory = std::make_unique<PipelineFactory>(device);
     compute_pipeline_factory = std::make_unique<ComputePipelineFactory>(device);
   }
 
-  std::vector<VkDescriptorSetLayoutBinding> bindings;
+  std::vector<VkDescriptorSetLayoutBinding> binds;
   std::vector<VkPushConstantRange> push_constants;
   std::unordered_map<std::string, std::tuple<std::uint32_t, std::uint32_t>>
-    binding_info;
+    binds_info;
 
   for (const auto& stage : blueprint.shader_stages) {
-    if (stage.empty)
-      continue;
-    reflect_shader_using_spirv_reflect(
-      stage.filepath, bindings, push_constants, binding_info);
+    if (!stage.empty)
+      reflect_shader_using_spirv_reflect(
+        stage.filepath, binds, push_constants, binds_info);
   }
 
   VkDescriptorSetLayoutCreateInfo layout_info{
     .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-    .pNext = nullptr,
-    .flags = 0,
-    .bindingCount = static_cast<std::uint32_t>(bindings.size()),
-    .pBindings = bindings.data(),
+    .bindingCount = static_cast<std::uint32_t>(binds.size()),
+    .pBindings = binds.data(),
   };
 
   VkDescriptorSetLayout material_set_layout{ VK_NULL_HANDLE };
-  vkCreateDescriptorSetLayout(
-    device.get_device(), &layout_info, nullptr, &material_set_layout);
+  if (vkCreateDescriptorSetLayout(
+        device.get_device(), &layout_info, nullptr, &material_set_layout) !=
+      VK_SUCCESS)
+    return std::unexpected(MaterialError{
+      .message = "Failed to create descriptor set layout",
+      .code = MaterialError::Code::descriptor_layout_failed,
+    });
 
-  frame_array<VkDescriptorSet> descriptor_sets{};
-  descriptor_sets.fill(VK_NULL_HANDLE);
+  frame_array<VkDescriptorSet> sets{};
+  sets.fill(VK_NULL_HANDLE);
 
   std::unordered_map<VkDescriptorType, std::uint32_t> type_counts;
-  for (const auto& b : bindings)
+  for (const auto& b : binds)
     type_counts[b.descriptorType] += b.descriptorCount;
 
   std::vector<VkDescriptorPoolSize> pool_sizes;
   pool_sizes.reserve(type_counts.size());
   for (const auto& [type, count] : type_counts)
-    pool_sizes.push_back(
-      { .type = type, .descriptorCount = count * image_count });
+    pool_sizes.push_back({
+      .type = type,
+      .descriptorCount = count * image_count,
+    });
 
   VkDescriptorPoolCreateInfo pool_info{
     .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
-    .pNext = nullptr,
-    .flags = 0,
     .maxSets = image_count,
     .poolSizeCount = static_cast<std::uint32_t>(pool_sizes.size()),
     .pPoolSizes = pool_sizes.data(),
   };
 
-  VkDescriptorPool descriptor_pool{ VK_NULL_HANDLE };
-  vkCreateDescriptorPool(
-    device.get_device(), &pool_info, nullptr, &descriptor_pool);
+  VkDescriptorPool pool{ VK_NULL_HANDLE };
+  if (vkCreateDescriptorPool(device.get_device(), &pool_info, nullptr, &pool) !=
+      VK_SUCCESS)
+    return std::unexpected(MaterialError{
+      .message = "Failed to create descriptor pool",
+      .code = MaterialError::Code::pool_creation_failed,
+    });
 
   std::array<VkDescriptorSetLayout, image_count> layouts{};
   layouts.fill(material_set_layout);
 
   VkDescriptorSetAllocateInfo alloc_info{
     .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
-    .pNext = nullptr,
-    .descriptorPool = descriptor_pool,
+    .descriptorPool = pool,
     .descriptorSetCount = image_count,
     .pSetLayouts = layouts.data(),
   };
 
-  vkAllocateDescriptorSets(
-    device.get_device(), &alloc_info, descriptor_sets.data());
+  if (vkAllocateDescriptorSets(device.get_device(), &alloc_info, sets.data()) !=
+      VK_SUCCESS)
+    return std::unexpected(MaterialError{
+      .message = "Failed to allocate descriptor sets",
+      .code = MaterialError::Code::descriptor_allocation_failed });
 
-  auto pipeline_factory_to_use =
-    blueprint.shader_stages.size() == 1 &&
-        blueprint.shader_stages[0].stage == ShaderStage::compute
-      ? compute_pipeline_factory.get()
-      : pipeline_factory.get();
+  auto factory = blueprint.shader_stages.size() == 1 &&
+                     blueprint.shader_stages[0].stage == ShaderStage::compute
+                   ? compute_pipeline_factory.get()
+                   : pipeline_factory.get();
 
-  auto pipeline = pipeline_factory_to_use->create_pipeline(
-    blueprint,
-    {
-      .renderer_set_layout = renderer_set_layout,
-      .material_sets = { material_set_layout },
-      .push_constants = push_constants,
-    });
+  auto pipeline_result =
+    factory->create_pipeline(blueprint,
+                             PipelineLayoutInfo{
+                               .renderer_set_layout = renderer_set_layout,
+                               .material_sets = { material_set_layout },
+                               .push_constants = push_constants,
+                             });
 
-  return std::unique_ptr<Material>(
-    new Material(device,
-                 std::move(descriptor_sets),
-                 std::span{ &material_set_layout, 1 },
-                 descriptor_pool,
-                 std::move(pipeline),
-                 std::move(binding_info)));
+  if (!pipeline_result)
+    return std::unexpected(MaterialError{
+      .message = "Pipeline creation failed: " + pipeline_result.error().message,
+      .code = MaterialError::Code::pipeline_error,
+      .inner_pipeline_error = std::move(pipeline_result.error()) });
+
+  std::unique_ptr<Material> mat;
+  mat.reset(new Material(device,
+                         std::move(sets),
+                         std::span{ &material_set_layout, 1 },
+                         pool,
+                         std::move(*pipeline_result),
+                         std::move(binds_info)));
+  mat->pipeline_hash = blueprint.hash();
+  return mat;
 }
 
 auto
@@ -233,14 +261,15 @@ Material::reload(const PipelineBlueprint& blueprint,
     return;
   }
 
-  auto rebuilt = rebuild_pipeline(blueprint, renderer_set_layout);
-  if (!rebuilt) {
-    std::cerr << "Failed to rebuild pipeline for material\n";
+  auto rebuilt_result = rebuild_pipeline(blueprint, renderer_set_layout);
+  if (!rebuilt_result) {
+    std::cerr << "Failed to rebuild pipeline: "
+              << rebuilt_result.error().message << "\n";
     return;
   }
 
   std::cout << "Rebuilt pipeline for material\n";
-  pipeline = std::move(rebuilt);
+  pipeline = std::move(*rebuilt_result);
   pipeline_hash = new_hash;
 }
 
@@ -258,14 +287,14 @@ Material::Material(
   , descriptor_set_layout(ls[0])
   , descriptor_pool(p)
   , pipeline(std::move(pipe))
-
+  , pipeline_hash()
 {
 }
 
 auto
 Material::rebuild_pipeline(const PipelineBlueprint& blueprint,
                            VkDescriptorSetLayout renderer_set_layout)
-  -> std::unique_ptr<CompiledPipeline>
+  -> std::expected<std::unique_ptr<CompiledPipeline>, MaterialError>
 {
   std::vector<VkPushConstantRange> push_constants;
   std::vector<VkDescriptorSetLayoutBinding> new_bindings;
@@ -273,26 +302,33 @@ Material::rebuild_pipeline(const PipelineBlueprint& blueprint,
   binding_info.clear();
 
   for (const auto& stage : blueprint.shader_stages) {
-    if (stage.empty)
-      continue;
-    reflect_shader_using_spirv_reflect(
-      stage.filepath, new_bindings, push_constants, binding_info);
+    if (!stage.empty)
+      reflect_shader_using_spirv_reflect(
+        stage.filepath, new_bindings, push_constants, binding_info);
   }
 
   const bool is_compute =
     blueprint.shader_stages.size() == 1 &&
     blueprint.shader_stages[0].stage == ShaderStage::compute;
 
-  const auto* factory_to_use =
+  const auto* factory =
     is_compute ? compute_pipeline_factory.get() : pipeline_factory.get();
 
-  return factory_to_use->create_pipeline(
-    blueprint,
-    PipelineLayoutInfo{
-      .renderer_set_layout = renderer_set_layout,
-      .material_sets = { descriptor_set_layout },
-      .push_constants = push_constants,
-    });
+  auto result =
+    factory->create_pipeline(blueprint,
+                             PipelineLayoutInfo{
+                               .renderer_set_layout = renderer_set_layout,
+                               .material_sets = { descriptor_set_layout },
+                               .push_constants = push_constants,
+                             });
+
+  if (!result)
+    return std::unexpected(MaterialError{
+      .message = "Failed to rebuild pipeline: " + result.error().message,
+      .code = MaterialError::Code::pipeline_error,
+      .inner_pipeline_error = result.error() });
+
+  return std::move(*result);
 }
 
 auto

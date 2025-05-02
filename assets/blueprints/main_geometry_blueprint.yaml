@@ -1,13 +1,13 @@
 name: main_geometry
 shaders:
   - stage: vertex
-    path: geometry.vert.spv
+    path: geometry.vert
   - stage: fragment
-    path: geometry.frag.spv
+    path: geometry.frag
 
 rasterization:
-  cull_mode: back
-  winding: cw
+  cull_mode: front
+  winding: ccw
 
 depth_stencil:
   depth_test: true

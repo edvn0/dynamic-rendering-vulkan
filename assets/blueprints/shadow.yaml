@@ -1,7 +1,7 @@
 name: shadow
 shaders:
   - stage: vertex
-    path: shadow.vert.spv
+    path: shadow.vert
 
 rasterization:
   cull_mode: back

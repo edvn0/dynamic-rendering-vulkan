@@ -16,5 +16,5 @@ void main()
   mat4 model_matrix = RECONSTRUCT();
 
   vec4 world_position = model_matrix * vec4(a_position, 1.0);
-  gl_Position = camera_ubo.inverse_vp * world_position;
+  gl_Position = camera_ubo.vp * world_position;
 }

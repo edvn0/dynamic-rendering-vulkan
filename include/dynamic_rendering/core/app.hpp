@@ -1,9 +1,12 @@
 #pragma once
 
+#include "core/extent.hpp"
 #include "core/forward.hpp"
 
+#include <expected>
+#include <filesystem>
 #include <memory>
-#include <string_view>
+#include <system_error>
 
 namespace DynamicRendering {
 
@@ -11,10 +14,27 @@ struct FrametimeSmoother;
 struct FrametimeCalculator;
 struct FrameTimePlotter;
 
+struct ApplicationArguments
+{
+  std::string title = "Dynamic Rendering";
+  std::string working_directory = ".";
+  Extent2D window_size = { 1280, 720 };
+
+  auto assets_path() const -> std::filesystem::path
+  {
+    namespace fs = std::filesystem;
+    return fs::path{ working_directory } / fs::path{ "assets" };
+  }
+};
+
+auto
+parse_command_line_args(int, char**)
+  -> std::expected<ApplicationArguments, std::error_code>;
+
 class App
 {
 public:
-  explicit App(std::string_view = "Dynamic Rendering App");
+  explicit App(const ApplicationArguments&);
   ~App();
 
   auto add_layer(std::unique_ptr<ILayer> layer) -> void;
@@ -22,12 +42,11 @@ public:
   template<typename T, typename... Args>
   auto add_layer(Args&&... args) -> void
   {
-    static_assert(std::derived_from<T, ILayer>);
     layers.emplace_back(
       std::make_unique<T>(*device, std::forward<Args>(args)...));
   }
 
-  auto run(int argc, char** argv) -> std::error_code;
+  auto run() -> std::error_code;
 
 private:
   void process_events(Event&);
@@ -44,6 +63,7 @@ private:
   std::unique_ptr<Renderer> renderer;
   std::unique_ptr<BlueprintRegistry> blueprint_registry;
   std::unique_ptr<EditorCamera> camera;
+  std::unique_ptr<AssetReloader> asset_reloader;
 
   std::unique_ptr<FrametimeSmoother> smoother;
   std::unique_ptr<FrameTimePlotter> plotter;
@@ -52,7 +72,7 @@ private:
   std::vector<std::unique_ptr<ILayer>> layers;
   bool running = true;
 
-  std::unique_ptr<MaterialYAMLFileWatcher> file_watcher;
+  std::unique_ptr<AssetFileWatcher> file_watcher;
   std::unordered_map<std::string, std::string> filename_to_material_name;
 };
 

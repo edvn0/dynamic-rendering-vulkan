@@ -16,11 +16,11 @@ public:
   explicit ComputePipelineFactory(const Device& device);
   auto create_pipeline(const PipelineBlueprint&,
                        const PipelineLayoutInfo&) const
-    -> std::unique_ptr<CompiledPipeline> override;
+    -> std::expected<std::unique_ptr<CompiledPipeline>, PipelineError> override;
 
 private:
   const Device* device;
   auto create_pipeline_layout(const PipelineBlueprint&,
                               std::span<const VkDescriptorSetLayout>) const
-    -> VkPipelineLayout;
+    -> std::expected<VkPipelineLayout, PipelineError>;
 };

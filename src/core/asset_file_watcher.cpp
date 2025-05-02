@@ -1,4 +1,6 @@
-#include "core/material_yaml_file_watcher.hpp"
+#include "core/asset_file_watcher.hpp"
+
+#include "core/fs.hpp"
 
 #include <chrono>
 #include <shared_mutex>
@@ -7,20 +9,20 @@
 #include <windows.h>
 #endif
 
-MaterialYAMLFileWatcher::MaterialYAMLFileWatcher()
+AssetFileWatcher::AssetFileWatcher()
 {
   file_watcher = std::make_unique<efsw::FileWatcher>();
   file_watcher->watch();
 }
 
-MaterialYAMLFileWatcher::~MaterialYAMLFileWatcher()
+AssetFileWatcher::~AssetFileWatcher()
 {
   stop();
 }
 
 auto
-MaterialYAMLFileWatcher::start_monitoring(
-  const std::filesystem::path& directory) -> void
+AssetFileWatcher::start_monitoring(
+  const std::span<const std::filesystem::path> directories) -> void
 {
   auto options = std::vector<efsw::WatcherOption>{};
   static constexpr auto _256k = 256 * 1024;
@@ -32,19 +34,39 @@ MaterialYAMLFileWatcher::start_monitoring(
   options.push_back(efsw::WatcherOption{ efsw::Options::WinNotifyFilter,
                                          FILE_NOTIFY_CHANGE_LAST_WRITE });
 #endif
-  watch_id = file_watcher->addWatch(directory.string(), this, true, options);
-}
+  watch_directories.clear();
 
-auto
-MaterialYAMLFileWatcher::stop() -> void
-{
-  if (file_watcher && watch_id != 0) {
-    file_watcher->removeWatch(watch_id);
+  const auto& root = assets_path();
+  auto id = file_watcher->addWatch(root.string(), this, true, options);
+  watch_directories[id] = root.string();
+  for (const auto& dir : directories) {
+    auto path = root / dir;
+    if (!std::filesystem::exists(path)) {
+      std::cerr << "Directory does not exist: " << path.string() << std::endl;
+      continue;
+    }
+    auto computed_watch =
+      file_watcher->addWatch(path.string(), this, true, options);
+    watch_directories[computed_watch] = path.string();
   }
 }
 
 auto
-MaterialYAMLFileWatcher::collect_dirty() -> string_hash_set
+AssetFileWatcher::stop() -> void
+{
+  if (file_watcher) {
+    std::ranges::for_each(watch_directories, [this](const auto& pair) {
+      file_watcher->removeWatch(pair.first);
+    });
+    file_watcher.reset();
+  }
+  std::unique_lock lock(dirty_mutex);
+  pending_changes.clear();
+  watch_directories.clear();
+}
+
+auto
+AssetFileWatcher::collect_dirty() -> string_hash_set
 {
   using namespace std::chrono;
 
@@ -77,11 +99,11 @@ MaterialYAMLFileWatcher::collect_dirty() -> string_hash_set
 }
 
 void
-MaterialYAMLFileWatcher::handleFileAction(efsw::WatchID /*watchid*/,
-                                          const std::string&,
-                                          const std::string& filename,
-                                          efsw::Action action,
-                                          std::string /*old_filename*/)
+AssetFileWatcher::handleFileAction(efsw::WatchID /*watchid*/,
+                                   const std::string&,
+                                   const std::string& filename,
+                                   efsw::Action action,
+                                   std::string /*old_filename*/)
 {
   if (action != efsw::Actions::Modified) {
     return;

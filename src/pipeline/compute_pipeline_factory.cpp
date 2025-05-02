@@ -11,7 +11,8 @@ ComputePipelineFactory::ComputePipelineFactory(const Device& dev)
 auto
 ComputePipelineFactory::create_pipeline_layout(
   const PipelineBlueprint&,
-  std::span<const VkDescriptorSetLayout> layouts) const -> VkPipelineLayout
+  std::span<const VkDescriptorSetLayout> layouts) const
+  -> std::expected<VkPipelineLayout, PipelineError>
 {
   VkPipelineLayoutCreateInfo layout_info{
     .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
@@ -24,7 +25,14 @@ ComputePipelineFactory::create_pipeline_layout(
   };
 
   VkPipelineLayout layout{};
-  vkCreatePipelineLayout(device->get_device(), &layout_info, nullptr, &layout);
+  if (vkCreatePipelineLayout(
+        device->get_device(), &layout_info, nullptr, &layout) != VK_SUCCESS) {
+    return std::unexpected(PipelineError{
+      .message = "Failed to create pipeline layout",
+      .code = PipelineError::Code::pipeline_layout_creation_failed,
+    });
+  }
+
   return layout;
 }
 
@@ -32,9 +40,16 @@ auto
 ComputePipelineFactory::create_pipeline(
   const PipelineBlueprint& blueprint,
   const PipelineLayoutInfo& descriptor_layout_info) const
-  -> std::unique_ptr<CompiledPipeline>
+  -> std::expected<std::unique_ptr<CompiledPipeline>, PipelineError>
 {
-  auto shader = Shader::create(*device, blueprint.shader_stages);
+  auto shader_result = Shader::create(*device, blueprint.shader_stages);
+  if (!shader_result) {
+    return std::unexpected(PipelineError{
+      .message = "Shader creation failed: " + shader_result.error().message,
+      .code = PipelineError::Code::pipeline_creation_failed,
+    });
+  }
+  auto shader = std::move(shader_result.value());
   const auto& stage_info = blueprint.shader_stages.front();
 
   VkPipelineShaderStageCreateInfo stage{
@@ -53,7 +68,11 @@ ComputePipelineFactory::create_pipeline(
   layouts.insert(layouts.end(),
                  descriptor_layout_info.material_sets.begin(),
                  descriptor_layout_info.material_sets.end());
-  VkPipelineLayout layout = create_pipeline_layout(blueprint, layouts);
+  auto layout_result = create_pipeline_layout(blueprint, layouts);
+  if (!layout_result) {
+    return std::unexpected(layout_result.error());
+  }
+  auto layout = layout_result.value();
 
   VkComputePipelineCreateInfo pipeline_info{
     .sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,

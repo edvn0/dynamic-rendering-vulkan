@@ -27,7 +27,8 @@ private:
   std::unique_ptr<GPUBuffer> axes_vertex_buffer;
 
   glm::vec3 light_position{ 0.f, 0.f, 1.f };
-  glm::vec3 light_color{ 1.f, 1.f, 1.f };
+  // Orange color
+  glm::vec4 light_color{ 1.F, 0.5F, 0.F, 1.F };
 
   std::vector<glm::mat4> transforms;
 };

@@ -13,7 +13,8 @@ layout(set = 0, binding = 1, std140) uniform ShadowUBO
   mat4 light_vp;
   vec4 light_position;
   vec4 light_color;
-  vec4 _padding_[2];
+  vec4 ambient_color;
+  vec4 _padding_[1];
 }
 shadow_ubo;
 

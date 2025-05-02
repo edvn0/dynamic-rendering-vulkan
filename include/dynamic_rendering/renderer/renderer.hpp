@@ -53,8 +53,9 @@ struct InstanceData
 
 struct LightEnvironment
 {
-  glm::vec3 light_position{ 40.f, 40.f, 40.f };
-  glm::vec3 light_color{ 1.f, 1.f, 1.f };
+  glm::vec3 light_position{ 40.f, -40.f, 40.f };
+  glm::vec4 light_color{ 1.f, 1.f, 1.f, 1.f };
+  glm::vec4 ambient_color{ 0.1F, 0.1F, 0.1F, 1.0F };
 };
 
 struct LineDrawCommand

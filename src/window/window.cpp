@@ -15,6 +15,12 @@ struct Window::WindowData
 };
 
 auto
+Window::create(const WindowConfiguration& config) -> std::unique_ptr<Window>
+{
+  return std::unique_ptr<Window>(new Window(config));
+}
+
+auto
 Window::hookup_events() -> void
 {
   glfwSetFramebufferSizeCallback(
@@ -49,8 +55,6 @@ Window::hookup_events() -> void
         d.event_callback(ev);
       }
     });
-
-#ifdef DISABLE_PERFORMANCE
   glfwSetCursorPosCallback(
     glfw_window, +[](GLFWwindow* w, double x, double y) {
       auto const& d =
@@ -58,10 +62,9 @@ Window::hookup_events() -> void
       MouseMovedEvent ev{ x, y };
       d.event_callback(ev);
     });
-#endif
 }
 
-Window::Window()
+Window::Window(const WindowConfiguration& config)
   : user_data(std::make_unique<WindowData>())
 {
   glfwInitHint(GLFW_PLATFORM, GLFW_PLATFORM_WIN32);
@@ -71,9 +74,15 @@ Window::Window()
   }
 
   glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-  glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
+  glfwWindowHint(GLFW_RESIZABLE, config.resizable ? GLFW_TRUE : GLFW_FALSE);
+  glfwWindowHint(GLFW_DECORATED, config.decorated ? GLFW_TRUE : GLFW_FALSE);
+  glfwWindowHint(GLFW_FOCUSED, GLFW_TRUE);
+  glfwWindowHint(GLFW_VISIBLE, GLFW_TRUE);
 
-  glfw_window = glfwCreateWindow(1280, 720, "Vulkan Window", nullptr, nullptr);
+  auto&& [width, height] = config.size.as<std::int32_t>();
+
+  glfw_window =
+    glfwCreateWindow(width, height, "Vulkan Window", nullptr, nullptr);
   if (!glfw_window) {
     glfwTerminate();
     assert(false && "Failed to create GLFW window");

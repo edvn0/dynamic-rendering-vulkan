@@ -3,35 +3,7 @@
 #include <cstdint>
 #include <vulkan/vulkan.h>
 
-struct Extent2D
-{
-  std::uint32_t width{ 0 };
-  std::uint32_t height{ 0 };
-
-  Extent2D() = default;
-
-  template<std::integral T>
-  Extent2D(const T w, const T h)
-    : width(static_cast<std::uint32_t>(w))
-    , height(static_cast<std::uint32_t>(h))
-  {
-  }
-
-  // Construct from std::pair<std::integral T, std::integral T>
-  template<std::integral T>
-  Extent2D(const std::pair<T, T>& pair)
-    : width(static_cast<std::uint32_t>(pair.first))
-    , height(static_cast<std::uint32_t>(pair.second))
-  {
-  }
-
-  template<std::integral T>
-  Extent2D(std::pair<T, T>&& pair)
-    : width(static_cast<std::uint32_t>(pair.first))
-    , height(static_cast<std::uint32_t>(pair.second))
-  {
-  }
-};
+#include "core/extent.hpp"
 
 struct ImageConfiguration
 {

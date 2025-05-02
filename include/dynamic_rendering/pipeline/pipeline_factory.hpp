@@ -13,9 +13,10 @@ class PipelineFactory : public IPipelineFactory
 public:
   ~PipelineFactory() override = default;
   explicit PipelineFactory(const Device& device);
+
   auto create_pipeline(const PipelineBlueprint&,
                        const PipelineLayoutInfo&) const
-    -> std::unique_ptr<CompiledPipeline> override;
+    -> std::expected<std::unique_ptr<CompiledPipeline>, PipelineError>;
 
 private:
   const Device* device;
@@ -23,5 +24,5 @@ private:
   auto create_pipeline_layout(const PipelineBlueprint&,
                               std::span<const VkDescriptorSetLayout>,
                               std::span<const VkPushConstantRange>) const
-    -> VkPipelineLayout;
+    -> std::expected<VkPipelineLayout, PipelineError>;
 };

@@ -103,7 +103,6 @@ AppLayer::AppLayer(const Device& dev)
     true);
   axes_vertex_buffer->upload(std::span(axes_vertices));
 
-  transforms.reserve(16);
   generate_scene();
 }
 
@@ -131,36 +130,52 @@ auto
 AppLayer::on_interface() -> void
 {
   static constexpr auto window = [](const std::string_view name, auto&& fn) {
-    ImGui::Begin(name.data());
-    fn();
-    ImGui::End();
+    if (ImGui::Begin(name.data())) {
+      fn();
+      ImGui::End();
+    }
   };
 
-  static ImVec4 clr = { 0.2f, 0.3f, 0.4f, 1.0f };
-  window("Controls", [&rs = rotation_speed] {
+  window("Controls", [&rs = rotation_speed, this]() {
     ImGui::Text("Adjust settings:");
-    ImGui::ColorEdit3("Clear Color", std::bit_cast<float*>(&clr));
     ImGui::SliderFloat("Rotation Speed", &rs, 0.1f, 150.0f);
+    ImGui::ColorEdit4("Light Color", std::bit_cast<float*>(&light_color));
+    ImGui::SliderFloat3(
+      "Light Position", std::bit_cast<float*>(&light_position), -100.f, 100.f);
   });
 }
 
+static constexpr int grid_size_x = 30;
+static constexpr int grid_size_y = 20;
+static constexpr int grid_size_z = 10;
+static constexpr float spacing = 7.f;
 auto
 AppLayer::on_update(double ts) -> void
 {
-  static float angle = 0.f;
-  angle += rotation_speed * static_cast<float>(ts);
-  angle = std::fmod(angle, 360.f);
+  static glm::vec3 angle_xyz{ 0.f };
+  const float delta = rotation_speed * static_cast<float>(ts);
+  angle_xyz += glm::vec3{ delta };
+  angle_xyz = glm::mod(angle_xyz, glm::vec3{ 360.f });
 
   std::for_each(
     std::execution::par_unseq,
     transforms.begin(),
     transforms.end(),
-    [root = transforms.data()](glm::mat4& mat) {
+    [root = transforms.data(), angle = angle_xyz](glm::mat4& mat) {
       const std::size_t i = &mat - root;
-      const float x = static_cast<float>(i % 10) - 5.f;
-      const float y = static_cast<float>(i) / 10.f - 5.f;
-      mat = glm::translate(glm::mat4(1.f), { x * 2.f, y * 2.f, 0.f }) *
-            glm::rotate(glm::mat4(1.f), glm::radians(angle), { 0.f, 0.f, 1.f });
+      const auto x = static_cast<std::int32_t>(i % grid_size_x);
+      const auto y = static_cast<std::int32_t>((i / grid_size_x) % grid_size_y);
+      const auto z = static_cast<std::int32_t>(i / (grid_size_x * grid_size_y));
+
+      const float offset_x = (x - grid_size_x / 2) * spacing;
+      const float offset_y = (y - grid_size_y / 2) * spacing;
+      const float offset_z = (z - grid_size_z / 2) * spacing;
+
+      mat =
+        glm::translate(glm::mat4(1.f), { offset_x, offset_y, offset_z }) *
+        glm::rotate(glm::mat4(1.f), glm::radians(angle.x), { 0.f, 0.f, 1.f }) *
+        glm::rotate(glm::mat4(1.f), glm::radians(angle.y), { 0.f, 1.f, 0.f }) *
+        glm::rotate(glm::mat4(1.f), glm::radians(angle.z), { 1.f, 0.f, 0.f });
     });
 }
 
@@ -194,10 +209,32 @@ AppLayer::on_render(Renderer& renderer) -> void
       transforms.at(i));
   }
 
-  renderer.submit_lines({ -5.f, 0.f, 0.f },
-                        { 5.f, 0.f, 0.f },
-                        0.1f,
-                        glm::vec4{ 1.f, 0.f, 0.f, 1.f });
+  // Submit "sun cube"
+  renderer.submit(
+    {
+      .vertex_buffer = cube_vertex_buffer.get(),
+      .index_buffer = cube_index_buffer.get(),
+      .override_material = nullptr,
+      .casts_shadows = false,
+    },
+    glm::translate(glm::mat4(1.f), light_position) *
+      glm::scale(glm::mat4(1.f), { 0.5f, 0.5f, 0.5f }));
+
+  static constexpr float line_width = 0.1f;
+  static constexpr float line_length = 50.f;
+
+  renderer.submit_lines({ 0.f, 0.f, 0.f },
+                        { line_length, 0.f, 0.f },
+                        line_width,
+                        { 1.f, 0.f, 0.f, 1.f });
+  renderer.submit_lines({ 0.f, 0.f, 0.f },
+                        { 0.f, line_length, 0.f },
+                        line_width,
+                        { 0.f, 1.f, 0.f, 1.f });
+  renderer.submit_lines({ 0.f, 0.f, 0.f },
+                        { 0.f, 0.f, line_length },
+                        line_width,
+                        { 0.f, 0.f, 1.f, 1.f });
 }
 
 auto
@@ -212,15 +249,23 @@ AppLayer::generate_scene() -> void
 {
   transforms.clear();
 
-  // Ground plane
-  transforms.emplace_back(1.F); // Identity, no transform
+  // Ground plane always at index 0
+  transforms.emplace_back(1.F);
 
-  // Some cubes
-  transforms.emplace_back(glm::translate(glm::mat4(1.f), { -3.f, 1.f, -3.f }));
-  transforms.emplace_back(glm::translate(glm::mat4(1.f), { 3.f, 1.f, -3.f }));
-  transforms.emplace_back(glm::translate(glm::mat4(1.f), { 3.f, 1.f, 3.f }));
-  transforms.emplace_back(glm::translate(glm::mat4(1.f), { -3.f, 1.f, 3.f }));
+  static constexpr int total = grid_size_x * grid_size_y * grid_size_z;
+  transforms.reserve(total + 1); // +1 for ground plane
 
-  transforms.emplace_back(glm::translate(glm::mat4(1.f), { 0.f, 5.f, 0.f }) *
-                          glm::scale(glm::mat4(1.f), glm::vec3(0.5f)));
+  for (int z = 0; z < grid_size_z; ++z) {
+    for (int y = 0; y < grid_size_y; ++y) {
+      for (int x = 0; x < grid_size_x; ++x) {
+        const float offset_x = (x - grid_size_x / 2) * spacing;
+        const float offset_y = (y - grid_size_y / 2) * spacing;
+        const float offset_z = (z - grid_size_z / 2) * spacing;
+
+        glm::mat4 transform =
+          glm::translate(glm::mat4(1.f), { offset_x, offset_y, offset_z });
+        transforms.emplace_back(transform);
+      }
+    }
+  }
 }

@@ -36,6 +36,7 @@ find_package(imguizmo REQUIRED CONFIG)
 find_package(yaml-cpp REQUIRED CONFIG)
 find_package(glm REQUIRED CONFIG)
 find_package(efsw REQUIRED CONFIG)
+find_package(lyra REQUIRED CONFIG)
 
 add_subdirectory(third_party)
 add_subdirectory(client)
@@ -50,7 +51,9 @@ add_library(DynamicRendering_Core STATIC
   src/core/input.cpp
   src/core/event_system.cpp
   src/core/app.cpp
-  src/core/material_yaml_file_watcher.cpp
+  src/core/asset_file_watcher.cpp
+  src/core/asset_reloader.cpp
+  src/core/fs.cpp
 )
 
 target_include_directories(DynamicRendering_Core PUBLIC
@@ -70,6 +73,7 @@ target_link_libraries(DynamicRendering_Core PUBLIC
   PRIVATE
   implot
   efsw::efsw
+  bfg::lyra
 )
 
 target_precompile_headers(DynamicRendering_Core PUBLIC include/dynamic_rendering/dynamic_rendering_pch.hpp)

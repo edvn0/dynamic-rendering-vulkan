@@ -1,6 +1,8 @@
 #include "core/app.hpp"
 
-#include <dynamic_rendering/core/material_yaml_file_watcher.hpp>
+#include <dynamic_rendering/core/asset_file_watcher.hpp>
+#include <dynamic_rendering/core/asset_reloader.hpp>
+#include <dynamic_rendering/core/fs.hpp>
 #include <dynamic_rendering/dynamic_rendering.hpp>
 
 #include <cassert>
@@ -13,6 +15,7 @@
 #include <GLFW/glfw3.h>
 #include <imgui.h>
 #include <implot.h>
+#include <lyra/lyra.hpp>
 
 namespace DynamicRendering {
 
@@ -106,10 +109,10 @@ private:
   clock::time_point start_time{ clock::now() };
 };
 
-App::App(std::string_view /*title*/)
+App::App(const ApplicationArguments& args)
 {
   instance = std::make_unique<Core::Instance>(Core::Instance::create());
-  window = std::make_unique<Window>();
+  window = Window::create({ .title = args.title, .size = args.window_size });
   window->create_surface(*instance);
   device =
     std::make_unique<Device>(Device::create(*instance, window->surface()));
@@ -117,7 +120,7 @@ App::App(std::string_view /*title*/)
   Image::init_sampler_cache(*device);
 
   blueprint_registry = std::make_unique<BlueprintRegistry>();
-  blueprint_registry->load_from_directory("assets/blueprints");
+  blueprint_registry->load_from_directory("blueprints");
 
   gui_system = std::make_unique<GUISystem>(*instance, *device, *window);
   swapchain = std::make_unique<Swapchain>(*device, *window);
@@ -135,12 +138,11 @@ App::App(std::string_view /*title*/)
   plotter = std::make_unique<FrameTimePlotter>();
   timer = std::make_unique<FrametimeCalculator>();
 
-  file_watcher = std::make_unique<MaterialYAMLFileWatcher>();
-  file_watcher->start_monitoring("assets/blueprints/");
+  file_watcher = std::make_unique<AssetFileWatcher>();
+  file_watcher->start_monitoring();
 
-  for (const auto& [name, blueprint] : blueprint_registry->get_all()) {
-    filename_to_material_name[blueprint.full_path.filename().string()] = name;
-  }
+  asset_reloader =
+    std::make_unique<AssetReloader>(*blueprint_registry, *renderer);
 }
 
 App::~App() = default;
@@ -152,15 +154,8 @@ App::add_layer(std::unique_ptr<ILayer> layer)
 }
 
 auto
-App::run(int argc, char** argv) -> std::error_code
+App::run() -> std::error_code
 {
-  if (argc > 1) {
-    if (!std::filesystem::exists(argv[1]))
-      assert(false && "Could not find CWD to set");
-
-    std::filesystem::current_path(argv[1]);
-  }
-
   while (running && !window->should_close()) {
     if (window->framebuffer_resized()) {
       swapchain->request_recreate();
@@ -193,30 +188,9 @@ App::run(int argc, char** argv) -> std::error_code
     }
 
     device->wait_idle();
-    for (const auto& filename : dirty_files) {
-      auto it = filename_to_material_name.find(filename);
-      if (it == filename_to_material_name.end()) {
-        std::cerr << "Could not find material name for file: " << filename
-                  << std::endl;
-        continue;
-      }
-
-      const auto& material_name = it->second;
-
-      using fs = std::filesystem::path;
-      auto result =
-        blueprint_registry->update(fs("assets/blueprints") / filename);
-      if (!result.has_value()) {
-        std::cerr << "Failed to update blueprint: " << filename << std::endl;
-        continue;
-      }
-      std::cout << "Reloaded blueprint: " << filename << std::endl;
-
-      const auto& blueprint = blueprint_registry->get(material_name);
-      if (auto* mat = renderer->get_material_by_name(material_name)) {
-        mat->reload(blueprint,
-                    renderer->get_renderer_descriptor_set_layout({}));
-      }
+    if (!dirty_files.empty()) {
+      device->wait_idle();
+      asset_reloader->handle_dirty_files(dirty_files);
     }
   }
 
@@ -376,6 +350,37 @@ App::render()
   renderer->end_frame(frame_index);
 
   swapchain->draw_frame(*gui_system);
+}
+
+auto
+parse_command_line_args(int argc, char** argv)
+  -> std::expected<ApplicationArguments, std::error_code>
+{
+  ApplicationArguments args;
+  bool asked_for_help = false;
+
+  auto cli =
+    lyra::opt(args.title, "title")["--title"]("Window title") |
+    lyra::opt(args.working_directory,
+              "dir")["--working-dir"]("Working directory") |
+    lyra::opt(args.window_size.width, "width")["--width"]("Window width") |
+    lyra::opt(args.window_size.height, "height")["--height"]("Window height");
+
+  // Add help
+  cli |= lyra::help(asked_for_help);
+
+  if (auto result = cli.parse({ argc, argv }); !result)
+    return std::unexpected(std::make_error_code(std::errc::invalid_argument));
+
+  if (asked_for_help) {
+    std::cout << cli << std::endl;
+    return std::unexpected(std::make_error_code(std::errc::invalid_argument));
+  }
+
+  // Hook up base path to the working directory
+  set_base_path(args.working_directory);
+
+  return args;
 }
 
 } // namespace dynamic_rendering

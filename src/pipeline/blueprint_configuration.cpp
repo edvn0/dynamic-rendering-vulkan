@@ -1,5 +1,7 @@
 #include "pipeline/blueprint_configuration.hpp"
 
+#include "core/fs.hpp"
+
 #include <filesystem>
 
 auto
@@ -35,7 +37,8 @@ PipelineBlueprint::hash() const -> std::size_t
   for (const auto& s : shader_stages) {
     hash_combine(s.stage);
 
-    std::ifstream stream(s.filepath, std::ios::binary);
+    std::ifstream stream(assets_path() / "shaders" / s.filepath,
+                         std::ios::binary);
     if (stream) {
       std::array<char, 64> head{};
       stream.read(head.data(), head.size());
