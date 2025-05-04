@@ -30,6 +30,7 @@ function(dynamic_rendering_set_target_options target)
   )
 endfunction()
 
+find_package(Python COMPONENTS Interpreter REQUIRED)
 find_package(Vulkan REQUIRED)
 find_package(glfw3 REQUIRED CONFIG)
 find_package(imguizmo REQUIRED CONFIG)
@@ -160,9 +161,9 @@ function(generate_shaders target)
   add_custom_command(
     OUTPUT shaders_compiled
     COMMAND ${CMAKE_COMMAND} -E echo "Compiling shaders using Python script..."
-    COMMAND ${CMAKE_COMMAND} -E env PYTHONPATH=${CMAKE_SOURCE_DIR}/scripts python ${CMAKE_SOURCE_DIR}/scripts/compile_shaders.py
-    --source ${CMAKE_SOURCE_DIR}/assets/shaders
-    --output ${CMAKE_BINARY_DIR}/assets/shaders
+    COMMAND ${Python_EXECUTABLE} ${CMAKE_SOURCE_DIR}/scripts/compile_shaders.py
+            --source ${CMAKE_SOURCE_DIR}/assets/shaders
+            --output ${CMAKE_BINARY_DIR}/assets/shaders
     COMMAND ${CMAKE_COMMAND} -E touch shaders_compiled
     DEPENDS ${CMAKE_SOURCE_DIR}/assets/shaders
     COMMENT "Running shader compiler"

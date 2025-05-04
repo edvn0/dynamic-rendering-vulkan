@@ -11,3 +11,5 @@ build_type = Release
 CC = clang
 CXX = clang++
 
+[conf]
+tools.cmake.cmaketoolchain:generator=Ninja
