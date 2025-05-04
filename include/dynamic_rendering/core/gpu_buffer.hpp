@@ -155,7 +155,7 @@ public:
     if (!mapped_on_create)
       return false;
 
-    void* mapped = persistent_ptr;
+    void const* mapped = persistent_ptr;
     if (!mapped)
       return false;
 
@@ -184,13 +184,12 @@ private:
 class IndexBuffer
 {
 public:
-  IndexBuffer(const Device& device,
-              VkIndexType index_type = VK_INDEX_TYPE_UINT32)
+  IndexBuffer(const Device& device, VkIndexType type = VK_INDEX_TYPE_UINT32)
     : buffer(device,
              VK_BUFFER_USAGE_INDEX_BUFFER_BIT |
                VK_BUFFER_USAGE_TRANSFER_DST_BIT,
              false)
-    , index_type(index_type)
+    , index_type(type)
   {
   }
 
@@ -200,19 +199,11 @@ public:
   auto upload(std::span<const T, N> data) -> void
   {
     count = data.size();
-    if (count > std::numeric_limits<std::uint16_t>::max()) {
-      index_type = VK_INDEX_TYPE_UINT32;
-    }
     buffer.upload(data);
   }
 
-  template<AdmitsGPUBuffer T, std::size_t N = std::dynamic_extent>
-  auto upload(std::span<T, N> data) -> void
-  {
-    upload(std::span<const T, N>{ data });
-  }
+  MAKE_GPU_BUFFER(buffer)
 
-  auto get() const -> const VkBuffer& { return buffer.get(); }
   auto get_count() const -> std::size_t { return count; }
   auto get_index_type() const -> VkIndexType { return index_type; }
 

@@ -1209,7 +1209,7 @@ Renderer::run_shadow_pass(std::uint32_t frame_index, const DrawList& draw_list)
     vkCmdDrawIndexed(
       cmd,
       static_cast<std::uint32_t>(cmd_info.index_buffer->get_count()),
-      static_cast<std::uint32_t>(count),
+      count,
       0,
       0,
       offset);

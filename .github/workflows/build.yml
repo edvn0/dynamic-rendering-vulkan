@@ -1,0 +1,143 @@
+name: Build with Conan2 + CCache
+
+on:
+  push:
+    branches: [main, feat/*, chore/*, fix/*]
+    tags: [v*.*.*]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: self-hosted
+
+    strategy:
+      matrix:
+        compiler: [gcc, clang]
+
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_MAXSIZE: 5G
+      CCACHE_COMPRESS: "true"
+      CCACHE_COMPRESSLEVEL: 6
+      CCACHE_DEPEND: "true"
+      CCACHE_NOHASHDIR: "true"
+      CCACHE_BASEDIR: ${{ github.workspace }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Cache ccache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-${{ matrix.compiler }}-${{ hashFiles('**/CMakeLists.txt', '**/*.cmake', '**/*.cpp', '**/*.h') }}
+          restore-keys: |
+            ccache-${{ matrix.compiler }}-
+
+      - name: Install all required system dependencies (Conan in check mode)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            cmake \
+            ninja-build \
+            curl \
+            git \
+            python3-pip \
+            ccache \
+            libvulkan-dev \
+            libx11-dev \
+            libx11-xcb-dev \
+            libxcursor-dev \
+            libxinerama-dev \
+            libxrandr-dev \
+            libxrender-dev \
+            libfontenc-dev \
+            libice-dev \
+            libsm-dev \
+            libxau-dev \
+            libxaw7-dev \
+            libxcomposite-dev \
+            libxdamage-dev \
+            libxkbfile-dev \
+            libxmu-dev \
+            libxmuu-dev \
+            libxpm-dev \
+            libxres-dev \
+            libxss-dev \
+            libxt-dev \
+            libxtst-dev \
+            libxv-dev \
+            libxxf86vm-dev \
+            libxcb-glx0-dev \
+            libxcb-render0-dev \
+            libxcb-render-util0-dev \
+            libxcb-xkb-dev \
+            libxcb-icccm4-dev \
+            libxcb-image0-dev \
+            libxcb-keysyms1-dev \
+            libxcb-randr0-dev \
+            libxcb-shape0-dev \
+            libxcb-sync-dev \
+            libxcb-xfixes0-dev \
+            libxcb-xinerama0-dev \
+            libxcb-dri3-dev \
+            libxcb-cursor-dev \
+            libxcb-dri2-0-dev \
+            libxcb-present-dev \
+            libxcb-composite0-dev \
+            libxcb-ewmh-dev \
+            libxcb-res0-dev \
+            uuid-dev \
+            mesa-common-dev \
+            libudev-dev \
+            libdrm-dev \
+            libwayland-dev \
+            libxkbcommon-dev \
+            libegl1-mesa-dev
+
+      - name: Install uv and Conan
+        run: |
+          export CARGO_HOME="$PWD/.cargo"
+          export PATH="$CARGO_HOME/bin:$PATH"
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          uv venv
+          source .venv/bin/activate
+          uv pip install conan==2.*
+
+      - name: Configure compiler
+        run: |
+          if [[ "${{ matrix.compiler }}" == "clang" ]]; then
+            echo "CC=clang" >> $GITHUB_ENV
+            echo "CXX=clang++" >> $GITHUB_ENV
+          else
+            echo "CC=gcc" >> $GITHUB_ENV
+            echo "CXX=g++" >> $GITHUB_ENV
+          fi
+
+      - name: Print compiler versions
+        run: |
+          $CC --version
+          $CXX --version
+
+      - name: Detect and configure Conan profiles
+        run: |
+          source .venv/bin/activate
+          conan profile detect --force
+          cp conan/profiles/${{ matrix.compiler }} ~/.conan2/profiles/custom
+
+      - name: Install dependencies
+        run: |
+          source .venv/bin/activate
+          conan install . --build=missing --profile:host=custom --profile:build=default
+
+      - name: Build
+        run: |
+          cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=$CC -DCMAKE_CXX_COMPILER=$CXX -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          cmake --build build -j$(nproc)
+
+      - name: Show ccache stats
+        run: ccache --show-stats

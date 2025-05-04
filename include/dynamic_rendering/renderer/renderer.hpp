@@ -122,8 +122,8 @@ public:
   auto get_light_environment() -> auto& { return light_environment; }
   auto get_material_by_name(const std::string& name) -> Material*
   {
-    auto renderpass = ::to_renderpass(name);
-    switch (renderpass) {
+    auto current_pass = ::to_renderpass(name);
+    switch (current_pass) {
       using enum RenderPass;
       case MainGeometry:
         return geometry_material.get();
@@ -236,6 +236,30 @@ private:
         planes, [&c = center, &r = radius](const auto& p) {
           return glm::dot(glm::vec3(p), c) + p.w + r < 0.0f;
         });
+    }
+    auto intersects_aabb(const glm::vec3& min, const glm::vec3& max) const
+      -> bool
+    {
+      return std::ranges::none_of(planes, [&min, &max](const auto& p) {
+        const auto normal = glm::vec3(p);
+        float d = p.w;
+        if (normal.x > 0) {
+          d += normal.x * min.x;
+        } else {
+          d += normal.x * max.x;
+        }
+        if (normal.y > 0) {
+          d += normal.y * min.y;
+        } else {
+          d += normal.y * max.y;
+        }
+        if (normal.z > 0) {
+          d += normal.z * min.z;
+        } else {
+          d += normal.z * max.z;
+        }
+        return d < 0.0f;
+      });
     }
   };
   Frustum current_frustum;
