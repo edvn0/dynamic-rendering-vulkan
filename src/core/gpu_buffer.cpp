@@ -79,4 +79,8 @@ GPUBuffer::recreate(size_t size) -> void
     persistent_ptr = alloc_info_result.pMappedData;
 
   current_size = size;
+
+  if (!debug_name.empty()) {
+    set_debug_name(debug_name);
+  }
 }

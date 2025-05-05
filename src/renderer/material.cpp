@@ -138,6 +138,7 @@ reflect_shader_using_spirv_reflect(
     merge_push_constant_range(push_constant_ranges, r);
   }
 }
+
 auto
 Material::create(const Device& device,
                  const PipelineBlueprint& blueprint,
@@ -249,6 +250,19 @@ Material::create(const Device& device,
                          std::move(binds_info)));
   mat->pipeline_hash = blueprint.hash();
   return mat;
+}
+
+auto
+Material::invalidate(const Image* image) -> void
+{
+  for (const auto& [key, binding] : bindings) {
+    const auto* img_binding = dynamic_cast<ImageBinding*>(binding.get());
+    if (img_binding && img_binding->get_underlying_image() == image) {
+      for (auto& dirty_set : per_frame_dirty_flags) {
+        dirty_set.insert(key);
+      }
+    }
+  }
 }
 
 auto

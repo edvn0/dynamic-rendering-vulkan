@@ -118,6 +118,27 @@ Image::recreate() -> void
     .unnormalizedCoordinates = VK_FALSE,
   };
 
+  if (Attachment attachment{ format }; attachment.is_depth()) {
+    sampler_info = {
+      .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
+      .magFilter = VK_FILTER_LINEAR,
+      .minFilter = VK_FILTER_LINEAR,
+      .mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST,
+      .addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER,
+      .addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER,
+      .addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER,
+      .mipLodBias = 0.0f,
+      .anisotropyEnable = VK_FALSE,
+      .maxAnisotropy = 1.f,
+      .compareEnable = VK_TRUE,
+      .compareOp = VK_COMPARE_OP_LESS_OR_EQUAL,
+      .minLod = 0.f,
+      .maxLod = 0.f,
+      .borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE,
+      .unnormalizedCoordinates = VK_FALSE,
+    };
+  }
+
   sampler = sampler_manager.get_sampler(sampler_info);
 
   if (allow_in_ui && sample_count == VK_SAMPLE_COUNT_1_BIT) {

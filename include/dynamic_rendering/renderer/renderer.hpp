@@ -19,6 +19,35 @@
 #include "renderer/material.hpp"
 #include "window/window.hpp"
 
+#include <BS_thread_pool.hpp>
+
+struct CpuTimerSection
+{
+  std::chrono::high_resolution_clock::time_point start{};
+  double duration_ms{};
+
+  void begin() { start = std::chrono::high_resolution_clock::now(); }
+
+  void end()
+  {
+    const auto end = std::chrono::high_resolution_clock::now();
+    duration_ms =
+      std::chrono::duration<double, std::milli>(end - start).count();
+  }
+};
+
+struct RendererProfilingSections
+{
+  CpuTimerSection draw_list_generation;
+  CpuTimerSection shadow_draw_list_generation;
+
+  void reset()
+  {
+    draw_list_generation.duration_ms = 0.0;
+    shadow_draw_list_generation.duration_ms = 0.0;
+  }
+};
+
 enum class RenderPass : std::uint8_t
 {
   MainGeometry,
@@ -26,6 +55,7 @@ enum class RenderPass : std::uint8_t
   Gizmo,
   Line,
   ZPrepass,
+  ColourCorrection,
 };
 inline auto
 to_renderpass(std::string_view name) -> RenderPass
@@ -40,6 +70,8 @@ to_renderpass(std::string_view name) -> RenderPass
     return RenderPass::Line;
   } else if (name == "z_prepass") {
     return RenderPass::ZPrepass;
+  } else if (name == "colour_correction") {
+    return RenderPass::ColourCorrection;
   }
 
   assert(false && "Unknown render pass name");
@@ -135,6 +167,8 @@ public:
         return line_material.get();
       case ZPrepass:
         return z_prepass_material.get();
+      case ColourCorrection:
+        return colour_corrected_material.get();
       default:
         assert(false && "Unknown render pass name");
         return nullptr;
@@ -142,6 +176,7 @@ public:
   }
   auto get_renderer_descriptor_set_layout(Badge<AssetReloader>) const
     -> VkDescriptorSetLayout;
+  auto get_profiling_sections() const { return profiling_sections; }
 
 private:
   const Device* device{ nullptr };
@@ -151,6 +186,7 @@ private:
 
   std::unique_ptr<CommandBuffer> command_buffer;
   std::unique_ptr<GPUBuffer> instance_vertex_buffer;
+  std::unique_ptr<GPUBuffer> instance_shadow_vertex_buffer;
 
   frame_array<VkSemaphore> compute_finished_semaphore{};
   std::unique_ptr<CommandBuffer> compute_command_buffer;
@@ -160,6 +196,9 @@ private:
   std::unique_ptr<Image> geometry_depth_image;
   std::unique_ptr<Material> z_prepass_material;
   std::unique_ptr<Material> geometry_material;
+
+  std::unique_ptr<Image> colour_corrected_image;
+  std::unique_ptr<Material> colour_corrected_material;
 
   std::unique_ptr<Image> shadow_depth_image;
   std::unique_ptr<Material> shadow_material;
@@ -181,6 +220,8 @@ private:
 
   std::unordered_map<DrawCommand, std::vector<InstanceData>, DrawCommandHasher>
     draw_commands{};
+  std::unordered_map<DrawCommand, std::vector<InstanceData>, DrawCommandHasher>
+    shadow_draw_commands{};
 
   auto update_uniform_buffers(std::uint32_t, const glm::mat4&, const glm::mat4&)
     -> void;
@@ -192,7 +233,8 @@ private:
   frame_array<VkDescriptorSet> renderer_descriptor_sets{};
   VkDescriptorSetLayout renderer_descriptor_set_layout{};
   VkDescriptorPool descriptor_pool{};
-  auto create_descriptor_set_layout() -> void;
+
+  RendererProfilingSections profiling_sections;
 
   using DrawList =
     std::vector<std::tuple<DrawCommand, std::uint32_t, std::uint32_t>>;
@@ -203,6 +245,11 @@ private:
   auto run_geometry_pass(std::uint32_t, const DrawList&) -> void;
   auto run_line_pass(std::uint32_t) -> void;
   auto run_gizmo_pass(std::uint32_t) -> void;
+  auto run_colour_correction_pass(std::uint32_t frame_index) -> void;
+  auto run_postprocess_passes(std::uint32_t frame_index) -> void
+  {
+    run_colour_correction_pass(frame_index);
+  }
 
   struct Frustum
   {
@@ -263,6 +310,9 @@ private:
     }
   };
   Frustum current_frustum;
+  Frustum light_frustum;
 
   auto destroy() -> void;
+  auto create_descriptor_set_layout_from_metadata() -> void;
+  auto finalize_renderer_descriptor_sets() -> void;
 };

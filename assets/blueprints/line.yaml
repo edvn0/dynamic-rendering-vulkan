@@ -4,16 +4,17 @@ shaders:
   - stage: fragment
     path: line.frag
 
-rasterization:
-  cull_mode: none
-
 topology: triangle-strip
 
+rasterization:
+  cull_mode: front
+  winding: ccw
+
 depth_stencil:
-  depth_test: false
-  depth_write: false
+  depth_test: true
+  depth_write: true
   format: d32_sfloat
-  compare_op: always
+  compare_op: equal
 
 attachments:
   - format: r32g32b32a32_sfloat

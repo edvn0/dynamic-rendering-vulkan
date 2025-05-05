@@ -4,13 +4,17 @@
 
 #include <execution>
 #include <functional>
+#include <future>
 #include <glm/ext/matrix_clip_space.hpp>
 #include <glm/glm.hpp>
 #include <memory>
 #include <vulkan/vulkan.h>
 
+#include <tracy/Tracy.hpp>
+
 #define GLM_ENABLE_EXPERIMENTAL
 #include <glm/gtx/quaternion.hpp>
+#include <latch>
 
 struct FrustumBuffer
 {
@@ -42,66 +46,129 @@ create_sized_array(const T& value) -> std::array<T, N>
   return arr;
 }
 
-auto
-Renderer::create_descriptor_set_layout() -> void
+struct DescriptorBindingMetadata
 {
-  VkDescriptorSetLayoutBinding binding{
+  uint32_t binding;
+  VkDescriptorType descriptor_type;
+  VkShaderStageFlags stage_flags;
+  std::string_view name;
+  GPUBuffer* buffer{ nullptr };
+  std::size_t element_size{ 0 };
+};
+static std::array<DescriptorBindingMetadata, 4> renderer_bindings_metadata{
+  DescriptorBindingMetadata{
     .binding = 0,
-    .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-    .descriptorCount = 1,
-    .stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT |
-                  VK_SHADER_STAGE_COMPUTE_BIT,
-    .pImmutableSamplers = nullptr,
-  };
-  VkDescriptorSetLayoutBinding shadow_binding{
+    .descriptor_type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+    .stage_flags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT |
+                   VK_SHADER_STAGE_COMPUTE_BIT,
+    .name = "camera_ubo",
+  },
+  DescriptorBindingMetadata{
     .binding = 1,
-    .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-    .descriptorCount = 1,
-    .stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
-    .pImmutableSamplers = nullptr,
-  };
-  VkDescriptorSetLayoutBinding frustum_binding{
+    .descriptor_type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+    .stage_flags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+    .name = "shadow_camera_ubo",
+  },
+  DescriptorBindingMetadata{
     .binding = 2,
-    .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-    .descriptorCount = 1,
-    .stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT |
-                  VK_SHADER_STAGE_COMPUTE_BIT,
-    .pImmutableSamplers = nullptr,
-  };
-  const std::array bindings{ binding, shadow_binding, frustum_binding };
+    .descriptor_type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+    .stage_flags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT |
+                   VK_SHADER_STAGE_COMPUTE_BIT,
+    .name = "frustum_ubo",
+  },
+  DescriptorBindingMetadata{
+    .binding = 3,
+    .descriptor_type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+    .stage_flags = VK_SHADER_STAGE_FRAGMENT_BIT,
+    .name = "shadow_image",
+  },
+};
+
+auto
+Renderer::create_descriptor_set_layout_from_metadata() -> void
+{
+  camera_uniform_buffer = std::make_unique<GPUBuffer>(
+    *device, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, true, "camera_ubo");
+  shadow_camera_buffer = std::make_unique<GPUBuffer>(
+    *device, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, true, "shadow_camera_ubo");
+  frustum_buffer = std::make_unique<GPUBuffer>(
+    *device, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, true, "frustum_ubo");
+
+  for (auto& meta : renderer_bindings_metadata) {
+    if (meta.descriptor_type == VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER) {
+      auto size = [&]() -> std::size_t {
+        if (meta.name == "camera_ubo")
+          return sizeof(CameraBuffer);
+        if (meta.name == "shadow_camera_ubo")
+          return sizeof(ShadowBuffer);
+        if (meta.name == "frustum_ubo")
+          return sizeof(FrustumBuffer);
+        return 0;
+      }();
+
+      auto buf = std::make_unique<GPUBuffer>(*device,
+                                             VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+                                             true,
+                                             std::string(meta.name).c_str());
+
+      meta.buffer = buf.get();
+      meta.element_size = size;
+
+      if (meta.name == "camera_ubo")
+        camera_uniform_buffer = std::move(buf);
+      if (meta.name == "shadow_camera_ubo")
+        shadow_camera_buffer = std::move(buf);
+      if (meta.name == "frustum_ubo")
+        frustum_buffer = std::move(buf);
+    }
+  }
+
+  std::vector<VkDescriptorSetLayoutBinding> layout_bindings;
+  for (const auto& meta : renderer_bindings_metadata) {
+    layout_bindings.push_back({
+      .binding = meta.binding,
+      .descriptorType = meta.descriptor_type,
+      .descriptorCount = 1,
+      .stageFlags = meta.stage_flags,
+    });
+  }
+
   VkDescriptorSetLayoutCreateInfo layout_info{
     .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-    .pNext = nullptr,
-    .flags = 0,
-    .bindingCount = static_cast<std::uint32_t>(bindings.size()),
-    .pBindings = bindings.data(),
+    .bindingCount = static_cast<uint32_t>(layout_bindings.size()),
+    .pBindings = layout_bindings.data(),
   };
+
   vkCreateDescriptorSetLayout(device->get_device(),
                               &layout_info,
                               nullptr,
                               &renderer_descriptor_set_layout);
+}
 
-  std::array<VkDescriptorPoolSize, bindings.size()> pool_sizes{
-    { {
-        .type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-        .descriptorCount = image_count,
-      },
-      {
-        .type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-        .descriptorCount = image_count,
-      },
-      {
-        .type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-        .descriptorCount = image_count,
-      } }
-  };
+auto
+Renderer::finalize_renderer_descriptor_sets() -> void
+{
+  for (const auto& meta : renderer_bindings_metadata) {
+    if (meta.buffer && meta.element_size > 0) {
+      const std::size_t total_bytes = meta.element_size * image_count;
+      auto zero_init = std::make_unique<std::byte[]>(total_bytes);
+      std::memset(zero_init.get(), 0, total_bytes);
+      meta.buffer->upload(std::span{ zero_init.get(), total_bytes });
+    }
+  }
+
+  std::vector<VkDescriptorPoolSize> pool_sizes;
+  for (const auto& meta : renderer_bindings_metadata) {
+    pool_sizes.push_back({
+      .type = meta.descriptor_type,
+      .descriptorCount = image_count,
+    });
+  }
 
   VkDescriptorPoolCreateInfo pool_info{
     .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
-    .pNext = nullptr,
-    .flags = 0,
     .maxSets = image_count,
-    .poolSizeCount = static_cast<std::uint32_t>(pool_sizes.size()),
+    .poolSizeCount = static_cast<uint32_t>(pool_sizes.size()),
     .pPoolSizes = pool_sizes.data(),
   };
 
@@ -111,7 +178,6 @@ Renderer::create_descriptor_set_layout() -> void
   const auto layouts = create_sized_array(renderer_descriptor_set_layout);
   VkDescriptorSetAllocateInfo alloc_info{
     .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
-    .pNext = nullptr,
     .descriptorPool = descriptor_pool,
     .descriptorSetCount = image_count,
     .pSetLayouts = layouts.data(),
@@ -120,91 +186,65 @@ Renderer::create_descriptor_set_layout() -> void
   vkAllocateDescriptorSets(
     device->get_device(), &alloc_info, renderer_descriptor_sets.data());
 
-  {
-    camera_uniform_buffer = std::make_unique<GPUBuffer>(
-      *device, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, true);
-    const auto camera_buffer_bytes =
-      std::make_unique<std::byte[]>(sizeof(CameraBuffer) * image_count);
-    camera_uniform_buffer->upload(std::span<std::byte>{
-      camera_buffer_bytes.get(),
-      sizeof(CameraBuffer) * image_count,
-    });
-  }
-  {
-    shadow_camera_buffer = std::make_unique<GPUBuffer>(
-      *device, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, true);
-    const auto shadow_bytes =
-      std::make_unique<std::byte[]>(sizeof(ShadowBuffer) * image_count);
-    shadow_camera_buffer->upload(std::span<std::byte>{
-      shadow_bytes.get(),
-      sizeof(ShadowBuffer) * image_count,
-    });
-  }
-  {
-    frustum_buffer = std::make_unique<GPUBuffer>(
-      *device, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, true);
-    const auto frustum_bytes =
-      std::make_unique<std::byte[]>(sizeof(FrustumBuffer) * image_count);
-    frustum_buffer->upload(std::span<std::byte>{
-      frustum_bytes.get(),
-      sizeof(FrustumBuffer) * image_count,
-    });
-  }
+  const auto total_bindings = renderer_bindings_metadata.size() * image_count;
 
-  std::vector<VkDescriptorBufferInfo> buffer_infos;
-  buffer_infos.resize(bindings.size() * image_count);
+  std::vector<VkWriteDescriptorSet> write_sets(total_bindings);
+  std::vector<VkDescriptorBufferInfo> buffer_infos(total_bindings);
+  std::vector<VkDescriptorImageInfo> image_infos(total_bindings);
 
   for (std::size_t i = 0; i < image_count; ++i) {
-    VkDescriptorBufferInfo& camera_info = buffer_infos[i * 3 + 0];
-    camera_info = {
-      .buffer = camera_uniform_buffer->get(),
-      .offset = sizeof(CameraBuffer) * i,
-      .range = sizeof(CameraBuffer),
-    };
-    VkDescriptorBufferInfo& shadow_info = buffer_infos[i * 3 + 1];
-    shadow_info = {
-      .buffer = shadow_camera_buffer->get(),
-      .offset = sizeof(ShadowBuffer) * i,
-      .range = sizeof(ShadowBuffer),
-    };
-    VkDescriptorBufferInfo& frustum_info = buffer_infos[i * 3 + 2];
-    frustum_info = {
-      .buffer = frustum_buffer->get(),
-      .offset = sizeof(FrustumBuffer) * i,
-      .range = sizeof(FrustumBuffer),
-    };
+    for (std::size_t j = 0; j < renderer_bindings_metadata.size(); ++j) {
+      const auto& meta = renderer_bindings_metadata[j];
+      const std::size_t index = i * renderer_bindings_metadata.size() + j;
 
-    std::vector<VkWriteDescriptorSet> writes;
-    auto& first = writes.emplace_back();
-    first.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    first.dstSet = renderer_descriptor_sets[i];
-    first.descriptorCount = 1;
-    first.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    first.pBufferInfo = &camera_info;
-    first.dstBinding = 0;
-    auto& second = writes.emplace_back();
-    second.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    second.dstSet = renderer_descriptor_sets[i];
-    second.descriptorCount = 1;
-    second.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    second.pBufferInfo = &shadow_info;
-    second.dstBinding = 1;
-    second.pImageInfo = nullptr;
-    auto& third = writes.emplace_back();
-    third.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    third.dstSet = renderer_descriptor_sets[i];
-    third.descriptorCount = 1;
-    third.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    third.pBufferInfo = &frustum_info;
-    third.dstBinding = 2;
-    third.pImageInfo = nullptr;
+      auto& write = write_sets[index];
+      write = {
+        .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+        .dstSet = renderer_descriptor_sets[i],
+        .dstBinding = meta.binding,
+        .descriptorCount = 1,
+        .descriptorType = meta.descriptor_type,
+      };
 
-    vkUpdateDescriptorSets(device->get_device(),
-                           static_cast<std::uint32_t>(writes.size()),
-                           writes.data(),
-                           0,
-                           nullptr);
+      if (meta.descriptor_type == VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER) {
+        GPUBuffer* buf = nullptr;
+        std::size_t size = 0;
+        if (meta.name == "camera_ubo") {
+          buf = camera_uniform_buffer.get();
+          size = sizeof(CameraBuffer);
+        } else if (meta.name == "shadow_camera_ubo") {
+          buf = shadow_camera_buffer.get();
+          size = sizeof(ShadowBuffer);
+        } else if (meta.name == "frustum_ubo") {
+          buf = frustum_buffer.get();
+          size = sizeof(FrustumBuffer);
+        }
+        buffer_infos[index] = {
+          .buffer = buf->get(),
+          .offset = i * size,
+          .range = size,
+        };
+        write.pBufferInfo = &buffer_infos[index];
+      } else if (meta.descriptor_type ==
+                 VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER) {
+        Image* img = nullptr;
+        if (meta.name == "shadow_image")
+          img = shadow_depth_image.get();
+        image_infos[index] = {
+          .sampler = img->get_sampler(),
+          .imageView = img->get_view(),
+          .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+        };
+        write.pImageInfo = &image_infos[index];
+      }
+    }
   }
+
+  vkUpdateDescriptorSets(device->get_device(),
+                         static_cast<uint32_t>(write_sets.size()),
+                         write_sets.data(),
+                         0,
+                         nullptr);
 }
 
 Renderer::Renderer(const Device& dev,
@@ -213,7 +253,7 @@ Renderer::Renderer(const Device& dev,
   : device(&dev)
   , blueprint_registry(&registry)
 {
-  create_descriptor_set_layout();
+  create_descriptor_set_layout_from_metadata();
 
   command_buffer =
     CommandBuffer::create(dev, VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT);
@@ -270,6 +310,28 @@ Renderer::Renderer(const Device& dev,
   }
 
   {
+    colour_corrected_image =
+      Image::create(*device,
+                    ImageConfiguration{
+                      .extent = win.framebuffer_size(),
+                      .format = VK_FORMAT_B8G8R8A8_SRGB,
+                      .usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
+                               VK_IMAGE_USAGE_SAMPLED_BIT,
+                    });
+
+    auto result = Material::create(*device,
+                                   blueprint_registry->get("colour_correction"),
+                                   renderer_descriptor_set_layout);
+    if (result.has_value()) {
+      colour_corrected_material = std::move(result.value());
+    } else {
+      assert(false && "Failed to create main geometry material.");
+    }
+
+    colour_corrected_material->upload("input_image", geometry_image.get());
+  }
+
+  {
     auto result = Material::create(*device,
                                    blueprint_registry->get("z_prepass"),
                                    renderer_descriptor_set_layout);
@@ -289,8 +351,11 @@ Renderer::Renderer(const Device& dev,
       assert(false && "Failed to create line material.");
     }
 
-    line_instance_buffer = std::make_unique<GPUBuffer>(
-      *device, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, true);
+    line_instance_buffer =
+      std::make_unique<GPUBuffer>(*device,
+                                  VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                                  true,
+                                  "line_instance_vertex_buffer");
 
     auto&& [bytes, instance_size_bytes] =
       make_bytes<LineInstanceData, 100'000>();
@@ -305,12 +370,27 @@ Renderer::Renderer(const Device& dev,
     instance_vertex_buffer = std::make_unique<GPUBuffer>(
       dev,
       VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
-      true);
+      true,
+      "geometry_instance_vertex_buffer");
     auto&& [bytes, instance_size_bytes] = make_bytes<InstanceData, 1'000'000>();
     if (!bytes) {
       assert(false && "Failed to allocate instance vertex buffer.");
     }
     instance_vertex_buffer->upload(
+      std::span<std::byte>{ bytes.get(), instance_size_bytes });
+  }
+
+  {
+    instance_shadow_vertex_buffer = std::make_unique<GPUBuffer>(
+      dev,
+      VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+      true,
+      "geometry_instance_shadow_vertex_buffer");
+    auto&& [bytes, instance_size_bytes] = make_bytes<InstanceData, 1'000'000>();
+    if (!bytes) {
+      assert(false && "Failed to allocate instance vertex buffer.");
+    }
+    instance_shadow_vertex_buffer->upload(
       std::span<std::byte>{ bytes.get(), instance_size_bytes });
   }
 
@@ -420,6 +500,8 @@ Renderer::Renderer(const Device& dev,
     cull_instances_compute_material->upload("CounterBuffer",
                                             culled_instance_count_buffer.get());
   }
+
+  finalize_renderer_descriptor_sets();
 }
 
 auto
@@ -449,6 +531,9 @@ auto
 Renderer::submit(const DrawCommand& cmd, const glm::mat4& transform) -> void
 {
   draw_commands[cmd].emplace_back(transform);
+  if (cmd.casts_shadows) {
+    shadow_draw_commands[cmd].emplace_back(transform);
+  }
 }
 
 auto
@@ -499,25 +584,24 @@ upload_instance_vertex_data(GPUBuffer& buffer,
     for (const auto& [cmd, instances] : draw_commands)
       jobs.emplace_back(&cmd, &instances);
 
-    // Parallel frustum culling and writing into filtered_instances
-    std::for_each(
-      std::execution::par_unseq,
-      jobs.begin(),
-      jobs.end(),
-      [&](const auto& job) {
-        auto [cmd, instances] = job;
-        for (const auto& instance : *instances) {
-          const glm::vec3 center_ws = glm::vec3(instance.transform[3]);
-          const float radius_ws =
-            1.0f * glm::length(glm::vec3(instance.transform[0]));
+    // Parallel frustum culling
+    static thread_local BS::thread_pool<BS::tp::none> pool;
+    auto fut = pool.submit_loop(0, jobs.size(), [&](std::size_t i) {
+      const auto& [cmd, instances] = jobs[i];
+      for (const auto& instance : *instances) {
+        const glm::vec3 center_ws = glm::vec3(instance.transform[3]);
+        const float radius_ws =
+          1.0f * glm::length(glm::vec3(instance.transform[0]));
 
-          if (frustum.intersects(center_ws, radius_ws)) {
-            const std::size_t index =
-              filtered_count.fetch_add(1, std::memory_order_relaxed);
-            filtered_instances[index] = InstanceSubmit{ cmd, instance };
-          }
+        if (frustum.intersects(center_ws, radius_ws)) {
+          const std::size_t index =
+            filtered_count.fetch_add(1, std::memory_order_relaxed);
+          filtered_instances[index] = InstanceSubmit{ cmd, instance };
         }
-      });
+      }
+    });
+
+    fut.wait();
   }
 
   filtered_instances.resize(filtered_count);
@@ -607,6 +691,7 @@ Renderer::update_shadow_buffers(std::uint32_t frame_index) -> void
 
   shadow_camera_buffer->upload_with_offset(std::span{ &shadow_data, 1 },
                                            sizeof(ShadowBuffer) * frame_index);
+  light_frustum.update(shadow_data.light_vp);
 }
 
 auto
@@ -632,42 +717,69 @@ Renderer::begin_frame(std::uint32_t frame_index,
   update_shadow_buffers(frame_index);
   update_frustum(vp);
   draw_commands.clear();
+  shadow_draw_commands.clear();
 }
 
 auto
 Renderer::end_frame(std::uint32_t frame_index) -> void
 {
-  if (draw_commands.empty())
+  ZoneScoped;
+
+  if (shadow_draw_commands.empty() && draw_commands.empty())
     return;
 
+  Renderer::DrawList flat_shadow_draw_commands;
+  Renderer::DrawList flat_draw_commands;
+  std::size_t shadow_count{ 0 };
+
   {
-    auto flat_draw_commands =
-      upload_instance_vertex_data(*instance_vertex_buffer,
-                                  draw_commands,
-                                  current_frustum,
-                                  instance_count_this_frame);
-    upload_line_instance_data();
+    std::latch uploads_remaining(3);
+    static thread_local BS::thread_pool<BS::tp::none> thread_pool{};
 
-    run_culling_compute_pass(frame_index);
+    thread_pool.detach_task([&] {
+      ZoneScopedN("Instance Upload");
+      flat_draw_commands =
+        upload_instance_vertex_data(*instance_vertex_buffer,
+                                    draw_commands,
+                                    current_frustum,
+                                    instance_count_this_frame);
+      uploads_remaining.count_down();
+    });
 
-    DrawList shadow_casting_draws;
-    for (const auto& draw : flat_draw_commands) {
-      auto& [cmd, offset, count] = draw;
-      if (cmd.casts_shadows)
-        shadow_casting_draws.push_back(draw);
-    }
+    thread_pool.detach_task([&] {
+      ZoneScopedN("Shadow Instance Upload");
+      flat_shadow_draw_commands =
+        upload_instance_vertex_data(*instance_shadow_vertex_buffer,
+                                    shadow_draw_commands,
+                                    light_frustum,
+                                    shadow_count);
+      uploads_remaining.count_down();
+    });
 
-    command_buffer->begin_frame(frame_index);
+    thread_pool.detach_task([this, &uploads = uploads_remaining] {
+      ZoneScopedN("Line instance upload");
+      upload_line_instance_data();
+      uploads.count_down();
+    });
 
-    run_shadow_pass(frame_index, shadow_casting_draws);
-    run_z_prepass(frame_index, flat_draw_commands);
-    run_geometry_pass(frame_index, flat_draw_commands);
-    run_line_pass(frame_index);
-    run_gizmo_pass(frame_index);
-
-    command_buffer->submit_and_end(frame_index,
-                                   compute_finished_semaphore.at(frame_index));
+    uploads_remaining.wait();
   }
+
+  run_culling_compute_pass(frame_index);
+
+  command_buffer->begin_frame(frame_index);
+
+  run_shadow_pass(frame_index, flat_shadow_draw_commands);
+  run_z_prepass(frame_index, flat_draw_commands);
+  run_geometry_pass(frame_index, flat_draw_commands);
+  run_line_pass(frame_index);
+  run_gizmo_pass(frame_index);
+
+  run_postprocess_passes(frame_index);
+
+  command_buffer->submit_and_end(frame_index,
+                                 compute_finished_semaphore.at(frame_index));
+
   draw_commands.clear();
 }
 
@@ -677,12 +789,15 @@ Renderer::resize(std::uint32_t width, std::uint32_t height) -> void
   geometry_image->resize(width, height);
   geometry_msaa_image->resize(width, height);
   geometry_depth_image->resize(width, height);
+  colour_corrected_image->resize(width, height);
+
+  colour_corrected_material->invalidate(geometry_image.get());
 }
 
 auto
 Renderer::get_output_image() const -> const Image&
 {
-  return *geometry_image;
+  return *colour_corrected_image;
 }
 
 #pragma region RenderPasses
@@ -691,6 +806,8 @@ auto
 Renderer::run_z_prepass(std::uint32_t frame_index, const DrawList& draw_list)
   -> void
 {
+  ZoneScopedN("Z Prepass");
+
   command_buffer->begin_timer(frame_index, "z_prepass");
 
   const VkCommandBuffer cmd = command_buffer->get(frame_index);
@@ -782,6 +899,8 @@ auto
 Renderer::run_geometry_pass(std::uint32_t frame_index,
                             const DrawList& draw_list) -> void
 {
+  ZoneScopedN("Geometry pass");
+
   command_buffer->begin_timer(frame_index, "geometry_pass");
 
   const VkCommandBuffer cmd = command_buffer->get(frame_index);
@@ -894,12 +1013,13 @@ Renderer::run_geometry_pass(std::uint32_t frame_index,
 auto
 Renderer::run_culling_compute_pass(std::uint32_t frame_index) -> void
 {
+  ZoneScopedN("Compute pass");
+
   compute_command_buffer->begin_frame(frame_index);
   compute_command_buffer->begin_timer(frame_index, "cull_instances");
 
   const auto cmd = compute_command_buffer->get(frame_index);
 
-  // Reset the output counter to zero
   static constexpr std::uint32_t zero = 0;
   culled_instance_count_buffer->upload(std::span{ &zero, 1 });
 
@@ -940,6 +1060,8 @@ Renderer::run_culling_compute_pass(std::uint32_t frame_index) -> void
 auto
 Renderer::run_line_pass(std::uint32_t frame_index) -> void
 {
+  ZoneScopedN("Line pass");
+
   command_buffer->begin_timer(frame_index, "line_pass");
 
   const VkCommandBuffer cmd = command_buffer->get(frame_index);
@@ -1035,6 +1157,8 @@ Renderer::run_line_pass(std::uint32_t frame_index) -> void
 auto
 Renderer::run_gizmo_pass(std::uint32_t frame_index) -> void
 {
+  ZoneScopedN("Gizmo pass");
+
   command_buffer->begin_timer(frame_index, "gizmo_pass");
 
   const VkCommandBuffer cmd = command_buffer->get(frame_index);
@@ -1052,19 +1176,6 @@ Renderer::run_gizmo_pass(std::uint32_t frame_index) -> void
     .clearValue = {}
   };
 
-  VkRenderingAttachmentInfo depth_attachment{
-    .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
-    .pNext = nullptr,
-    .imageView = geometry_depth_image->get_view(),
-    .imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
-    .resolveMode = VK_RESOLVE_MODE_NONE,
-    .resolveImageView = VK_NULL_HANDLE,
-    .resolveImageLayout = VK_IMAGE_LAYOUT_UNDEFINED,
-    .loadOp = VK_ATTACHMENT_LOAD_OP_LOAD,
-    .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
-    .clearValue = {}
-  };
-
   VkRenderingInfo rendering_info{
     .sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
     .pNext = nullptr,
@@ -1075,7 +1186,7 @@ Renderer::run_gizmo_pass(std::uint32_t frame_index) -> void
     .viewMask = 0,
     .colorAttachmentCount = 1,
     .pColorAttachments = &color_attachment,
-    .pDepthAttachment = &depth_attachment,
+    .pDepthAttachment = nullptr,
     .pStencilAttachment = nullptr,
   };
 
@@ -1129,6 +1240,8 @@ auto
 Renderer::run_shadow_pass(std::uint32_t frame_index, const DrawList& draw_list)
   -> void
 {
+  ZoneScopedN("Shadow pass");
+
   command_buffer->begin_timer(frame_index, "shadow_pass");
 
   const VkCommandBuffer cmd = command_buffer->get(frame_index);
@@ -1193,7 +1306,7 @@ Renderer::run_shadow_pass(std::uint32_t frame_index, const DrawList& draw_list)
   for (const auto& [cmd_info, offset, count] : draw_list) {
     const std::array vertex_buffers = {
       cmd_info.vertex_buffer->get(),
-      instance_vertex_buffer->get(),
+      instance_shadow_vertex_buffer->get(),
     };
     constexpr std::array<VkDeviceSize, 2> offsets = { 0ULL, 0ULL };
     vkCmdBindVertexBuffers(cmd,
@@ -1220,6 +1333,87 @@ Renderer::run_shadow_pass(std::uint32_t frame_index, const DrawList& draw_list)
     cmd, shadow_depth_image->get_image());
 
   command_buffer->end_timer(frame_index, "shadow_pass");
+}
+
+auto
+Renderer::run_colour_correction_pass(std::uint32_t frame_index) -> void
+{
+  ZoneScopedN("Colour correction pass");
+
+  command_buffer->begin_timer(frame_index, "colour_correction_pass");
+
+  const auto cmd = command_buffer->get(frame_index);
+  CoreUtils::cmd_transition_image(
+    cmd,
+    {
+      .image = colour_corrected_image->get_image(),
+      .old_layout = VK_IMAGE_LAYOUT_UNDEFINED,
+      .new_layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+      .src_access_mask = VK_ACCESS_SHADER_READ_BIT,
+      .dst_access_mask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+      .src_stage_mask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+      .dst_stage_mask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+    });
+
+  VkClearValue clear_value = { .color = { { 0.F, 0.F, 0.F, 0.F } } };
+  VkRenderingAttachmentInfo color_attachment = {
+    .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+    .imageView = colour_corrected_image->get_view(),
+    .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+    .resolveMode = VK_RESOLVE_MODE_NONE,
+    .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+    .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+    .clearValue = clear_value,
+  };
+
+  VkRenderingInfo rendering_info = {
+    .sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
+    .renderArea = { { 0, 0 },
+                    { colour_corrected_image->width(),
+                      colour_corrected_image->height() } },
+    .layerCount = 1,
+    .colorAttachmentCount = 1,
+    .pColorAttachments = &color_attachment,
+  };
+
+  vkCmdBeginRendering(cmd, &rendering_info);
+
+  VkViewport viewport = {
+    .x = 0.f,
+    .y = static_cast<float>(colour_corrected_image->height()),
+    .width = static_cast<float>(colour_corrected_image->width()),
+    .height = -static_cast<float>(colour_corrected_image->height()),
+    .minDepth = 0.f,
+    .maxDepth = 1.f,
+  };
+  vkCmdSetViewport(cmd, 0, 1, &viewport);
+  vkCmdSetScissor(cmd, 0, 1, &rendering_info.renderArea);
+
+  auto* material = get_material_by_name("colour_correction");
+  const auto& pipeline = material->get_pipeline();
+  vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.pipeline);
+
+  const auto& descriptor_set = material->prepare_for_rendering(frame_index);
+
+  const std::array descriptor_sets{
+    renderer_descriptor_sets[frame_index],
+    descriptor_set,
+  };
+  vkCmdBindDescriptorSets(cmd,
+                          pipeline.bind_point,
+                          pipeline.layout,
+                          0,
+                          static_cast<std::uint32_t>(descriptor_sets.size()),
+                          descriptor_sets.data(),
+                          0,
+                          nullptr);
+
+  vkCmdDraw(cmd, 3, 1, 0, 0);
+  vkCmdEndRendering(cmd);
+
+  CoreUtils::cmd_transition_to_shader_read(cmd,
+                                           colour_corrected_image->get_image());
+  command_buffer->end_timer(frame_index, "colour_correction_pass");
 }
 
 #pragma endregion RenderPasses

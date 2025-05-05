@@ -23,4 +23,7 @@ private:
   Renderer& renderer;
   string_hash_map<std::unordered_set<std::string>> shader_to_pipeline;
   string_hash_map<std::string> filename_to_material;
+
+  auto reload_blueprint_and_material(const std::filesystem::path&) -> void;
+  auto reload_blueprints_for_shader(const std::filesystem::path&) -> void;
 };

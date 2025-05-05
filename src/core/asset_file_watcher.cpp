@@ -4,6 +4,7 @@
 
 #include <chrono>
 #include <shared_mutex>
+#include <tracy/Tracy.hpp>
 
 #ifdef WIN32
 #include <windows.h>
@@ -77,6 +78,7 @@ AssetFileWatcher::collect_dirty() -> string_hash_set
     }
   }
 
+  ZoneScopedN("Collect dirty files");
   std::unique_lock lock(dirty_mutex);
 
   string_hash_set ready;
@@ -108,6 +110,8 @@ AssetFileWatcher::handleFileAction(efsw::WatchID /*watchid*/,
   if (action != efsw::Actions::Modified) {
     return;
   }
+
+  ZoneScopedN("File listener handleFileAction (Modified)");
 
   std::unique_lock lock(dirty_mutex);
   auto full_path = std::filesystem::path{ directory } / filename;

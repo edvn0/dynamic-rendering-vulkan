@@ -74,14 +74,20 @@ Shader::load_binary(const std::string_view file_path,
   -> std::expected<void, ShaderError>
 {
   std::filesystem::path path = file_path;
-
-  if (path.extension() != ".spv") {
+  if (path.extension() != ".spv")
     path += ".spv";
-  }
 
-  auto base_path =
-    std::filesystem::current_path() / "assets" / "shaders" / path;
-  auto result = read_spirv_file(base_path);
+  const auto stripped = path.generic_string().starts_with("shaders/")
+                          ? path.lexically_relative("shaders")
+                          : path;
+
+  auto shader_path = assets_path() / "shaders" / stripped;
+  std::error_code ec;
+  auto abs_path = std::filesystem::canonical(shader_path, ec);
+  if (ec)
+    abs_path = shader_path;
+
+  auto result = read_spirv_file(abs_path);
   if (!result)
     return std::unexpected(result.error());
 
@@ -95,14 +101,20 @@ Shader::load_binary(const std::string_view file_path,
   -> std::expected<void, ShaderError>
 {
   std::filesystem::path path = file_path;
-
-  if (path.extension() != ".spv") {
+  if (path.extension() != ".spv")
     path += ".spv";
-  }
 
-  auto base_path =
-    std::filesystem::current_path() / "assets" / "shaders" / path;
-  auto result = read_spirv_file(base_path);
+  const auto stripped = path.generic_string().starts_with("shaders/")
+                          ? path.lexically_relative("shaders")
+                          : path;
+
+  auto shader_path = assets_path() / "shaders" / stripped;
+  std::error_code ec;
+  auto abs_path = std::filesystem::canonical(shader_path, ec);
+  if (ec)
+    abs_path = shader_path;
+
+  auto result = read_spirv_file(abs_path);
   if (!result)
     return std::unexpected(result.error());
 
@@ -144,7 +156,12 @@ Shader::load_stage(const ShaderStageInfo& info)
   if (!info.empty) {
     // FIXME: We append .spv here. When we support runtime shader compilation,
     // we won't need this.
-    auto shader_path = assets_path() / "shaders" / (info.filepath + ".spv");
+    const auto as_fp = std::filesystem::path{ info.filepath };
+    const auto stripped = as_fp.generic_string().starts_with("shaders/")
+                            ? as_fp.lexically_relative("shaders")
+                            : as_fp;
+
+    auto shader_path = assets_path() / "shaders" / (stripped.string() + ".spv");
     auto abs_path = std::filesystem::canonical(shader_path);
     auto result = read_spirv_file(abs_path);
     if (!result) {

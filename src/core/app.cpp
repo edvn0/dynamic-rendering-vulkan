@@ -16,6 +16,7 @@
 #include <imgui.h>
 #include <implot.h>
 #include <lyra/lyra.hpp>
+#include <tracy/Tracy.hpp>
 
 namespace DynamicRendering {
 
@@ -157,6 +158,8 @@ auto
 App::run() -> std::error_code
 {
   while (running && !window->should_close()) {
+    ZoneScopedN("Main loop");
+
     if (window->framebuffer_resized()) {
       swapchain->request_recreate();
       auto&& [w, h] = window->framebuffer_size();
@@ -175,23 +178,23 @@ App::run() -> std::error_code
     }
 
     const auto dt = timer->get_delta_and_restart_ms();
-    smoother->add_sample(dt);
-    plotter->add_sample(dt);
 
+    {
+      ZoneScopedN("Add samples to smoothers");
+      smoother->add_sample(dt);
+      plotter->add_sample(dt);
+    }
     update(dt);
     interface();
     render();
 
-    const auto dirty_files = file_watcher->collect_dirty();
-    if (dirty_files.empty()) {
-      continue;
-    }
-
-    device->wait_idle();
-    if (!dirty_files.empty()) {
+    if (const auto dirty_files = file_watcher->collect_dirty();
+        !dirty_files.empty()) {
       device->wait_idle();
       asset_reloader->handle_dirty_files(dirty_files);
     }
+
+    FrameMark;
   }
 
   vkDeviceWaitIdle(device->get_device());
@@ -284,6 +287,16 @@ App::interface() -> void
     }
 
     ImGui::EndTable();
+    ImGui::End();
+  }
+
+  if (ImGui::Begin("CPU Timings")) {
+    const auto& p = renderer->get_profiling_sections();
+
+    ImGui::Text("Draw List Gen: %.2f ms", p.draw_list_generation.duration_ms);
+    ImGui::Text("Shadow Draw List Gen: %.2f ms",
+                p.shadow_draw_list_generation.duration_ms);
+
     ImGui::End();
   }
 }

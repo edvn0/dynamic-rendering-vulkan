@@ -25,4 +25,6 @@ layout(set = 0, binding = 2, std140) uniform CameraFrustumPlanes
 }
 frustum_ubo;
 
+layout(set = 0, binding = 3) uniform sampler2DShadow shadow_image;
+
 #endif

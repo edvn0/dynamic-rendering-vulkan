@@ -11,8 +11,7 @@ layout(location = 4) in vec4 a_model_matrix_row1;
 layout(location = 5) in vec4 a_model_matrix_row2;
 layout(location = 6) in vec4 a_model_matrix_row3;
 
-void main()
-{
+void main() {
   mat4 model_matrix = RECONSTRUCT();
   vec4 world_position = model_matrix * vec4(a_position, 1.0);
   gl_Position = shadow_ubo.light_vp * world_position;

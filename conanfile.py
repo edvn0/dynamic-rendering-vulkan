@@ -23,6 +23,8 @@ class VulkanAppConan(ConanFile):
         self.requires("glm/1.0.1")
         self.requires("efsw/1.4.1")
         self.requires("lyra/1.6.1")
+        self.requires("tracy/0.11.1")
+        self.requires("bshoshany-thread-pool/5.0.0")
 
     def build(self):
         cmake = CMake(self)

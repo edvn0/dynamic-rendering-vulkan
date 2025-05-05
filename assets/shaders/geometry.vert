@@ -16,14 +16,10 @@ layout(location = 1) out vec3 v_world_pos;
 layout(location = 2) out vec4 v_light_space_pos;
 
 const int SHADOW_MAP_SIZE = 2048;
-const mat4 shadow_bias_matrix = mat4(
-    0.5, 0.0, 0.0, 0.0,
-    0.0, 0.5, 0.0, 0.0,
-    0.0, 0.0, 0.5, 0.0,
-    0.5, 0.5, 0.5, 1.0);
+const mat4 shadow_bias_matrix = mat4(0.5, 0.0, 0.0, 0.0, 0.0, 0.5, 0.0, 0.0,
+                                     0.0, 0.0, 1.0, 0.0, 0.5, 0.5, 0.0, 1.0);
 
-void main()
-{
+void main() {
   mat4 model_matrix = RECONSTRUCT();
   vec4 world_position = model_matrix * vec4(a_position, 1.0);
 

@@ -155,14 +155,15 @@ Device::get_queue_family_index(VkQueue queue) const -> std::uint32_t
 }
 
 auto
-Device::create_one_time_command_buffer() const
+Device::create_one_time_command_buffer(VkQueue queue) const
   -> std::tuple<VkCommandBuffer, VkCommandPool>
 {
   VkCommandPoolCreateInfo pool_info{
     .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
     .pNext = nullptr,
     .flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT,
-    .queueFamilyIndex = transfer_queue_family_index(),
+    .queueFamilyIndex =
+      get_queue_family_index(queue ? queue : transfer_queue()),
   };
 
   VkCommandPool command_pool{};
@@ -191,7 +192,9 @@ Device::create_one_time_command_buffer() const
 }
 
 auto
-Device::flush(VkCommandBuffer command_buffer, VkCommandPool pool) const -> void
+Device::flush(VkCommandBuffer command_buffer,
+              VkCommandPool pool,
+              VkQueue queue) const -> void
 {
   vkEndCommandBuffer(command_buffer);
 
@@ -207,8 +210,9 @@ Device::flush(VkCommandBuffer command_buffer, VkCommandPool pool) const -> void
     .pSignalSemaphores = nullptr,
   };
 
-  vkQueueSubmit(transfer_queue(), 1, &submit_info, VK_NULL_HANDLE);
-  vkQueueWaitIdle(transfer_queue());
+  auto chosen = queue ? queue : transfer_queue();
+  vkQueueSubmit(chosen, 1, &submit_info, VK_NULL_HANDLE);
+  vkQueueWaitIdle(chosen);
   vkDestroyCommandPool(get_device(), pool, nullptr);
 }
 

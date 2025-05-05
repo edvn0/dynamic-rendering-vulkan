@@ -37,13 +37,12 @@ PipelineBlueprint::hash() const -> std::size_t
   for (const auto& s : shader_stages) {
     hash_combine(s.stage);
 
-    std::ifstream stream(assets_path() / "shaders" / s.filepath,
-                         std::ios::binary);
+    const auto spv_path = assets_path() / "shaders" / (s.filepath + ".spv");
+    std::ifstream stream(spv_path, std::ios::binary);
     if (stream) {
-      std::array<char, 64> head{};
-      stream.read(head.data(), head.size());
-      std::size_t content_hash = std::hash<std::string_view>{}(std::string_view{
-        head.data(), static_cast<std::size_t>(stream.gcount()) });
+      std::vector<char> contents(std::istreambuf_iterator<char>(stream), {});
+      std::size_t content_hash = std::hash<std::string_view>{}(
+        std::string_view(contents.data(), contents.size()));
       hash_combine(content_hash);
     }
   }

@@ -4,13 +4,14 @@ import subprocess
 import multiprocessing
 import sys
 import argparse
-
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 shader_extensions = ['.vert', '.frag', '.comp']
 
+
 def find_shaders(shader_source_dir: pathlib.Path) -> list[pathlib.Path]:
     return [p for p in shader_source_dir.rglob('*') if p.suffix in shader_extensions]
+
 
 def compile_shader(args: tuple[pathlib.Path, pathlib.Path, pathlib.Path]) -> tuple[pathlib.Path, bool, str]:
     shader_path, shader_binary_dir, include_dir = args
@@ -41,30 +42,22 @@ def compile_shader(args: tuple[pathlib.Path, pathlib.Path, pathlib.Path]) -> tup
 
     return shader_path, True, ''
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description='Compile GLSL shaders to SPIR-V using glslc.')
-    parser.add_argument('--source', required=True, help='Path to the shader source directory')
-    parser.add_argument('--output', required=True, help='Path to the shader output directory')
-    args = parser.parse_args()
 
-    shader_source_dir = pathlib.Path(args.source)
-    shader_binary_dir = pathlib.Path(args.output)
+def compile_all_shaders(shader_source_dir: pathlib.Path, shader_binary_dir: pathlib.Path) -> None:
     include_dir = shader_source_dir / 'include'
-
     shaders = find_shaders(shader_source_dir)
     total = len(shaders)
 
     if total == 0:
-        print('No shaders found.')
         return
-
-    print(f'Found {total} shader(s). Starting compilation with {multiprocessing.cpu_count()} threads...\n')
 
     compiled_count = 0
 
     with ThreadPoolExecutor(max_workers=multiprocessing.cpu_count()) as executor:
-        shader_args = [(shader, shader_binary_dir, include_dir) for shader in shaders]
-        future_to_shader = {executor.submit(compile_shader, arg): arg[0] for arg in shader_args}
+        shader_args = [(shader, shader_binary_dir, include_dir)
+                       for shader in shaders]
+        future_to_shader = {executor.submit(
+            compile_shader, arg): arg[0] for arg in shader_args}
 
         for i, future in enumerate(as_completed(future_to_shader), start=1):
             shader_path, was_compiled, error = future.result()
@@ -79,7 +72,18 @@ def main() -> None:
             if was_compiled:
                 compiled_count += 1
 
-    print(f'\nShader compilation finished: {compiled_count}/{total} recompiled.')
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description='Compile GLSL shaders to SPIR-V using glslc.')
+    parser.add_argument('--source', required=True,
+                        help='Path to the shader source directory')
+    parser.add_argument('--output', required=True,
+                        help='Path to the shader output directory')
+    args = parser.parse_args()
+
+    compile_all_shaders(pathlib.Path(args.source), pathlib.Path(args.output))
+
 
 if __name__ == '__main__':
     main()

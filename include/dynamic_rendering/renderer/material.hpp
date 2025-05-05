@@ -45,8 +45,6 @@ public:
 
   auto upload(std::string_view name, const GPUBuffer* buffer) -> void;
   auto upload(std::string_view name, const Image* image) -> void;
-  auto prepare_for_rendering(std::uint32_t frame_index)
-    -> const VkDescriptorSet&;
 
   auto get_pipeline() const -> const CompiledPipeline& { return *pipeline; }
   auto get_descriptor_set(std::uint32_t frame_index) const -> const auto&
@@ -54,7 +52,11 @@ public:
     return descriptor_sets[frame_index];
   }
 
+  auto invalidate(const Image* image) -> void;
+
   auto reload(const PipelineBlueprint&, VkDescriptorSetLayout) -> void;
+  auto prepare_for_rendering(std::uint32_t frame_index)
+    -> const VkDescriptorSet&;
 
 private:
   std::unordered_map<std::string, std::unique_ptr<GPUBinding>> bindings;

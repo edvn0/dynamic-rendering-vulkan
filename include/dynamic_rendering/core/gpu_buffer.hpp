@@ -2,57 +2,19 @@
 
 #include "core/device.hpp"
 #include "core/util.hpp"
-#include "vulkan/vulkan.h"
-
+#include "debug_utils.hpp"
+#include <cstring>
 #include <span>
+#include <string>
 #include <type_traits>
 #include <vk_mem_alloc.h>
+#include <vulkan/vulkan.h>
 
 template<typename T>
 concept AdmitsGPUBuffer =
   std::is_trivially_copyable_v<T> && std::is_trivially_destructible_v<T>;
 
 class GPUBuffer;
-
-#define MAKE_GPU_BUFFER(buffer_member)                                         \
-  auto get_buffer() const -> const GPUBuffer&                                  \
-  {                                                                            \
-    return buffer_member;                                                      \
-  }                                                                            \
-  template<AdmitsGPUBuffer T>                                                  \
-  auto upload(std::span<const T> data) -> void                                 \
-  {                                                                            \
-    buffer_member.upload(data);                                                \
-  }                                                                            \
-  template<AdmitsGPUBuffer T, std::size_t N = std::dynamic_extent>             \
-  auto upload(std::span<T, N> data) -> void                                    \
-  {                                                                            \
-    buffer_member.upload(data);                                                \
-  }                                                                            \
-  template<AdmitsGPUBuffer T, std::size_t N = std::dynamic_extent>             \
-  auto upload_with_offset(std::span<const T, N> data, std::size_t offset)      \
-    -> void                                                                    \
-  {                                                                            \
-    buffer_member.upload_with_offset(data, offset);                            \
-  }                                                                            \
-  template<AdmitsGPUBuffer T, std::size_t N = std::dynamic_extent>             \
-  auto upload_with_offset(std::span<T, N> data, std::size_t offset) -> void    \
-  {                                                                            \
-    buffer_member.upload_with_offset(data, offset);                            \
-  }                                                                            \
-  template<AdmitsGPUBuffer T>                                                  \
-  auto read_into_with_offset(T& user_allocated, std::size_t offset) -> bool    \
-  {                                                                            \
-    return buffer_member.read_into_with_offset(user_allocated, offset);        \
-  }                                                                            \
-  auto get_usage_flags() const -> VkBufferUsageFlags                           \
-  {                                                                            \
-    return buffer_member.get_usage_flags();                                    \
-  }                                                                            \
-  auto get() const -> const VkBuffer&                                          \
-  {                                                                            \
-    return buffer_member.get();                                                \
-  }
 
 auto
 upload_to_device_buffer(const Device& device,
@@ -65,20 +27,33 @@ class GPUBuffer
 public:
   GPUBuffer(const Device& device,
             VkBufferUsageFlags usage,
-            bool mapped_on_create = false)
+            bool mapped_on_create = false,
+            std::string_view name = {})
     : device(device)
     , usage_flags(usage)
     , mapped_on_create(mapped_on_create)
   {
+    if (!name.empty()) {
+      set_name(name);
+    }
   }
+
   ~GPUBuffer();
 
   auto get_usage_flags() const -> VkBufferUsageFlags { return usage_flags; }
+  auto get() const -> const VkBuffer& { return buffer; }
+
+  auto set_name(std::string_view name) -> void
+  {
+    debug_name = std::string(name);
+    if (buffer && allocation) {
+      set_debug_name(debug_name);
+    }
+  }
 
   template<AdmitsGPUBuffer T, std::size_t N = std::dynamic_extent>
   auto upload(std::span<const T, N> data) -> void
   {
-
     const auto required_size = data.size_bytes();
     if (required_size > current_size)
       recreate(required_size);
@@ -103,6 +78,7 @@ public:
       vmaUnmapMemory(device.get_allocator().get(), allocation);
     }
   }
+
   template<AdmitsGPUBuffer T, std::size_t N = std::dynamic_extent>
   auto upload(std::span<T, N> data) -> void
   {
@@ -167,10 +143,16 @@ public:
                 sizeof(T));
     return true;
   }
-  auto get() const -> const VkBuffer& { return buffer; }
 
 private:
   auto recreate(size_t size) -> void;
+
+  auto set_debug_name(std::string_view name) -> void
+  {
+    ::set_debug_name(
+      device, reinterpret_cast<uint64_t>(buffer), VK_OBJECT_TYPE_BUFFER, name);
+    set_vma_allocation_name(device, allocation, name);
+  }
 
   VkBuffer buffer{};
   VmaAllocation allocation{};
@@ -179,16 +161,20 @@ private:
   VkBufferUsageFlags usage_flags{};
   bool mapped_on_create{};
   std::size_t current_size{ 0 };
+  std::string debug_name;
 };
 
 class IndexBuffer
 {
 public:
-  IndexBuffer(const Device& device, VkIndexType type = VK_INDEX_TYPE_UINT32)
+  IndexBuffer(const Device& device,
+              VkIndexType type = VK_INDEX_TYPE_UINT32,
+              std::string_view name = {})
     : buffer(device,
              VK_BUFFER_USAGE_INDEX_BUFFER_BIT |
                VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-             false)
+             false,
+             name)
     , index_type(type)
   {
   }
@@ -196,16 +182,25 @@ public:
   ~IndexBuffer() = default;
 
   template<AdmitsGPUBuffer T, std::size_t N = std::dynamic_extent>
-  auto upload(std::span<const T, N> data) -> void
+  auto upload_indices(std::span<T, N> data) -> void
   {
+    static_assert(std::is_integral_v<T>);
+    static_assert(sizeof(T) == 2 || sizeof(T) == 4);
+
     count = data.size();
-    buffer.upload(data);
+
+    if constexpr (sizeof(T) == 2)
+      index_type = VK_INDEX_TYPE_UINT16;
+    else
+      index_type = VK_INDEX_TYPE_UINT32;
+
+    buffer.upload(std::span<const T, N>{ data });
   }
 
-  MAKE_GPU_BUFFER(buffer)
-
+  auto get_buffer() const -> const GPUBuffer& { return buffer; }
   auto get_count() const -> std::size_t { return count; }
   auto get_index_type() const -> VkIndexType { return index_type; }
+  auto get() const -> const VkBuffer& { return buffer.get(); }
 
 private:
   GPUBuffer buffer;
@@ -216,17 +211,27 @@ private:
 class VertexBuffer
 {
 public:
-  VertexBuffer(const Device& device, bool mapped_on_create = false)
+  VertexBuffer(const Device& device,
+               bool mapped_on_create = false,
+               std::string_view name = {})
     : buffer(device,
              VK_BUFFER_USAGE_VERTEX_BUFFER_BIT |
                VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-             mapped_on_create)
+             mapped_on_create,
+             name)
   {
   }
 
   ~VertexBuffer() = default;
 
-  MAKE_GPU_BUFFER(buffer)
+  template<AdmitsGPUBuffer T, std::size_t N = std::dynamic_extent>
+  auto upload_vertices(std::span<T, N> data) -> void
+  {
+    buffer.upload(std::span<const T, N>{ data });
+  }
+
+  auto get_buffer() const -> const GPUBuffer& { return buffer; }
+  auto get() const -> const VkBuffer& { return buffer.get(); }
 
 private:
   GPUBuffer buffer;

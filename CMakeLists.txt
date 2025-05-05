@@ -38,6 +38,8 @@ find_package(yaml-cpp REQUIRED CONFIG)
 find_package(glm REQUIRED CONFIG)
 find_package(efsw REQUIRED CONFIG)
 find_package(lyra REQUIRED CONFIG)
+find_package(Tracy REQUIRED CONFIG)
+find_package(bshoshany-thread-pool REQUIRED CONFIG)
 
 add_subdirectory(third_party)
 add_subdirectory(client)
@@ -55,6 +57,7 @@ add_library(DynamicRendering_Core STATIC
   src/core/asset_file_watcher.cpp
   src/core/asset_reloader.cpp
   src/core/fs.cpp
+  src/core/debug_utils.cpp
 )
 
 target_include_directories(DynamicRendering_Core PUBLIC
@@ -71,6 +74,8 @@ target_link_libraries(DynamicRendering_Core PUBLIC
   glm::glm
   vk-bootstrap::vk-bootstrap
   VulkanMemoryAllocator
+  Tracy::TracyClient
+  bshoshany-thread-pool::bshoshany-thread-pool
   PRIVATE
   implot
   efsw::efsw

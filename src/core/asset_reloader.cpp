@@ -39,47 +39,16 @@ AssetReloader::track_shader_dependencies(const PipelineBlueprint& blueprint)
 void
 AssetReloader::handle_dirty_files(const string_hash_set& dirty_files)
 {
-  using fs = std::filesystem::path;
+  for (const auto& dirty : dirty_files) {
+    const auto path = std::filesystem::path(dirty);
 
-  for (const auto& file : dirty_files) {
-    if (is_shader_file(file)) {
-      const auto it = shader_to_pipeline.find(file);
-      if (it == shader_to_pipeline.end()) {
-        std::cerr << "No pipelines mapped to shader: " << file << std::endl;
-        continue;
-      }
+    if (path.extension() == ".spv") {
+      auto original_shader_path = path;
+      original_shader_path.replace_extension(); // strip .spv
 
-      for (const auto& pipeline_name : it->second) {
-        auto blueprint_path =
-          assets_path() / "blueprints" / (pipeline_name + ".yaml");
-        if (auto result = blueprint_registry.update(blueprint_path);
-            !result.has_value()) {
-          std::cerr << "Failed to reload blueprint: " << pipeline_name
-                    << std::endl;
-        }
-      }
-      continue;
-    }
-
-    const auto filename = fs(file).filename().string();
-    auto blueprint_path = assets_path() / "blueprints" / filename;
-    if (auto result = blueprint_registry.update(blueprint_path);
-        !result.has_value()) {
-      std::cerr << "Failed to reload blueprint: " << filename << std::endl;
-    }
-
-    std::cout << "Reloaded blueprint: " << filename << std::endl;
-
-    const auto& found_and_maybe_updated_blueprint =
-      blueprint_registry.get(filename_to_material.at(blueprint_path.string()));
-    auto* mat =
-      renderer.get_material_by_name(found_and_maybe_updated_blueprint.name);
-    if (mat) {
-      mat->reload(found_and_maybe_updated_blueprint,
-                  renderer.get_renderer_descriptor_set_layout({}));
-    } else {
-      std::cerr << "Failed to find material for blueprint: " << filename
-                << std::endl;
+      reload_blueprints_for_shader(original_shader_path);
+    } else if (path.extension() == ".yaml") {
+      reload_blueprint_and_material(path);
     }
   }
 }
@@ -89,4 +58,54 @@ AssetReloader::is_shader_file(const std::string_view filename) const
 {
   return filename.ends_with(".spv") || filename.ends_with(".vert") ||
          filename.ends_with(".frag") || filename.ends_with(".glsl");
+}
+
+auto
+AssetReloader::reload_blueprint_and_material(
+  const std::filesystem::path& blueprint_path) -> void
+{
+  const auto abs_path = blueprint_path.lexically_normal();
+
+  if (auto result = blueprint_registry.update(abs_path); !result.has_value()) {
+    std::cerr << "Failed to reload blueprint: " << blueprint_path << std::endl;
+    return;
+  }
+
+  const std::string abs_str = abs_path.string();
+
+  auto it = filename_to_material.find(abs_str);
+  if (it == filename_to_material.end()) {
+    std::cerr << "No tracked material for: " << abs_str << std::endl;
+    return;
+  }
+
+  const auto& blueprint = blueprint_registry.get(it->second);
+  auto* mat = renderer.get_material_by_name(blueprint.name);
+
+  if (!mat) {
+    std::cerr << "Failed to find material for: " << blueprint.name << std::endl;
+    return;
+  }
+
+  mat->reload(blueprint, renderer.get_renderer_descriptor_set_layout({}));
+  std::cout << "Reloaded material: " << blueprint.name << std::endl;
+}
+
+auto
+AssetReloader::reload_blueprints_for_shader(
+  const std::filesystem::path& shader_path) -> void
+{
+  const std::string shader_key = shader_path.string();
+
+  const auto it = shader_to_pipeline.find(shader_key);
+  if (it == shader_to_pipeline.end()) {
+    std::cerr << "No pipelines mapped to shader: " << shader_key << std::endl;
+    return;
+  }
+
+  for (const auto& pipeline_name : it->second) {
+    const auto blueprint_path =
+      assets_path() / "blueprints" / (pipeline_name + ".yaml");
+    reload_blueprint_and_material(blueprint_path);
+  }
 }

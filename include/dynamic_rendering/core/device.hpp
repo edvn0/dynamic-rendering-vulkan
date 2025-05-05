@@ -32,9 +32,10 @@ public:
   auto get_max_sample_count(VkSampleCountFlags = 0) const
     -> VkSampleCountFlagBits;
 
-  auto create_one_time_command_buffer() const
+  auto create_one_time_command_buffer(VkQueue = VK_NULL_HANDLE) const
     -> std::tuple<VkCommandBuffer, VkCommandPool>;
-  auto flush(VkCommandBuffer, VkCommandPool) const -> void;
+  auto flush(VkCommandBuffer, VkCommandPool, VkQueue = VK_NULL_HANDLE) const
+    -> void;
   auto wait_idle() const -> void;
 
   auto destroy() -> void;
