@@ -11,6 +11,7 @@
 
 #include "core/config.hpp"
 #include "core/forward.hpp"
+#include "core/util.hpp"
 #include "pipeline/compute_pipeline_factory.hpp"
 #include "pipeline/pipeline_factory.hpp"
 
@@ -59,9 +60,8 @@ public:
     -> const VkDescriptorSet&;
 
 private:
-  std::unordered_map<std::string, std::unique_ptr<GPUBinding>> bindings;
-  std::unordered_map<std::string, std::tuple<std::uint32_t, std::uint32_t>>
-    binding_info;
+  string_hash_map<std::unique_ptr<GPUBinding>> bindings;
+  string_hash_map<std::tuple<std::uint32_t, std::uint32_t>> binding_info;
   frame_array<std::unordered_set<std::string>> per_frame_dirty_flags;
 
   const Device* device{ nullptr };
@@ -79,8 +79,7 @@ private:
            std::span<const VkDescriptorSetLayout>,
            VkDescriptorPool,
            std::unique_ptr<CompiledPipeline>,
-           std::unordered_map<std::string,
-                              std::tuple<std::uint32_t, std::uint32_t>>&&);
+           string_hash_map<std::tuple<std::uint32_t, std::uint32_t>>&&);
 
   auto destroy() -> void;
 

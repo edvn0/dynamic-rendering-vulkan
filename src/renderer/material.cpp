@@ -63,8 +63,8 @@ reflect_shader_using_spirv_reflect(
   std::string_view file_path,
   std::vector<VkDescriptorSetLayoutBinding>& bindings,
   std::vector<VkPushConstantRange>& push_constant_ranges,
-  std::unordered_map<std::string, std::tuple<std::uint32_t, std::uint32_t>>&
-    binding_info) -> void
+  string_hash_map<std::tuple<std::uint32_t, std::uint32_t>>& binding_info)
+  -> void
 {
   std::vector<std::uint8_t> shader_code;
   if (!Shader::load_binary(file_path, shader_code)) {
@@ -152,8 +152,7 @@ Material::create(const Device& device,
 
   std::vector<VkDescriptorSetLayoutBinding> binds;
   std::vector<VkPushConstantRange> push_constants;
-  std::unordered_map<std::string, std::tuple<std::uint32_t, std::uint32_t>>
-    binds_info;
+  string_hash_map<std::tuple<std::uint32_t, std::uint32_t>> binds_info;
 
   for (const auto& stage : blueprint.shader_stages) {
     if (!stage.empty)
@@ -293,12 +292,11 @@ Material::Material(
   std::span<const VkDescriptorSetLayout> ls,
   VkDescriptorPool p,
   std::unique_ptr<CompiledPipeline> pipe,
-  std::unordered_map<std::string, std::tuple<std::uint32_t, std::uint32_t>>&&
-    binds)
+  string_hash_map<std::tuple<std::uint32_t, std::uint32_t>>&& binds)
   : binding_info(std::move(binds))
   , device(&dev)
   , descriptor_sets(std::move(sets))
-  , descriptor_set_layout(ls[0])
+  , descriptor_set_layout(ls[0]) // FIXME: This is risky
   , descriptor_pool(p)
   , pipeline(std::move(pipe))
   , pipeline_hash()

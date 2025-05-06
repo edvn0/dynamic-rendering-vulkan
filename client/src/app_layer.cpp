@@ -67,7 +67,8 @@ generate_cube_counter_clockwise(const Device& device)
   return std::make_pair(std::move(vertex_buffer), std::move(index_buffer));
 }
 
-AppLayer::AppLayer(const Device& dev)
+AppLayer::AppLayer(const Device& dev, BS::priority_thread_pool* pool)
+  : thread_pool(pool)
 {
   quad_vertex_buffer =
     std::make_unique<VertexBuffer>(dev, false, "quad_vertices");
@@ -145,10 +146,8 @@ AppLayer::on_update(double ts) -> void
   angle_xyz += glm::vec3{ delta };
   angle_xyz = glm::mod(angle_xyz, glm::vec3{ 360.f });
 
-  static thread_local BS::thread_pool<BS::tp::none> pool{};
-
   const auto count = transforms.size();
-  const std::size_t num_threads = pool.get_thread_count();
+  const std::size_t num_threads = thread_pool->get_thread_count();
   const std::size_t chunk_size = (count + num_threads - 1) / num_threads;
 
   // We use a latch + detach_task approach here instead of submit_task +
@@ -170,10 +169,11 @@ AppLayer::on_update(double ts) -> void
       continue;
     }
 
-    pool.detach_task([=,
-                      root = std::span(transforms.data(), transforms.size()),
-                      angle = angle_xyz,
-                      &latch] {
+    thread_pool->detach_task([=,
+                              root =
+                                std::span(transforms.data(), transforms.size()),
+                              angle = angle_xyz,
+                              &latch] {
       ZoneScopedN("Batch rotate");
 
       for (std::size_t i = begin; i < end; ++i) {

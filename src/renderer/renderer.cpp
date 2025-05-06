@@ -249,9 +249,11 @@ Renderer::finalize_renderer_descriptor_sets() -> void
 
 Renderer::Renderer(const Device& dev,
                    const BlueprintRegistry& registry,
-                   const Window& win)
+                   const Window& win,
+                   BS::priority_thread_pool& p)
   : device(&dev)
   , blueprint_registry(&registry)
+  , thread_pool(&p)
 {
   create_descriptor_set_layout_from_metadata();
 
@@ -557,7 +559,8 @@ Renderer::submit_lines(const glm::vec3& start,
 }
 
 static auto
-upload_instance_vertex_data(GPUBuffer& buffer,
+upload_instance_vertex_data(auto& pool,
+                            GPUBuffer& buffer,
                             const auto& draw_commands,
                             const auto& frustum,
                             auto& instance_count_this_frame)
@@ -585,7 +588,6 @@ upload_instance_vertex_data(GPUBuffer& buffer,
       jobs.emplace_back(&cmd, &instances);
 
     // Parallel frustum culling
-    static thread_local BS::thread_pool<BS::tp::none> pool;
     auto fut = pool.submit_loop(0, jobs.size(), [&](std::size_t i) {
       const auto& [cmd, instances] = jobs[i];
       for (const auto& instance : *instances) {
@@ -734,29 +736,29 @@ Renderer::end_frame(std::uint32_t frame_index) -> void
 
   {
     std::latch uploads_remaining(3);
-    static thread_local BS::thread_pool<BS::tp::none> thread_pool{};
-
-    thread_pool.detach_task([&] {
+    thread_pool->detach_task([&] {
       ZoneScopedN("Instance Upload");
       flat_draw_commands =
-        upload_instance_vertex_data(*instance_vertex_buffer,
+        upload_instance_vertex_data(*thread_pool,
+                                    *instance_vertex_buffer,
                                     draw_commands,
                                     current_frustum,
                                     instance_count_this_frame);
       uploads_remaining.count_down();
     });
 
-    thread_pool.detach_task([&] {
+    thread_pool->detach_task([&] {
       ZoneScopedN("Shadow Instance Upload");
       flat_shadow_draw_commands =
-        upload_instance_vertex_data(*instance_shadow_vertex_buffer,
+        upload_instance_vertex_data(*thread_pool,
+                                    *instance_shadow_vertex_buffer,
                                     shadow_draw_commands,
                                     light_frustum,
                                     shadow_count);
       uploads_remaining.count_down();
     });
 
-    thread_pool.detach_task([this, &uploads = uploads_remaining] {
+    thread_pool->detach_task([this, &uploads = uploads_remaining] {
       ZoneScopedN("Line instance upload");
       upload_line_instance_data();
       uploads.count_down();

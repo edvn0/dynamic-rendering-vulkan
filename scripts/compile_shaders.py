@@ -13,12 +13,12 @@ def find_shaders(shader_source_dir: pathlib.Path) -> list[pathlib.Path]:
     return [p for p in shader_source_dir.rglob('*') if p.suffix in shader_extensions]
 
 
-def compile_shader(args: tuple[pathlib.Path, pathlib.Path, pathlib.Path]) -> tuple[pathlib.Path, bool, str]:
-    shader_path, shader_binary_dir, include_dir = args
+def compile_shader(args: tuple[pathlib.Path, pathlib.Path, pathlib.Path, bool, bool]) -> tuple[pathlib.Path, bool, str]:
+    shader_path, shader_binary_dir, include_dir, optimize, force = args
     shader_binary_dir.mkdir(parents=True, exist_ok=True)
     output_spv = shader_binary_dir / (shader_path.name + '.spv')
 
-    if output_spv.exists() and output_spv.stat().st_mtime >= shader_path.stat().st_mtime:
+    if not force and output_spv.exists() and output_spv.stat().st_mtime >= shader_path.stat().st_mtime:
         return shader_path, False, ''
 
     result = subprocess.run(
@@ -38,12 +38,23 @@ def compile_shader(args: tuple[pathlib.Path, pathlib.Path, pathlib.Path]) -> tup
     )
 
     if result.returncode != 0:
+        print(f'[Error] {shader_path.name}: {result.stderr.strip()}', file=sys.stderr)
         return shader_path, True, result.stderr.strip()
+
+    if optimize:
+        opt_result = subprocess.run(
+            ['spirv-opt', '-O', '--preserve-bindings', '--preserve-interface', str(output_spv), '-o', str(output_spv)],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True
+        )
+        if opt_result.returncode != 0:
+            return shader_path, True, opt_result.stderr.strip()
 
     return shader_path, True, ''
 
 
-def compile_all_shaders(shader_source_dir: pathlib.Path, shader_binary_dir: pathlib.Path) -> None:
+def compile_all_shaders(shader_source_dir: pathlib.Path, shader_binary_dir: pathlib.Path, optimize: bool, force: bool) -> None:
     include_dir = shader_source_dir / 'include'
     shaders = find_shaders(shader_source_dir)
     total = len(shaders)
@@ -51,38 +62,29 @@ def compile_all_shaders(shader_source_dir: pathlib.Path, shader_binary_dir: path
     if total == 0:
         return
 
-    compiled_count = 0
-
     with ThreadPoolExecutor(max_workers=multiprocessing.cpu_count()) as executor:
-        shader_args = [(shader, shader_binary_dir, include_dir)
-                       for shader in shaders]
-        future_to_shader = {executor.submit(
-            compile_shader, arg): arg[0] for arg in shader_args}
+        shader_args = [(shader, shader_binary_dir, include_dir, optimize, force) for shader in shaders]
+        future_to_shader = {executor.submit(compile_shader, arg): arg[0] for arg in shader_args}
 
         for i, future in enumerate(as_completed(future_to_shader), start=1):
             shader_path, was_compiled, error = future.result()
 
             if error:
                 print(f'[Error] {shader_path.name}: {error}', file=sys.stderr)
-                sys.exit(1)
 
             status = 'Compiled' if was_compiled else 'Up-to-date'
             print(f'[{i}/{total}] {status}: {shader_path.name}')
 
-            if was_compiled:
-                compiled_count += 1
-
 
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        description='Compile GLSL shaders to SPIR-V using glslc.')
-    parser.add_argument('--source', required=True,
-                        help='Path to the shader source directory')
-    parser.add_argument('--output', required=True,
-                        help='Path to the shader output directory')
+    parser = argparse.ArgumentParser(description='Compile GLSL shaders to SPIR-V using glslc.')
+    parser.add_argument('--source', required=True, help='Path to the shader source directory')
+    parser.add_argument('--output', required=True, help='Path to the shader output directory')
+    parser.add_argument('--optimize', action='store_true', help='Run spirv-opt -O on compiled shaders')
+    parser.add_argument('--force', action='store_true', help='Force recompilation of all shaders regardless of timestamps')
     args = parser.parse_args()
 
-    compile_all_shaders(pathlib.Path(args.source), pathlib.Path(args.output))
+    compile_all_shaders(pathlib.Path(args.source), pathlib.Path(args.output), args.optimize, args.force)
 
 
 if __name__ == '__main__':

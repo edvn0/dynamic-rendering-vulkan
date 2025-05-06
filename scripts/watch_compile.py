@@ -8,7 +8,7 @@ from watchdog.observers import Observer
 from colorama import Fore, Style, init as init_colorama
 from watchdog.events import FileSystemEventHandler, FileModifiedEvent
 
-from compile_shaders import compile_all_shaders
+from compile_shaders import compile_all_shaders, compile_shader
 
 init_colorama()
 
@@ -20,51 +20,31 @@ def should_compile(path: pathlib.Path) -> bool:
     return path.suffix in SHADER_EXTENSIONS
 
 
-def compile_shader(shader_path: pathlib.Path, shader_output_dir: pathlib.Path, include_dir: pathlib.Path) -> None:
-    shader_output_dir.mkdir(parents=True, exist_ok=True)
-    output_spv = shader_output_dir / (shader_path.name + '.spv')
-
-    result = subprocess.run(
-        [
-            'glslc',
-            str(shader_path),
-            '-o', str(output_spv),
-            '-g',
-            '-I', str(include_dir),
-            '--target-env=vulkan1.4',
-            '-x', 'glsl',
-            '-Werror'
-        ],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True
-    )
-
-    if result.returncode != 0:
-        print(
-            f'{Fore.RED}[Error] {shader_path.name}: {result.stderr.strip()}{Style.RESET_ALL}', file=sys.stderr)
-    else:
-        print(f'{Fore.GREEN}[Compiled] {shader_path.name}{Style.RESET_ALL}')
-
-
 class DebouncedCompiler:
-    def __init__(self, loop: asyncio.AbstractEventLoop, output_dir: pathlib.Path, include_dir: pathlib.Path, source_dir: pathlib.Path):
+    def __init__(
+        self,
+        loop: asyncio.AbstractEventLoop,
+        output_dir: pathlib.Path,
+        include_dir: pathlib.Path,
+        source_dir: pathlib.Path,
+        optimize: bool,
+    ):
         self._loop = loop
         self._output_dir = output_dir
         self._include_dir = include_dir
         self._source_dir = source_dir
+        self._optimize = optimize
         self._tasks: dict[pathlib.Path, asyncio.TimerHandle] = {}
 
     def schedule(self, path: pathlib.Path) -> None:
         if path in self._tasks:
             self._tasks[path].cancel()
-        handle = self._loop.call_later(
-            DEBOUNCE_SECONDS, self._compile_sync, path)
+        handle = self._loop.call_later(DEBOUNCE_SECONDS, self._compile_sync, path)
         self._tasks[path] = handle
 
     def _compile_sync(self, path: pathlib.Path) -> None:
         self._tasks.pop(path, None)
-        compile_shader(path, self._output_dir, self._include_dir)
+        compile_shader((path, self._output_dir, self._include_dir, self._optimize, False))
 
     def cancel_all(self) -> None:
         for handle in self._tasks.values():
@@ -76,9 +56,8 @@ class DebouncedCompiler:
 
     def recompile_all(self) -> None:
         print(f'{Fore.YELLOW}Recompiling all shaders...{Style.RESET_ALL}')
-        compile_all_shaders(self._source_dir, self._output_dir)
-        print(
-            f'{Fore.CYAN}[Done] Full recompilation finished{Style.RESET_ALL}')
+        compile_all_shaders(self._source_dir, self._output_dir, self._optimize, True)
+        print(f'{Fore.CYAN}[Done] Full recompilation finished{Style.RESET_ALL}')
 
 
 class ShaderEventHandler(FileSystemEventHandler):
@@ -110,13 +89,13 @@ async def print_status(compiler: DebouncedCompiler, stop_event: asyncio.Event) -
         await asyncio.sleep(1)
 
 
-async def main(source: str, output: str) -> None:
+async def main(source: str, output: str, optimize: bool) -> None:
     source_dir = pathlib.Path(source).resolve()
     output_dir = pathlib.Path(output).resolve()
     include_dir = source_dir / 'include'
 
     loop = asyncio.get_running_loop()
-    compiler = DebouncedCompiler(loop, output_dir, include_dir, source_dir)
+    compiler = DebouncedCompiler(loop, output_dir, include_dir, source_dir, optimize)
     handler = ShaderEventHandler(compiler)
 
     observer = Observer()
@@ -153,8 +132,9 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--source', required=True)
     parser.add_argument('--output', required=True)
+    parser.add_argument('--optimize', action='store_true', default=True)
     args = parser.parse_args()
 
-    compile_all_shaders(pathlib.Path(args.source), pathlib.Path(args.output))
+    compile_all_shaders(pathlib.Path(args.source), pathlib.Path(args.output), args.optimize, True)
 
-    asyncio.run(main(args.source, args.output))
+    asyncio.run(main(args.source, args.output, args.optimize))

@@ -55,9 +55,8 @@ public:
 
   ~Shader();
 
-  static auto load_binary(const std::string_view, std::vector<std::uint8_t>&)
-    -> std::expected<void, ShaderError>;
-  static auto load_binary(const std::string_view, std::vector<std::uint32_t>&)
+  static auto load_binary(std::string_view file_path,
+                          std::vector<std::uint8_t>& output)
     -> std::expected<void, ShaderError>;
 
 private:

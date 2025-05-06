@@ -15,9 +15,12 @@ struct Window::WindowData
 };
 
 auto
-Window::create(const WindowConfiguration& config) -> std::unique_ptr<Window>
+Window::create(const WindowConfiguration& config, std::filesystem::path path)
+  -> std::unique_ptr<Window>
 {
-  return std::unique_ptr<Window>(new Window(config));
+  auto window = std::unique_ptr<Window>(new Window(config));
+  window->config_path = std::move(path);
+  return window;
 }
 
 auto
@@ -81,12 +84,34 @@ Window::Window(const WindowConfiguration& config)
 
   auto&& [width, height] = config.size.as<std::int32_t>();
 
+  GLFWmonitor* selected_monitor = nullptr;
+#ifdef USE_MONITOR_SELECTION
+  if (config.monitor_name) {
+    int count;
+    GLFWmonitor** monitors = glfwGetMonitors(&count);
+    for (int i = 0; i < count; ++i) {
+      const char* name = glfwGetMonitorName(monitors[i]);
+      if (name != nullptr && *config.monitor_name == name) {
+        selected_monitor = monitors[i];
+        break;
+      }
+    }
+  }
+#endif
+
   glfw_window =
-    glfwCreateWindow(width, height, "Vulkan Window", nullptr, nullptr);
+    glfwCreateWindow(width,
+                     height,
+                     "Vulkan Window",
+                     selected_monitor == nullptr ? nullptr : selected_monitor,
+                     nullptr);
   if (!glfw_window) {
     glfwTerminate();
     assert(false && "Failed to create GLFW window");
   }
+
+  if (config.x && config.y)
+    glfwSetWindowPos(glfw_window, *config.x, *config.y);
 
   glfwSetWindowUserPointer(glfw_window, user_data.get());
   hookup_events();
@@ -122,10 +147,12 @@ auto
 Window::cleanup() -> void
 {
   if (glfw_window)
+    save_window_config(config_path, glfw_window);
+
+  if (glfw_window)
     glfwDestroyWindow(glfw_window);
 
   glfwTerminate();
-
   Input::destroy();
 }
 

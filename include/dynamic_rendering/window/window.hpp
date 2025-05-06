@@ -8,20 +8,12 @@
 #include "core/extent.hpp"
 #include "core/forward.hpp"
 #include "core/util.hpp"
+#include "window/window_configuration.hpp"
 
 extern "C"
 {
   struct GLFWwindow;
 }
-
-struct WindowConfiguration
-{
-  std::string title{ "Dynamic Rendering" };
-  Extent2D size{ 1280, 720 };
-  bool resizable{ true };
-  bool decorated{ true };
-  bool fullscreen{ false };
-};
 
 class Window
 {
@@ -44,7 +36,8 @@ public:
     -> void;
 
   auto set_event_callback(std::function<void(Event&)> callback) -> void;
-  static auto create(const WindowConfiguration& config)
+  static auto create(const WindowConfiguration&,
+                     std::filesystem::path = get_default_config_path())
     -> std::unique_ptr<Window>;
 
 private:
@@ -52,8 +45,9 @@ private:
   VkSurfaceKHR vk_surface{ VK_NULL_HANDLE };
   struct WindowData;
   std::unique_ptr<WindowData> user_data;
+  std::filesystem::path config_path;
 
-  Window(const WindowConfiguration&);
+  explicit Window(const WindowConfiguration&);
   auto cleanup() -> void;
   auto hookup_events() -> void;
 };

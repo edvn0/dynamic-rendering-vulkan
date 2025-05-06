@@ -3,6 +3,7 @@
 #include "core/extent.hpp"
 #include "core/forward.hpp"
 
+#include <BS_thread_pool.hpp>
 #include <expected>
 #include <filesystem>
 #include <memory>
@@ -19,6 +20,7 @@ struct ApplicationArguments
   std::string title = "Dynamic Rendering";
   std::string working_directory = ".";
   Extent2D window_size = { 1280, 720 };
+  std::optional<std::filesystem::path> window_config_path{};
 
   auto assets_path() const -> std::filesystem::path
   {
@@ -40,12 +42,24 @@ public:
   auto add_layer(std::unique_ptr<ILayer> layer) -> void;
 
   template<typename T, typename... Args>
-  auto add_layer(Args&&... args) -> void
+  auto add_layer(Args&&... args)
   {
-    layers.emplace_back(
-      std::make_unique<T>(*device, std::forward<Args>(args)...));
+    if constexpr (std::is_constructible_v<T,
+                                          Device&,
+                                          BS::priority_thread_pool*,
+                                          Args...>) {
+      auto layer =
+        std::make_unique<T>(*device, &thread_pool, std::forward<Args>(args)...);
+      layers.emplace_back(std::move(layer));
+    } else if constexpr (std::is_constructible_v<T, Device&, Args...>) {
+      auto layer = std::make_unique<T>(*device, std::forward<Args>(args)...);
+      layers.emplace_back(std::move(layer));
+    } else {
+      static_assert(false,
+                    "Layer constructor must be compatible with (Device&, "
+                    "[BS::thread_pool*], Args...)");
+    }
   }
-
   auto run() -> std::error_code;
 
 private:
@@ -55,6 +69,7 @@ private:
   auto interface() -> void;
 
 private:
+  BS::thread_pool<BS::tp::priority> thread_pool;
   std::unique_ptr<Core::Instance> instance;
   std::unique_ptr<Window> window;
   std::unique_ptr<Device> device;
@@ -73,7 +88,6 @@ private:
   bool running = true;
 
   std::unique_ptr<AssetFileWatcher> file_watcher;
-  std::unordered_map<std::string, std::string> filename_to_material_name;
 };
 
 }

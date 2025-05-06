@@ -56,6 +56,7 @@ enum class RenderPass : std::uint8_t
   Line,
   ZPrepass,
   ColourCorrection,
+  ComputeCulling,
 };
 inline auto
 to_renderpass(std::string_view name) -> RenderPass
@@ -72,6 +73,8 @@ to_renderpass(std::string_view name) -> RenderPass
     return RenderPass::ZPrepass;
   } else if (name == "colour_correction") {
     return RenderPass::ColourCorrection;
+  } else if (name == "compute_culling") {
+    return RenderPass::ComputeCulling;
   }
 
   assert(false && "Unknown render pass name");
@@ -131,7 +134,10 @@ struct DrawCommandHasher
 class Renderer
 {
 public:
-  Renderer(const Device&, const BlueprintRegistry&, const Window&);
+  Renderer(const Device&,
+           const BlueprintRegistry&,
+           const Window&,
+           BS::priority_thread_pool&);
   ~Renderer();
 
   auto submit(const DrawCommand&, const glm::mat4& = glm::mat4{ 1.0F }) -> void;
@@ -169,6 +175,8 @@ public:
         return z_prepass_material.get();
       case ColourCorrection:
         return colour_corrected_material.get();
+      case ComputeCulling:
+        return cull_instances_compute_material.get();
       default:
         assert(false && "Unknown render pass name");
         return nullptr;
@@ -181,6 +189,7 @@ public:
 private:
   const Device* device{ nullptr };
   const BlueprintRegistry* blueprint_registry{ nullptr };
+  BS::priority_thread_pool* thread_pool{ nullptr };
 
   LightEnvironment light_environment;
 

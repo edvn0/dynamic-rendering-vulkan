@@ -111,12 +111,29 @@ private:
 };
 
 App::App(const ApplicationArguments& args)
+  : thread_pool(std::thread::hardware_concurrency())
 {
-  instance = std::make_unique<Core::Instance>(Core::Instance::create());
-  window = Window::create({ .title = args.title, .size = args.window_size });
-  window->create_surface(*instance);
-  device =
-    std::make_unique<Device>(Device::create(*instance, window->surface()));
+
+  {
+    ZoneScopedN("Create instance");
+    instance = std::make_unique<Core::Instance>(Core::Instance::create());
+  }
+  {
+    ZoneScopedN("Create window");
+    const auto path =
+      args.window_config_path.value_or(get_default_config_path());
+    auto config = load_window_config(path);
+    config.title = args.title;
+    config.size = args.window_size;
+
+    window = Window::create(config, path);
+    window->create_surface(*instance);
+  }
+  {
+    ZoneScopedN("Create device");
+    device =
+      std::make_unique<Device>(Device::create(*instance, window->surface()));
+  }
 
   Image::init_sampler_cache(*device);
 
@@ -125,8 +142,8 @@ App::App(const ApplicationArguments& args)
 
   gui_system = std::make_unique<GUISystem>(*instance, *device, *window);
   swapchain = std::make_unique<Swapchain>(*device, *window);
-
-  renderer = std::make_unique<Renderer>(*device, *blueprint_registry, *window);
+  renderer = std::make_unique<Renderer>(
+    *device, *blueprint_registry, *window, thread_pool);
 
   auto&& [w, h] = window->framebuffer_size();
   camera = std::make_unique<EditorCamera>(
@@ -165,7 +182,7 @@ App::run() -> std::error_code
       auto&& [w, h] = window->framebuffer_size();
       camera->resize(w, h);
       renderer->resize(w, h);
-      for (auto& layer : layers)
+      for (const auto& layer : layers)
         layer->on_resize(w, h);
       window->set_resize_flag(false);
       continue;
@@ -199,7 +216,7 @@ App::run() -> std::error_code
 
   vkDeviceWaitIdle(device->get_device());
   Image::destroy_samplers();
-  for (auto& layer : layers)
+  for (const auto& layer : layers)
     layer->on_destroy();
 
   renderer.reset();
@@ -219,7 +236,7 @@ auto
 App::interface() -> void
 {
   gui_system->begin_frame();
-  for (auto& layer : layers)
+  for (const auto& layer : layers)
     layer->on_interface();
 
   constexpr auto flags =
@@ -344,7 +361,7 @@ void
 App::update(double dt)
 {
   camera->on_update(dt);
-  for (auto& layer : layers)
+  for (const auto& layer : layers)
     layer->on_update(dt);
 }
 
@@ -357,7 +374,7 @@ App::render()
                         camera->compute_view_projection(),
                         camera->compute_inverse_view_projection());
 
-  for (auto& layer : layers)
+  for (const auto& layer : layers)
     layer->on_render(*renderer);
 
   renderer->end_frame(frame_index);
@@ -371,11 +388,14 @@ parse_command_line_args(int argc, char** argv)
 {
   ApplicationArguments args;
   bool asked_for_help = false;
+  std::filesystem::path config_path = get_default_config_path();
 
   auto cli =
     lyra::opt(args.title, "title")["--title"]("Window title") |
     lyra::opt(args.working_directory,
               "dir")["--working-dir"]["--wd"]("Working directory") |
+    lyra::opt(config_path,
+              "path")["--window-config"]("Path to window config YAML") |
     lyra::opt(args.window_size.width, "width")["--width"]("Window width") |
     lyra::opt(args.window_size.height, "height")["--height"]("Window height");
 

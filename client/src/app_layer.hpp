@@ -5,7 +5,7 @@
 class AppLayer : public ILayer
 {
 public:
-  explicit AppLayer(const Device& device);
+  explicit AppLayer(const Device&, BS::priority_thread_pool* = nullptr);
 
   auto on_destroy() -> void override;
   auto on_event(Event& event) -> bool override;
@@ -15,6 +15,8 @@ public:
   auto on_resize(std::uint32_t w, std::uint32_t h) -> void override;
 
 private:
+  BS::priority_thread_pool* thread_pool{ nullptr };
+
   void generate_scene();
 
   float rotation_speed = 90.f;

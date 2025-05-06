@@ -134,6 +134,7 @@ add_library(DynamicRendering_Window STATIC
   src/window/window.cpp
   src/window/swapchain.cpp
   src/window/gui_system.cpp
+  src/window/window_configuration.cpp
 )
 
 target_include_directories(DynamicRendering_Window PUBLIC
@@ -145,7 +146,7 @@ target_include_directories(DynamicRendering_Window PUBLIC
 target_link_libraries(DynamicRendering_Window PUBLIC
   DynamicRendering_Core
   PRIVATE
-  glfw imgui implot imguizmo::imguizmo
+  glfw imgui implot imguizmo::imguizmo yaml-cpp::yaml-cpp
   VulkanMemoryAllocator
 )
 
@@ -167,8 +168,8 @@ function(generate_shaders target)
     OUTPUT shaders_compiled
     COMMAND ${CMAKE_COMMAND} -E echo "Compiling shaders using Python script..."
     COMMAND ${Python_EXECUTABLE} ${CMAKE_SOURCE_DIR}/scripts/compile_shaders.py
-            --source ${CMAKE_SOURCE_DIR}/assets/shaders
-            --output ${CMAKE_BINARY_DIR}/assets/shaders
+    --source ${CMAKE_SOURCE_DIR}/assets/shaders
+    --output ${CMAKE_BINARY_DIR}/assets/shaders
     COMMAND ${CMAKE_COMMAND} -E touch shaders_compiled
     DEPENDS ${CMAKE_SOURCE_DIR}/assets/shaders
     COMMENT "Running shader compiler"

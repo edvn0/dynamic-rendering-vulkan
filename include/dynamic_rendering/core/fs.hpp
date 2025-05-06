@@ -18,3 +18,24 @@ assets_path() -> const std::filesystem::path&;
 /// @return void
 auto
 set_base_path(const std::filesystem::path&) -> void;
+
+namespace FS {
+
+struct FileLoadError
+{
+  std::string message;
+  enum class Code : std::uint8_t
+  {
+    file_not_found,
+    invalid_file_format,
+    unknown_error
+  };
+  Code code{ Code::unknown_error };
+};
+auto
+load_binary(const std::filesystem::path&, std::vector<std::uint8_t>&)
+  -> std::expected<void, FileLoadError>;
+auto
+load_binary(const std::filesystem::path&, std::vector<std::uint32_t>&)
+  -> std::expected<void, FileLoadError>;
+}
