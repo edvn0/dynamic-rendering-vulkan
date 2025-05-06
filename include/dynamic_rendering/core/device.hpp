@@ -45,6 +45,12 @@ private:
 
   vkb::Device device;
   std::unique_ptr<Allocator> allocator;
+  VkQueue graphics{};
+  VkQueue compute{};
+  VkQueue transfer{};
+  uint32_t graphics_family{};
+  uint32_t compute_family{};
+  uint32_t transfer_family{};
 
   static inline std::optional<VkPhysicalDeviceProperties> props{ std::nullopt };
 };

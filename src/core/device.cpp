@@ -10,6 +10,19 @@ Device::Device(const Core::Instance& instance, const vkb::Device& dev)
   : device(dev)
   , allocator(std::make_unique<Allocator>(instance, *this))
 {
+  graphics = device.get_queue(vkb::QueueType::graphics).value();
+  compute = device.get_queue(vkb::QueueType::compute).value();
+  transfer = device.get_queue(vkb::QueueType::transfer).value();
+  graphics_family = device.get_queue_index(vkb::QueueType::graphics).value();
+  compute_family = device.get_queue_index(vkb::QueueType::compute).value();
+  transfer_family = device.get_queue_index(vkb::QueueType::transfer).value();
+  assert(graphics != VK_NULL_HANDLE && "Failed to get graphics queue");
+  assert(compute != VK_NULL_HANDLE && "Failed to get compute queue");
+  assert(transfer != VK_NULL_HANDLE && "Failed to get transfer queue");
+
+  props = VkPhysicalDeviceProperties{};
+  vkGetPhysicalDeviceProperties(device.physical_device.physical_device,
+                                &props.value());
 }
 
 auto
@@ -46,104 +59,41 @@ Device::create(const Core::Instance& instance, const VkSurfaceKHR& surface)
 
   return Device(instance, dev_result.value());
 }
+
 auto
 Device::graphics_queue() const -> VkQueue
 {
-  auto queue_result = device.get_queue(vkb::QueueType::graphics);
-  if (!queue_result) {
-    assert(false && "Failed to get graphics queue");
-  }
-  return queue_result.value();
-}
-
-auto
-Device::get_max_sample_count(VkSampleCountFlags desired_flags) const
-  -> VkSampleCountFlagBits
-{
-  if (!props) {
-    VkPhysicalDeviceProperties p;
-    vkGetPhysicalDeviceProperties(device.physical_device.physical_device, &p);
-    props = p;
-  }
-
-  // device’s full supported mask
-  auto available_counts = props->limits.framebufferColorSampleCounts;
-
-  // pick the highest bit in a mask
-  static constexpr auto select_max =
-    [](VkSampleCountFlags f) -> VkSampleCountFlagBits {
-    if (f & VK_SAMPLE_COUNT_64_BIT)
-      return VK_SAMPLE_COUNT_64_BIT;
-    if (f & VK_SAMPLE_COUNT_32_BIT)
-      return VK_SAMPLE_COUNT_32_BIT;
-    if (f & VK_SAMPLE_COUNT_16_BIT)
-      return VK_SAMPLE_COUNT_16_BIT;
-    if (f & VK_SAMPLE_COUNT_8_BIT)
-      return VK_SAMPLE_COUNT_8_BIT;
-    if (f & VK_SAMPLE_COUNT_4_BIT)
-      return VK_SAMPLE_COUNT_4_BIT;
-    if (f & VK_SAMPLE_COUNT_2_BIT)
-      return VK_SAMPLE_COUNT_2_BIT;
-    return VK_SAMPLE_COUNT_1_BIT;
-  };
-
-  // intersect desired with what’s actually available
-  auto supported = desired_flags & available_counts;
-
-  // if any bits remain, pick the top one; otherwise fall back to the highest
-  // device-supported
-  return supported ? select_max(supported) : select_max(available_counts);
-}
-
-auto
-Device::get_timestamp_period() const -> double
-{
-  if (!props) {
-    props = VkPhysicalDeviceProperties{};
-    vkGetPhysicalDeviceProperties(device.physical_device.physical_device,
-                                  &props.value());
-  }
-  return props->limits.timestampPeriod;
+  return graphics;
 }
 
 auto
 Device::graphics_queue_family_index() const -> uint32_t
 {
-  auto queue_result = device.get_queue_index(vkb::QueueType::graphics);
-  if (!queue_result) {
-    assert(false && "Failed to get graphics queue family index");
-  }
-  return queue_result.value();
+  return graphics_family;
 }
 
 auto
 Device::transfer_queue_family_index() const -> uint32_t
 {
-  auto queue_result = device.get_queue_index(vkb::QueueType::transfer);
-  if (!queue_result) {
-    assert(false && "Failed to get transfer queue family index");
-  }
-  return queue_result.value();
+  return transfer_family;
 }
 
 auto
 Device::compute_queue() const -> VkQueue
 {
-  auto queue_result = device.get_queue(vkb::QueueType::compute);
-  if (!queue_result) {
-    assert(false && "Failed to get compute queue");
-  }
-  return queue_result.value();
+  return compute;
 }
 
 auto
 Device::compute_queue_family_index() const -> uint32_t
 {
-  auto queue_result = device.get_queue_index(vkb::QueueType::compute);
-  if (!queue_result) {
-    assert(false && "Failed to get compute queue family index");
-  }
-  return queue_result.value();
+  return compute_family;
+}
+
+auto
+Device::transfer_queue() const -> VkQueue
+{
+  return transfer;
 }
 
 auto
@@ -223,16 +173,6 @@ Device::flush(VkCommandBuffer command_buffer,
 }
 
 auto
-Device::transfer_queue() const -> VkQueue
-{
-  auto queue_result = device.get_queue(vkb::QueueType::transfer);
-  if (!queue_result) {
-    assert(false && "Failed to get transfer queue");
-  }
-  return queue_result.value();
-}
-
-auto
 Device::wait_idle() const -> void
 {
   vkDeviceWaitIdle(device.device);
@@ -243,4 +183,37 @@ Device::destroy() -> void
 {
   allocator.reset();
   vkb::destroy_device(device);
+}
+auto
+Device::get_max_sample_count(VkSampleCountFlags desired_flags) const
+  -> VkSampleCountFlagBits
+{
+  auto available_counts = props->limits.framebufferColorSampleCounts;
+
+  static constexpr auto select_max =
+    [](VkSampleCountFlags f) -> VkSampleCountFlagBits {
+    if (f & VK_SAMPLE_COUNT_64_BIT)
+      return VK_SAMPLE_COUNT_64_BIT;
+    if (f & VK_SAMPLE_COUNT_32_BIT)
+      return VK_SAMPLE_COUNT_32_BIT;
+    if (f & VK_SAMPLE_COUNT_16_BIT)
+      return VK_SAMPLE_COUNT_16_BIT;
+    if (f & VK_SAMPLE_COUNT_8_BIT)
+      return VK_SAMPLE_COUNT_8_BIT;
+    if (f & VK_SAMPLE_COUNT_4_BIT)
+      return VK_SAMPLE_COUNT_4_BIT;
+    if (f & VK_SAMPLE_COUNT_2_BIT)
+      return VK_SAMPLE_COUNT_2_BIT;
+    return VK_SAMPLE_COUNT_1_BIT;
+  };
+
+  auto supported = desired_flags & available_counts;
+
+  return supported ? select_max(supported) : select_max(available_counts);
+}
+
+auto
+Device::get_timestamp_period() const -> double
+{
+  return props->limits.timestampPeriod;
 }
