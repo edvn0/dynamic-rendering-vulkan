@@ -132,7 +132,7 @@ PipelineFactory::create_pipeline(const PipelineBlueprint& blueprint,
     .polygonMode = blueprint.polygon_mode,
     .cullMode = blueprint.cull_mode,
     .frontFace = blueprint.winding,
-    .depthBiasEnable = VK_FALSE,
+    .depthBiasEnable = VK_TRUE,
     .depthBiasConstantFactor = 0.0f,
     .depthBiasClamp = 0.0f,
     .depthBiasSlopeFactor = 0.0f,
@@ -194,9 +194,10 @@ PipelineFactory::create_pipeline(const PipelineBlueprint& blueprint,
   };
 
   // Dynamic state viewport, scissor
-  const std::array<VkDynamicState, 2> dynamic_states{
+  const std::array<VkDynamicState, 3> dynamic_states{
     VK_DYNAMIC_STATE_VIEWPORT,
     VK_DYNAMIC_STATE_SCISSOR,
+    VK_DYNAMIC_STATE_DEPTH_BIAS
   };
   VkPipelineDynamicStateCreateInfo dynamic_state{
     .sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,

@@ -131,76 +131,21 @@ AppLayer::on_interface() -> void
   });
 }
 
-static constexpr int grid_size_x = 30;
-static constexpr int grid_size_y = 20;
-static constexpr int grid_size_z = 10;
-static constexpr float spacing = 7.f;
-
 auto
 AppLayer::on_update(double ts) -> void
 {
   ZoneScopedN("On update");
 
-  static glm::vec3 angle_xyz{ 0.f };
-  const float delta = rotation_speed * static_cast<float>(ts);
-  angle_xyz += glm::vec3{ delta };
-  angle_xyz = glm::mod(angle_xyz, glm::vec3{ 360.f });
+  static float angle_deg = 0.f;
+  angle_deg += static_cast<float>(ts) * rotation_speed;
+  angle_deg = fmod(angle_deg, 360.f);
 
-  const auto count = transforms.size();
-  const std::size_t num_threads = thread_pool->get_thread_count();
-  const std::size_t chunk_size = (count + num_threads - 1) / num_threads;
-
-  // We use a latch + detach_task approach here instead of submit_task +
-  // future.get(), even though both showed similar performance (~100μs). This
-  // avoids per-task allocations and future management overhead, while still
-  // providing deterministic synchronization. Since the loop is compute-heavy
-  // and bounded, the benefits of using latch outweigh the slight added
-  // verbosity. Additionally, this pattern scales better under load and avoids
-  // blocking the thread pool on result futures.
-
-  std::latch latch(static_cast<std::ptrdiff_t>(num_threads));
-
-  for (std::size_t t = 0; t < num_threads; ++t) {
-    const std::size_t begin = t * chunk_size;
-    const std::size_t end = std::min(begin + chunk_size, count);
-
-    if (begin >= end) {
-      latch.count_down();
-      continue;
-    }
-
-    thread_pool->detach_task([=,
-                              root =
-                                std::span(transforms.data(), transforms.size()),
-                              angle = angle_xyz,
-                              &latch] {
-      ZoneScopedN("Batch rotate");
-
-      for (std::size_t i = begin; i < end; ++i) {
-        const auto x = static_cast<std::int32_t>(i % grid_size_x);
-        const auto y =
-          static_cast<std::int32_t>((i / grid_size_x) % grid_size_y);
-        const auto z =
-          static_cast<std::int32_t>(i / (grid_size_x * grid_size_y));
-
-        const float offset_x = (x - grid_size_x / 2) * spacing;
-        const float offset_y = (y - grid_size_y / 2) * spacing;
-        const float offset_z = (z - grid_size_z / 2) * spacing;
-
-        root[i] =
-          glm::translate(glm::mat4(1.f), { offset_x, offset_y, offset_z }) *
-          glm::rotate(
-            glm::mat4(1.f), glm::radians(angle.x), { 0.f, 0.f, 1.f }) *
-          glm::rotate(
-            glm::mat4(1.f), glm::radians(angle.y), { 0.f, 1.f, 0.f }) *
-          glm::rotate(glm::mat4(1.f), glm::radians(angle.z), { 1.f, 0.f, 0.f });
-      }
-
-      latch.count_down();
-    });
+  for (std::size_t i = 1; i < transforms.size(); ++i) {
+    const auto position = glm::vec3(transforms[i][3]);
+    transforms[i] =
+      glm::translate(glm::mat4(1.f), position) *
+      glm::rotate(glm::mat4(1.f), glm::radians(angle_deg), { 0.f, 1.f, 0.f });
   }
-
-  latch.wait();
 }
 
 auto
@@ -212,27 +157,30 @@ AppLayer::on_render(Renderer& renderer) -> void
   light_env.light_position = light_position;
   light_env.light_color = light_color;
 
-  if (transforms.empty())
+  if (transforms.size() < 6)
     return;
 
+  // Render ground plane (quad)
   renderer.submit(
     {
       .vertex_buffer = quad_vertex_buffer.get(),
       .index_buffer = quad_index_buffer.get(),
       .casts_shadows = true,
     },
-    transforms.at(0));
+    transforms[0]);
 
-  for (std::size_t i = 1; i < transforms.size(); ++i) {
+  // Render 5 cubes
+  for (std::size_t i = 1; i <= 5; ++i) {
     renderer.submit(
       {
         .vertex_buffer = cube_vertex_buffer.get(),
         .index_buffer = cube_index_buffer.get(),
         .casts_shadows = true,
       },
-      transforms.at(i));
+      transforms[i]);
   }
 
+  // Optional: render light as small cube
   renderer.submit(
     {
       .vertex_buffer = cube_vertex_buffer.get(),
@@ -243,6 +191,7 @@ AppLayer::on_render(Renderer& renderer) -> void
     glm::translate(glm::mat4(1.f), light_position) *
       glm::scale(glm::mat4(1.f), { 0.5f, 0.5f, 0.5f }));
 
+  // Axis lines for debugging
   static constexpr float line_width = 0.1f;
   static constexpr float line_length = 50.f;
 
@@ -271,23 +220,25 @@ auto
 AppLayer::generate_scene() -> void
 {
   transforms.clear();
+  transforms.reserve(6);
 
-  transforms.emplace_back(1.F);
+  // Ground plane at Y=0, scaled large
+  transforms.emplace_back(glm::scale(glm::mat4(1.f), { 200.f, 1.f, 200.f }) *
+                          glm::rotate(glm::mat4(1.f),
+                                      glm::radians(-90.f),
+                                      { 1.f, 0.f, 0.f })); // Rotate to XZ plane
 
-  static constexpr int total = grid_size_x * grid_size_y * grid_size_z;
-  transforms.reserve(total + 1);
+  // Floating cubes at different XZ positions, all at Y = 5.f
+  static constexpr float y = 5.f;
 
-  for (int z = 0; z < grid_size_z; ++z) {
-    for (int y = 0; y < grid_size_y; ++y) {
-      for (int x = 0; x < grid_size_x; ++x) {
-        const float offset_x = (x - grid_size_x / 2) * spacing;
-        const float offset_y = (y - grid_size_y / 2) * spacing;
-        const float offset_z = (z - grid_size_z / 2) * spacing;
+  std::array<glm::vec3, 5> positions = {
+    glm::vec3{ -20.f, y, -10.f }, glm::vec3{ 10.f, y, -5.f },
+    glm::vec3{ -5.f, y, 15.f },   glm::vec3{ 25.f, y, 10.f },
+    glm::vec3{ 0.f, y, 0.f },
+  };
 
-        glm::mat4 transform =
-          glm::translate(glm::mat4(1.f), { offset_x, offset_y, offset_z });
-        transforms.emplace_back(transform);
-      }
-    }
+  for (const auto& pos : positions) {
+    transforms.emplace_back(glm::translate(glm::mat4(1.f), pos) *
+                            glm::scale(glm::mat4(1.f), { 5.f, 5.f, 5.f }));
   }
 }

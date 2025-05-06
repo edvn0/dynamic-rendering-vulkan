@@ -27,7 +27,7 @@ private:
   std::unique_ptr<VertexBuffer> cube_vertex_buffer;
   std::unique_ptr<IndexBuffer> cube_index_buffer;
 
-  glm::vec3 light_position{ 0.f, 0.f, 1.f };
+  glm::vec3 light_position{ 28.f, 23.f, 1.f };
   // Orange color
   glm::vec4 light_color{ 1.F, 0.5F, 0.F, 1.F };
 

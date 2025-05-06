@@ -15,8 +15,11 @@ layout(location = 0) out vec3 v_normal;
 layout(location = 1) out vec3 v_world_pos;
 layout(location = 2) out vec4 v_light_space_pos;
 
-const mat4 shadow_bias_matrix = mat4(0.5, 0.0, 0.0, 0.0, 0.0, 0.5, 0.0, 0.0,
-                                     0.0, 0.0, 1.0, 0.0, 0.5, 0.5, 0.0, 1.0);
+const mat4 shadow_bias_matrix = mat4(
+    0.5, 0.0, 0.0, 0.0,
+    0.0, -0.5, 0.0, 0.0,
+    0.0, 0.0, 1.0, 0.0,
+    0.5, 0.5, 0.0, 1.0);
 
 void main()
 {

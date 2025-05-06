@@ -3,7 +3,7 @@ shaders:
     path: shadow.vert
 
 rasterization:
-  cull_mode: back
+  cull_mode: front
 
 depth_stencil:
   depth_test: true

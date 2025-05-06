@@ -666,18 +666,18 @@ Renderer::update_shadow_buffers(std::uint32_t frame_index) -> void
       const glm::vec3 center{ 0.f, 0.f, 0.f };
       const glm::vec3 up{ 0.f, 1.f, 0.f };
 
-      const auto view = glm::lookAt(light_pos, center, up);
+      const auto view = glm::lookAtRH(light_pos, center, up);
 
       constexpr float ortho_size = 50.f;
       constexpr float near_plane = 0.1f;
       constexpr float far_plane = 100.f;
 
-      const auto proj = glm::ortho(-ortho_size,
-                                   ortho_size,
-                                   -ortho_size,
-                                   ortho_size,
-                                   near_plane,
-                                   far_plane);
+      const glm::mat4 proj = glm::orthoRH_ZO(-ortho_size,
+                                             ortho_size,
+                                             -ortho_size,
+                                             ortho_size,
+                                             far_plane,
+                                             near_plane);
 
       return proj * view;
     };
@@ -1292,6 +1292,7 @@ Renderer::run_shadow_pass(std::uint32_t frame_index, const DrawList& draw_list)
   };
   vkCmdSetViewport(cmd, 0, 1, &viewport);
   vkCmdSetScissor(cmd, 0, 1, &rendering_info.renderArea);
+  vkCmdSetDepthBias(cmd, 1.25f, 0.0f, 1.75f);
 
   auto& shadow_pipeline = shadow_material->get_pipeline();
   vkCmdBindPipeline(

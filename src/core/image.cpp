@@ -131,7 +131,7 @@ Image::recreate() -> void
       .anisotropyEnable = VK_FALSE,
       .maxAnisotropy = 1.f,
       .compareEnable = VK_TRUE,
-      .compareOp = VK_COMPARE_OP_LESS_OR_EQUAL,
+      .compareOp = VK_COMPARE_OP_GREATER_OR_EQUAL,
       .minLod = 0.f,
       .maxLod = 0.f,
       .borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE,
