@@ -306,16 +306,6 @@ App::interface() -> void
     ImGui::EndTable();
     ImGui::End();
   }
-
-  if (ImGui::Begin("CPU Timings")) {
-    const auto& p = renderer->get_profiling_sections();
-
-    ImGui::Text("Draw List Gen: %.2f ms", p.draw_list_generation.duration_ms);
-    ImGui::Text("Shadow Draw List Gen: %.2f ms",
-                p.shadow_draw_list_generation.duration_ms);
-
-    ImGui::End();
-  }
 }
 
 void

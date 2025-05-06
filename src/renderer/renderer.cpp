@@ -1292,7 +1292,6 @@ Renderer::run_shadow_pass(std::uint32_t frame_index, const DrawList& draw_list)
   };
   vkCmdSetViewport(cmd, 0, 1, &viewport);
   vkCmdSetScissor(cmd, 0, 1, &rendering_info.renderArea);
-  vkCmdSetDepthBias(cmd, 1.25f, 0.0f, 1.75f);
 
   auto& shadow_pipeline = shadow_material->get_pipeline();
   vkCmdBindPipeline(

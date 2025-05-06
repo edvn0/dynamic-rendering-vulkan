@@ -63,5 +63,12 @@ PipelineBlueprint::hash() const -> std::size_t
   hash_combine(static_cast<std::uint32_t>(msaa_samples));
   hash_combine(static_cast<std::uint32_t>(depth_compare_op));
 
+  if (depth_bias.has_value()) {
+    const auto& d = depth_bias.value();
+    hash_combine(d.constant_factor);
+    hash_combine(d.clamp);
+    hash_combine(d.slope_factor);
+  }
+
   return h;
 }

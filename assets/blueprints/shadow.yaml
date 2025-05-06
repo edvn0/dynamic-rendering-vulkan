@@ -10,3 +10,7 @@ depth_stencil:
   depth_write: true
   format: d32_sfloat
   compare_op: greater_or_equal
+  depth_bias:
+    constant_factor: 0.1
+    clamp: 0.5
+    slope_factor: 0.1

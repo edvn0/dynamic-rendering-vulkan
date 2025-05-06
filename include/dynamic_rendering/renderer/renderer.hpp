@@ -184,7 +184,6 @@ public:
   }
   auto get_renderer_descriptor_set_layout(Badge<AssetReloader>) const
     -> VkDescriptorSetLayout;
-  auto get_profiling_sections() const { return profiling_sections; }
 
 private:
   const Device* device{ nullptr };
@@ -242,8 +241,6 @@ private:
   frame_array<VkDescriptorSet> renderer_descriptor_sets{};
   VkDescriptorSetLayout renderer_descriptor_set_layout{};
   VkDescriptorPool descriptor_pool{};
-
-  RendererProfilingSections profiling_sections;
 
   using DrawList =
     std::vector<std::tuple<DrawCommand, std::uint32_t, std::uint32_t>>;

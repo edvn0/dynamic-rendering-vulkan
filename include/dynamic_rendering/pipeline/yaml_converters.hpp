@@ -350,6 +350,18 @@ struct convert<VertexAttribute>
 };
 
 template<>
+struct convert<DepthBias>
+{
+  static bool decode(const Node& node, DepthBias& rhs)
+  {
+    rhs.constant_factor = node["constant_factor"].as<float>(1.75F);
+    rhs.clamp = node["clamp"].as<float>(0.0F);
+    rhs.slope_factor = node["slope_factor"].as<float>(0.5F);
+    return true;
+  }
+};
+
+template<>
 struct convert<PipelineBlueprint>
 {
   static bool decode(const Node& node, PipelineBlueprint& rhs)
@@ -429,6 +441,11 @@ struct convert<PipelineBlueprint>
           return false;
         }
         rhs.depth_compare_op = compare_result.value();
+      }
+
+      if (depth_stencil["depth_bias"]) {
+        auto bias = depth_stencil["depth_bias"].as<DepthBias>();
+        rhs.depth_bias = bias;
       }
 
       if (!rhs.depth_test && rhs.depth_write) {

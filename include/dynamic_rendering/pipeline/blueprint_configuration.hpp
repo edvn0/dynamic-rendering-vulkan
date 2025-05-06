@@ -22,6 +22,13 @@ struct VertexAttribute
   std::uint32_t offset;
 };
 
+struct DepthBias
+{
+  float constant_factor{ 1.75F };
+  float clamp{ 0.0F };
+  float slope_factor{ 0.5F };
+};
+
 struct Attachment
 {
   VkFormat format{ VK_FORMAT_UNDEFINED };
@@ -48,6 +55,7 @@ struct PipelineBlueprint
   std::vector<VertexAttribute> attributes{};
   std::vector<Attachment> attachments{};
   std::optional<Attachment> depth_attachment{};
+  std::optional<DepthBias> depth_bias{};
   VkCullModeFlags cull_mode{ VK_CULL_MODE_BACK_BIT };
   VkPolygonMode polygon_mode{ VK_POLYGON_MODE_FILL };
   VkPrimitiveTopology topology{ VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST };

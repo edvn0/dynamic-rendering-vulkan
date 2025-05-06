@@ -132,12 +132,22 @@ PipelineFactory::create_pipeline(const PipelineBlueprint& blueprint,
     .polygonMode = blueprint.polygon_mode,
     .cullMode = blueprint.cull_mode,
     .frontFace = blueprint.winding,
-    .depthBiasEnable = VK_TRUE,
+    .depthBiasEnable = VK_FALSE,
     .depthBiasConstantFactor = 0.0f,
     .depthBiasClamp = 0.0f,
     .depthBiasSlopeFactor = 0.0f,
     .lineWidth = 1.0f,
   };
+  if (auto state = blueprint.depth_bias; state.has_value()) {
+    rasterizer.depthBiasEnable = VK_TRUE;
+    rasterizer.depthBiasConstantFactor = state->constant_factor;
+    rasterizer.depthBiasClamp = state->clamp;
+    constexpr float epsilon = 0.0001f;
+    if (std::abs(rasterizer.depthBiasClamp) > epsilon) {
+      rasterizer.depthClampEnable = VK_TRUE;
+    }
+    rasterizer.depthBiasSlopeFactor = state->slope_factor;
+  }
 
   VkPipelineColorBlendAttachmentState color_blend_attachment{
     .blendEnable = blueprint.blend_enable,
@@ -194,10 +204,9 @@ PipelineFactory::create_pipeline(const PipelineBlueprint& blueprint,
   };
 
   // Dynamic state viewport, scissor
-  const std::array<VkDynamicState, 3> dynamic_states{
+  const std::array<VkDynamicState, 2> dynamic_states{
     VK_DYNAMIC_STATE_VIEWPORT,
     VK_DYNAMIC_STATE_SCISSOR,
-    VK_DYNAMIC_STATE_DEPTH_BIAS
   };
   VkPipelineDynamicStateCreateInfo dynamic_state{
     .sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,

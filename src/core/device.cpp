@@ -17,8 +17,14 @@ Device::create(const Core::Instance& instance, const VkSurfaceKHR& surface)
   -> Device
 {
   vkb::PhysicalDeviceSelector selector{ instance.vkb() };
+  VkPhysicalDeviceFeatures features{
+    .depthClamp = VK_TRUE,
+    .depthBiasClamp = VK_TRUE,
+  };
+
   auto phys_result = selector.set_surface(surface)
                        .set_minimum_version(1, 3)
+                       .set_required_features(features)
                        .require_dedicated_transfer_queue()
                        .select();
   if (!phys_result) {
