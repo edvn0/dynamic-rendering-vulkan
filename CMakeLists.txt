@@ -111,6 +111,8 @@ add_library(DynamicRendering_Renderer STATIC
   src/renderer/camera.cpp
   src/renderer/material.cpp
   src/renderer/material_bindings.cpp
+  src/renderer/descriptor_allocator.cpp
+  src/renderer/draw_list_manager.cpp
 )
 
 target_include_directories(DynamicRendering_Renderer PUBLIC

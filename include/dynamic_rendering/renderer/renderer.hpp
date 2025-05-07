@@ -16,37 +16,12 @@
 #include "pipeline/blueprint_registry.hpp"
 #include "pipeline/compute_pipeline_factory.hpp"
 #include "pipeline/pipeline_factory.hpp"
+#include "renderer/draw_command.hpp"
+#include "renderer/frustum.hpp"
 #include "renderer/material.hpp"
 #include "window/window.hpp"
 
 #include <BS_thread_pool.hpp>
-
-struct CpuTimerSection
-{
-  std::chrono::high_resolution_clock::time_point start{};
-  double duration_ms{};
-
-  void begin() { start = std::chrono::high_resolution_clock::now(); }
-
-  void end()
-  {
-    const auto end = std::chrono::high_resolution_clock::now();
-    duration_ms =
-      std::chrono::duration<double, std::milli>(end - start).count();
-  }
-};
-
-struct RendererProfilingSections
-{
-  CpuTimerSection draw_list_generation;
-  CpuTimerSection shadow_draw_list_generation;
-
-  void reset()
-  {
-    draw_list_generation.duration_ms = 0.0;
-    shadow_draw_list_generation.duration_ms = 0.0;
-  }
-};
 
 enum class RenderPass : std::uint8_t
 {
@@ -58,6 +33,7 @@ enum class RenderPass : std::uint8_t
   ColourCorrection,
   ComputeCulling,
 };
+
 inline auto
 to_renderpass(std::string_view name) -> RenderPass
 {
@@ -81,11 +57,6 @@ to_renderpass(std::string_view name) -> RenderPass
   return RenderPass::MainGeometry;
 }
 
-struct InstanceData
-{
-  glm::mat4 transform;
-};
-
 struct LightEnvironment
 {
   glm::vec3 light_position{ 40.f, -40.f, 40.f };
@@ -108,28 +79,6 @@ struct LineInstanceData
 };
 static_assert(sizeof(LineInstanceData) == 32,
               "LineInstanceData must be 32 bytes.");
-
-struct DrawCommand
-{
-  VertexBuffer* vertex_buffer;
-  IndexBuffer* index_buffer;
-  Material* override_material{ nullptr };
-  bool casts_shadows{ true };
-
-  bool operator==(const DrawCommand& rhs) const = default;
-};
-
-struct DrawCommandHasher
-{
-  auto operator()(const DrawCommand& dc) const -> std::size_t
-  {
-    std::size_t h1 = std::hash<VertexBuffer*>{}(dc.vertex_buffer);
-    std::size_t h2 = std::hash<IndexBuffer*>{}(dc.index_buffer);
-    std::size_t h3 = std::hash<Material*>{}(dc.override_material);
-    std::size_t h4 = std::hash<bool>{}(dc.casts_shadows);
-    return h1 ^ (h2 << 1) ^ (h3 << 2) ^ (h4 << 3);
-  }
-};
 
 class Renderer
 {
@@ -226,10 +175,8 @@ private:
   std::uint32_t line_instance_count_this_frame{};
   auto upload_line_instance_data() -> void;
 
-  std::unordered_map<DrawCommand, std::vector<InstanceData>, DrawCommandHasher>
-    draw_commands{};
-  std::unordered_map<DrawCommand, std::vector<InstanceData>, DrawCommandHasher>
-    shadow_draw_commands{};
+  DrawCommandMap draw_commands{};
+  DrawCommandMap shadow_draw_commands{};
 
   auto update_uniform_buffers(std::uint32_t, const glm::mat4&, const glm::mat4&)
     -> void;
@@ -241,9 +188,6 @@ private:
   frame_array<VkDescriptorSet> renderer_descriptor_sets{};
   VkDescriptorSetLayout renderer_descriptor_set_layout{};
   VkDescriptorPool descriptor_pool{};
-
-  using DrawList =
-    std::vector<std::tuple<DrawCommand, std::uint32_t, std::uint32_t>>;
 
   auto run_culling_compute_pass(std::uint32_t) -> void;
   auto run_shadow_pass(std::uint32_t, const DrawList&) -> void;
@@ -257,64 +201,6 @@ private:
     run_colour_correction_pass(frame_index);
   }
 
-  struct Frustum
-  {
-    std::array<glm::vec4, 6> planes{};
-
-    static auto from_matrix(const glm::mat4& vp) -> Frustum
-    {
-      Frustum f;
-      f.update(vp);
-      return f;
-    }
-
-    auto update(const glm::mat4& vp) -> void
-    {
-      const glm::mat4 m = glm::transpose(vp);
-
-      planes[0] = m[3] + m[0];
-      planes[1] = m[3] - m[0];
-      planes[2] = m[3] + m[1];
-      planes[3] = m[3] - m[1];
-      planes[4] = m[3] + m[2];
-      planes[5] = m[3] - m[2];
-
-      for (auto& plane : planes)
-        plane /= glm::length(glm::vec3(plane));
-    }
-
-    auto intersects(const glm::vec3& center, float radius) const -> bool
-    {
-      return std::ranges::none_of(
-        planes, [&c = center, &r = radius](const auto& p) {
-          return glm::dot(glm::vec3(p), c) + p.w + r < 0.0f;
-        });
-    }
-    auto intersects_aabb(const glm::vec3& min, const glm::vec3& max) const
-      -> bool
-    {
-      return std::ranges::none_of(planes, [&min, &max](const auto& p) {
-        const auto normal = glm::vec3(p);
-        float d = p.w;
-        if (normal.x > 0) {
-          d += normal.x * min.x;
-        } else {
-          d += normal.x * max.x;
-        }
-        if (normal.y > 0) {
-          d += normal.y * min.y;
-        } else {
-          d += normal.y * max.y;
-        }
-        if (normal.z > 0) {
-          d += normal.z * min.z;
-        } else {
-          d += normal.z * max.z;
-        }
-        return d < 0.0f;
-      });
-    }
-  };
   Frustum current_frustum;
   Frustum light_frustum;
 

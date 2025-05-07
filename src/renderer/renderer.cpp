@@ -1,12 +1,14 @@
 #include "renderer/renderer.hpp"
 
 #include "core/image_transition.hpp"
+#include "renderer/draw_list_manager.hpp"
 
 #include <execution>
 #include <functional>
 #include <future>
 #include <glm/ext/matrix_clip_space.hpp>
 #include <glm/glm.hpp>
+#include <latch>
 #include <memory>
 #include <vulkan/vulkan.h>
 
@@ -14,7 +16,6 @@
 
 #define GLM_ENABLE_EXPERIMENTAL
 #include <glm/gtx/quaternion.hpp>
-#include <latch>
 
 struct FrustumBuffer
 {
@@ -563,21 +564,15 @@ upload_instance_vertex_data(auto& pool,
                             GPUBuffer& buffer,
                             const auto& draw_commands,
                             const auto& frustum,
-                            auto& instance_count_this_frame)
-  -> std::vector<std::tuple<DrawCommand, std::uint32_t, std::uint32_t>>
+                            std::integral auto& instance_count_this_frame)
+  -> DrawList
 {
-  struct InstanceSubmit
-  {
-    const DrawCommand* cmd;
-    InstanceData data;
-  };
-
   std::size_t total_estimated_instances = 0;
   for (const auto& [cmd, instances] : draw_commands)
     total_estimated_instances += instances.size();
 
   // Preallocate the maximum possible number of instances
-  std::vector<InstanceSubmit> filtered_instances(total_estimated_instances);
+  std::vector<DrawInstanceSubmit> filtered_instances(total_estimated_instances);
   std::atomic<std::size_t> filtered_count{ 0 };
 
   {
@@ -591,14 +586,14 @@ upload_instance_vertex_data(auto& pool,
     auto fut = pool.submit_loop(0, jobs.size(), [&](std::size_t i) {
       const auto& [cmd, instances] = jobs[i];
       for (const auto& instance : *instances) {
-        const glm::vec3 center_ws = glm::vec3(instance.transform[3]);
+        const auto center_ws = glm::vec3(instance.transform[3]);
         const float radius_ws =
           1.0f * glm::length(glm::vec3(instance.transform[0]));
 
         if (frustum.intersects(center_ws, radius_ws)) {
           const std::size_t index =
             filtered_count.fetch_add(1, std::memory_order_relaxed);
-          filtered_instances[index] = InstanceSubmit{ cmd, instance };
+          filtered_instances[index] = { cmd, instance };
         }
       }
     });
@@ -619,7 +614,7 @@ upload_instance_vertex_data(auto& pool,
                  filtered_instances.begin(),
                  filtered_instances.end(),
                  instance_data.begin(),
-                 [](const InstanceSubmit& s) { return s.data; });
+                 [](const DrawInstanceSubmit& s) { return s.data; });
 
   buffer.upload(std::span(instance_data));
 
@@ -637,8 +632,7 @@ upload_instance_vertex_data(auto& pool,
   }
 
   // Flatten draw map into vector for submission
-  std::vector<std::tuple<DrawCommand, std::uint32_t, std::uint32_t>>
-    flat_draw_list;
+  DrawList flat_draw_list;
   flat_draw_list.reserve(draw_map.size());
   for (const auto& [cmd, range] : draw_map)
     flat_draw_list.emplace_back(cmd, std::get<0>(range), std::get<1>(range));
@@ -730,13 +724,37 @@ Renderer::end_frame(std::uint32_t frame_index) -> void
   if (shadow_draw_commands.empty() && draw_commands.empty())
     return;
 
-  Renderer::DrawList flat_shadow_draw_commands;
-  Renderer::DrawList flat_draw_commands;
+  DrawList flat_shadow_draw_commands;
+  DrawList flat_draw_commands;
   std::size_t shadow_count{ 0 };
 
+  std::latch uploads_remaining(3);
+
+  constexpr std::size_t culling_threshold = 500;
+  std::size_t total_instance_count = 0;
   {
-    std::latch uploads_remaining(3);
-    thread_pool->detach_task([&] {
+    ZoneScopedN("Count Instances");
+    total_instance_count = std::transform_reduce(
+      draw_commands.begin(),
+      draw_commands.end(),
+      0ULL,
+      std::plus<>{},
+      [](const auto& pair) { return pair.second.size(); });
+  }
+
+  auto&& [should_geom_cull, should_shadow_cull] = submit_tuple_and_wait(
+    *thread_pool,
+    [&] {
+      return DrawListManager::should_perform_culling(draw_commands,
+                                                     culling_threshold);
+    },
+    [&] {
+      return DrawListManager::should_perform_culling(shadow_draw_commands,
+                                                     culling_threshold);
+    });
+
+  if (should_geom_cull) {
+    thread_pool->detach_task([this, &flat_draw_commands, &uploads_remaining] {
       ZoneScopedN("Instance Upload");
       flat_draw_commands =
         upload_instance_vertex_data(*thread_pool,
@@ -746,28 +764,53 @@ Renderer::end_frame(std::uint32_t frame_index) -> void
                                     instance_count_this_frame);
       uploads_remaining.count_down();
     });
-
-    thread_pool->detach_task([&] {
-      ZoneScopedN("Shadow Instance Upload");
-      flat_shadow_draw_commands =
-        upload_instance_vertex_data(*thread_pool,
-                                    *instance_shadow_vertex_buffer,
-                                    shadow_draw_commands,
-                                    light_frustum,
-                                    shadow_count);
+  } else {
+    thread_pool->detach_task([this, &flat_draw_commands, &uploads_remaining] {
+      ZoneScopedN("Flat Upload (no cull)");
+      flat_draw_commands = DrawListManager::flatten_draw_commands(
+        draw_commands, *instance_vertex_buffer, instance_count_this_frame);
       uploads_remaining.count_down();
     });
-
-    thread_pool->detach_task([this, &uploads = uploads_remaining] {
-      ZoneScopedN("Line instance upload");
-      upload_line_instance_data();
-      uploads.count_down();
-    });
-
-    uploads_remaining.wait();
   }
 
-  run_culling_compute_pass(frame_index);
+  if (should_shadow_cull) {
+    thread_pool->detach_task(
+      [this, &flat_shadow_draw_commands, &shadow_count, &uploads_remaining] {
+        ZoneScopedN("Shadow Upload");
+        flat_shadow_draw_commands =
+          upload_instance_vertex_data(*thread_pool,
+                                      *instance_shadow_vertex_buffer,
+                                      shadow_draw_commands,
+                                      light_frustum,
+                                      shadow_count);
+        uploads_remaining.count_down();
+      });
+  } else {
+    std::uint32_t temp_count = 0;
+    thread_pool->detach_task([this,
+                              &flat_shadow_draw_commands,
+                              &temp_count,
+                              &uploads_remaining,
+                              &shadow_count] {
+      ZoneScopedN("Flat Shadow Upload (no cull)");
+      flat_shadow_draw_commands = DrawListManager::flatten_draw_commands(
+        shadow_draw_commands, *instance_shadow_vertex_buffer, temp_count);
+      uploads_remaining.count_down();
+      shadow_count = temp_count;
+    });
+  }
+
+  thread_pool->detach_task([this, &uploads = uploads_remaining] {
+    ZoneScopedN("Line instance upload");
+    upload_line_instance_data();
+    uploads.count_down();
+  });
+
+  uploads_remaining.wait();
+
+  if (total_instance_count >= culling_threshold) {
+    run_culling_compute_pass(frame_index);
+  }
 
   command_buffer->begin_frame(frame_index);
 
@@ -779,8 +822,10 @@ Renderer::end_frame(std::uint32_t frame_index) -> void
 
   run_postprocess_passes(frame_index);
 
-  command_buffer->submit_and_end(frame_index,
-                                 compute_finished_semaphore.at(frame_index));
+  auto semaphore = total_instance_count >= culling_threshold
+                     ? compute_finished_semaphore.at(frame_index)
+                     : VK_NULL_HANDLE;
+  command_buffer->submit_and_end(frame_index, semaphore);
 
   draw_commands.clear();
 }
@@ -887,7 +932,7 @@ Renderer::run_z_prepass(std::uint32_t frame_index, const DrawList& draw_list)
     vkCmdDrawIndexed(
       cmd,
       static_cast<std::uint32_t>(cmd_info.index_buffer->get_count()),
-      static_cast<std::uint32_t>(count),
+      count,
       0,
       0,
       offset);
