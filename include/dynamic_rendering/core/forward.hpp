@@ -23,10 +23,15 @@ class Camera;
 struct ILayer;
 class AssetFileWatcher;
 class AssetReloader;
+class VertexBuffer;
+class IndexBuffer;
+class Material;
+class Mesh;
 
 class Renderer;
 class BlueprintRegistry;
 struct PipelineBlueprint;
+class DescriptorSetManager;
 
 class Allocator;
 

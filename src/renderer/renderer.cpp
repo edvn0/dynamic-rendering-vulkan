@@ -15,28 +15,39 @@
 #include <tracy/Tracy.hpp>
 
 #define GLM_ENABLE_EXPERIMENTAL
-#include <glm/gtx/quaternion.hpp>
+#include "renderer/descriptor_manager.hpp"
 
-struct FrustumBuffer
-{
-  std::array<glm::vec4, 6> planes{};
-  std::array<glm::vec4, 2> _padding_{};
-};
+#include "core/vulkan_util.hpp"
+#include "renderer/mesh.hpp"
+
+#include <glm/gtx/quaternion.hpp>
 
 struct CameraBuffer
 {
-  const glm::mat4 vp;
-  const glm::mat4 inverse_vp;
+  alignas(16) const glm::mat4 vp;
+  alignas(16) const glm::mat4 inverse_vp;
+  glm::vec3 camera_position;
+  std::array<float, 1> padding{};
+  std::array<glm::vec4, 3> padding_2{};
 };
+ASSERT_VULKAN_UBO_COMPATIBLE(CameraBuffer);
+
+struct FrustumBuffer
+{
+  alignas(16) std::array<glm::vec4, 6> planes{};
+  alignas(16) std::array<glm::vec4, 2> _padding_{};
+};
+ASSERT_VULKAN_UBO_COMPATIBLE(FrustumBuffer);
 
 struct ShadowBuffer
 {
-  glm::mat4 light_vp;
-  glm::vec4 light_position;
-  glm::vec4 light_color;
-  glm::vec4 ambient_color{ 0.1F, 0.1F, 0.1F, 1.0F };
-  std::array<glm::vec4, 1> padding{};
+  alignas(16) glm::mat4 light_vp;
+  alignas(16) glm::vec4 light_position;
+  alignas(16) glm::vec4 light_color;
+  alignas(16) glm::vec4 ambient_color{ 0.1F, 0.1F, 0.1F, 1.0F };
+  alignas(16) std::array<glm::vec4, 1> padding{};
 };
+ASSERT_VULKAN_UBO_COMPATIBLE(ShadowBuffer);
 
 template<typename T, std::size_t N = image_count>
 static constexpr auto
@@ -47,206 +58,36 @@ create_sized_array(const T& value) -> std::array<T, N>
   return arr;
 }
 
-struct DescriptorBindingMetadata
-{
-  uint32_t binding;
-  VkDescriptorType descriptor_type;
-  VkShaderStageFlags stage_flags;
-  std::string_view name;
-  GPUBuffer* buffer{ nullptr };
-  std::size_t element_size{ 0 };
-};
-static std::array<DescriptorBindingMetadata, 4> renderer_bindings_metadata{
+static constexpr auto stages = VK_SHADER_STAGE_VERTEX_BIT |
+                               VK_SHADER_STAGE_FRAGMENT_BIT |
+                               VK_SHADER_STAGE_COMPUTE_BIT;
+
+static constexpr std::array renderer_bindings_metadata{
   DescriptorBindingMetadata{
     .binding = 0,
     .descriptor_type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-    .stage_flags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT |
-                   VK_SHADER_STAGE_COMPUTE_BIT,
+    .stage_flags = stages,
     .name = "camera_ubo",
   },
   DescriptorBindingMetadata{
     .binding = 1,
     .descriptor_type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-    .stage_flags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+    .stage_flags = stages,
     .name = "shadow_camera_ubo",
   },
   DescriptorBindingMetadata{
     .binding = 2,
     .descriptor_type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-    .stage_flags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT |
-                   VK_SHADER_STAGE_COMPUTE_BIT,
+    .stage_flags = stages,
     .name = "frustum_ubo",
   },
   DescriptorBindingMetadata{
     .binding = 3,
     .descriptor_type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
     .stage_flags = VK_SHADER_STAGE_FRAGMENT_BIT,
-    .name = "shadow_image",
+    .name = "shadow_depth",
   },
 };
-
-auto
-Renderer::create_descriptor_set_layout_from_metadata() -> void
-{
-  camera_uniform_buffer = std::make_unique<GPUBuffer>(
-    *device, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, true, "camera_ubo");
-  shadow_camera_buffer = std::make_unique<GPUBuffer>(
-    *device, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, true, "shadow_camera_ubo");
-  frustum_buffer = std::make_unique<GPUBuffer>(
-    *device, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, true, "frustum_ubo");
-
-  for (auto& meta : renderer_bindings_metadata) {
-    if (meta.descriptor_type == VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER) {
-      auto size = [&]() -> std::size_t {
-        if (meta.name == "camera_ubo")
-          return sizeof(CameraBuffer);
-        if (meta.name == "shadow_camera_ubo")
-          return sizeof(ShadowBuffer);
-        if (meta.name == "frustum_ubo")
-          return sizeof(FrustumBuffer);
-        return 0;
-      }();
-
-      auto buf = std::make_unique<GPUBuffer>(*device,
-                                             VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
-                                             true,
-                                             std::string(meta.name).c_str());
-
-      meta.buffer = buf.get();
-      meta.element_size = size;
-
-      if (meta.name == "camera_ubo")
-        camera_uniform_buffer = std::move(buf);
-      if (meta.name == "shadow_camera_ubo")
-        shadow_camera_buffer = std::move(buf);
-      if (meta.name == "frustum_ubo")
-        frustum_buffer = std::move(buf);
-    }
-  }
-
-  std::vector<VkDescriptorSetLayoutBinding> layout_bindings;
-  for (const auto& meta : renderer_bindings_metadata) {
-    layout_bindings.push_back({
-      .binding = meta.binding,
-      .descriptorType = meta.descriptor_type,
-      .descriptorCount = 1,
-      .stageFlags = meta.stage_flags,
-    });
-  }
-
-  VkDescriptorSetLayoutCreateInfo layout_info{
-    .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-    .bindingCount = static_cast<uint32_t>(layout_bindings.size()),
-    .pBindings = layout_bindings.data(),
-  };
-
-  vkCreateDescriptorSetLayout(device->get_device(),
-                              &layout_info,
-                              nullptr,
-                              &renderer_descriptor_set_layout);
-}
-
-auto
-Renderer::finalize_renderer_descriptor_sets() -> void
-{
-  for (const auto& meta : renderer_bindings_metadata) {
-    if (meta.buffer && meta.element_size > 0) {
-      const std::size_t total_bytes = meta.element_size * image_count;
-      auto zero_init = std::make_unique<std::byte[]>(total_bytes);
-      std::memset(zero_init.get(), 0, total_bytes);
-      meta.buffer->upload(std::span{ zero_init.get(), total_bytes });
-    }
-  }
-
-  std::vector<VkDescriptorPoolSize> pool_sizes;
-  for (const auto& meta : renderer_bindings_metadata) {
-    pool_sizes.push_back({
-      .type = meta.descriptor_type,
-      .descriptorCount = image_count,
-    });
-  }
-
-  VkDescriptorPoolCreateInfo pool_info{
-    .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
-    .maxSets = image_count,
-    .poolSizeCount = static_cast<uint32_t>(pool_sizes.size()),
-    .pPoolSizes = pool_sizes.data(),
-  };
-
-  vkCreateDescriptorPool(
-    device->get_device(), &pool_info, nullptr, &descriptor_pool);
-
-  const auto layouts = create_sized_array(renderer_descriptor_set_layout);
-  VkDescriptorSetAllocateInfo alloc_info{
-    .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
-    .descriptorPool = descriptor_pool,
-    .descriptorSetCount = image_count,
-    .pSetLayouts = layouts.data(),
-  };
-
-  vkAllocateDescriptorSets(
-    device->get_device(), &alloc_info, renderer_descriptor_sets.data());
-
-  const auto total_bindings = renderer_bindings_metadata.size() * image_count;
-
-  std::vector<VkWriteDescriptorSet> write_sets(total_bindings);
-  std::vector<VkDescriptorBufferInfo> buffer_infos(total_bindings);
-  std::vector<VkDescriptorImageInfo> image_infos(total_bindings);
-
-  for (std::size_t i = 0; i < image_count; ++i) {
-    for (std::size_t j = 0; j < renderer_bindings_metadata.size(); ++j) {
-      const auto& meta = renderer_bindings_metadata[j];
-      const std::size_t index = i * renderer_bindings_metadata.size() + j;
-
-      auto& write = write_sets[index];
-      write = {
-        .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-        .dstSet = renderer_descriptor_sets[i],
-        .dstBinding = meta.binding,
-        .descriptorCount = 1,
-        .descriptorType = meta.descriptor_type,
-      };
-
-      if (meta.descriptor_type == VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER) {
-        GPUBuffer* buf = nullptr;
-        std::size_t size = 0;
-        if (meta.name == "camera_ubo") {
-          buf = camera_uniform_buffer.get();
-          size = sizeof(CameraBuffer);
-        } else if (meta.name == "shadow_camera_ubo") {
-          buf = shadow_camera_buffer.get();
-          size = sizeof(ShadowBuffer);
-        } else if (meta.name == "frustum_ubo") {
-          buf = frustum_buffer.get();
-          size = sizeof(FrustumBuffer);
-        }
-        buffer_infos[index] = {
-          .buffer = buf->get(),
-          .offset = i * size,
-          .range = size,
-        };
-        write.pBufferInfo = &buffer_infos[index];
-      } else if (meta.descriptor_type ==
-                 VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER) {
-        Image* img = nullptr;
-        if (meta.name == "shadow_image")
-          img = shadow_depth_image.get();
-        image_infos[index] = {
-          .sampler = img->get_sampler(),
-          .imageView = img->get_view(),
-          .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-        };
-        write.pImageInfo = &image_infos[index];
-      }
-    }
-  }
-
-  vkUpdateDescriptorSets(device->get_device(),
-                         static_cast<uint32_t>(write_sets.size()),
-                         write_sets.data(),
-                         0,
-                         nullptr);
-}
 
 Renderer::Renderer(const Device& dev,
                    const BlueprintRegistry& registry,
@@ -256,7 +97,9 @@ Renderer::Renderer(const Device& dev,
   , blueprint_registry(&registry)
   , thread_pool(&p)
 {
-  create_descriptor_set_layout_from_metadata();
+  DescriptorLayoutBuilder builder(renderer_bindings_metadata);
+  descriptor_set_manager =
+    std::make_unique<DescriptorSetManager>(*device, std::move(builder));
 
   command_buffer =
     CommandBuffer::create(dev, VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT);
@@ -302,9 +145,8 @@ Renderer::Renderer(const Device& dev,
                       .allow_in_ui = false,
                     });
 
-    auto result = Material::create(*device,
-                                   blueprint_registry->get("main_geometry"),
-                                   renderer_descriptor_set_layout);
+    auto result =
+      Material::create(*device, blueprint_registry->get("main_geometry"));
     if (result.has_value()) {
       geometry_material = std::move(result.value());
     } else {
@@ -322,9 +164,8 @@ Renderer::Renderer(const Device& dev,
                                VK_IMAGE_USAGE_SAMPLED_BIT,
                     });
 
-    auto result = Material::create(*device,
-                                   blueprint_registry->get("colour_correction"),
-                                   renderer_descriptor_set_layout);
+    auto result =
+      Material::create(*device, blueprint_registry->get("colour_correction"));
     if (result.has_value()) {
       colour_corrected_material = std::move(result.value());
     } else {
@@ -335,9 +176,8 @@ Renderer::Renderer(const Device& dev,
   }
 
   {
-    auto result = Material::create(*device,
-                                   blueprint_registry->get("z_prepass"),
-                                   renderer_descriptor_set_layout);
+    auto result =
+      Material::create(*device, blueprint_registry->get("z_prepass"));
     if (result.has_value()) {
       z_prepass_material = std::move(result.value());
     } else {
@@ -346,8 +186,7 @@ Renderer::Renderer(const Device& dev,
   }
 
   {
-    auto result = Material::create(
-      *device, blueprint_registry->get("line"), renderer_descriptor_set_layout);
+    auto result = Material::create(*device, blueprint_registry->get("line"));
     if (result.has_value()) {
       line_material = std::move(result.value());
     } else {
@@ -380,7 +219,7 @@ Renderer::Renderer(const Device& dev,
       assert(false && "Failed to allocate instance vertex buffer.");
     }
     instance_vertex_buffer->upload(
-      std::span<std::byte>{ bytes.get(), instance_size_bytes });
+      std::span{ bytes.get(), instance_size_bytes });
   }
 
   {
@@ -394,56 +233,7 @@ Renderer::Renderer(const Device& dev,
       assert(false && "Failed to allocate instance vertex buffer.");
     }
     instance_shadow_vertex_buffer->upload(
-      std::span<std::byte>{ bytes.get(), instance_size_bytes });
-  }
-
-  {
-    auto result = Material::create(*device,
-                                   blueprint_registry->get("gizmo"),
-                                   renderer_descriptor_set_layout);
-    if (result.has_value()) {
-      gizmo_material = std::move(result.value());
-    } else {
-      assert(false && "Failed to create gizmo material.");
-    }
-
-    {
-      struct GizmoVertex
-      {
-        glm::vec3 pos;
-        glm::vec3 col;
-      };
-      constexpr std::array<GizmoVertex, 6> gizmo_vertices = {
-        GizmoVertex{
-          .pos = glm::vec3(0.f, 0.f, 0.f),
-          .col = glm::vec3{ 1.0, 0.0, 0.0 },
-        },
-        {
-          glm::vec3(1.f, 0.f, 0.f),
-          glm::vec3{ 1.0, 0.0, 0.0 },
-        }, // X+ = RED
-        {
-          glm::vec3(0.f, 0.f, 0.f),
-          glm::vec3{ 0.0, 1.0, 0.0 },
-        },
-        {
-          glm::vec3(0.f, 1.f, 0.f),
-          glm::vec3{ 0.0, 1.0, 0.0 },
-        }, // Y+ = BLUE
-        {
-          glm::vec3(0.f, 0.f, 0.f),
-          glm::vec3{ 0.0, 0.0, 1.0 },
-        },
-        {
-          glm::vec3(0.f, 0.f, 1.f),
-          glm::vec3{ 0.0, 0.0, 1.0 },
-        }, // Z+ = GREEN
-      };
-
-      gizmo_vertex_buffer = std::make_unique<GPUBuffer>(
-        dev, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, true);
-      gizmo_vertex_buffer->upload(std::span{ gizmo_vertices });
-    }
+      std::span{ bytes.get(), instance_size_bytes });
   }
 
   {
@@ -455,11 +245,10 @@ Renderer::Renderer(const Device& dev,
                       .usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT |
                                VK_IMAGE_USAGE_SAMPLED_BIT,
                       .aspect = VK_IMAGE_ASPECT_DEPTH_BIT,
+                      .debug_name = "shadow_depth",
                     });
 
-    auto result = Material::create(*device,
-                                   blueprint_registry->get("shadow"),
-                                   renderer_descriptor_set_layout);
+    auto result = Material::create(*device, blueprint_registry->get("shadow"));
     if (result.has_value()) {
       shadow_material = std::move(result.value());
     } else {
@@ -468,9 +257,8 @@ Renderer::Renderer(const Device& dev,
   }
 
   {
-    auto result = Material::create(*device,
-                                   blueprint_registry->get("compute_culling"),
-                                   renderer_descriptor_set_layout);
+    auto result =
+      Material::create(*device, blueprint_registry->get("compute_culling"));
 
     if (result.has_value()) {
       cull_instances_compute_material = std::move(result.value());
@@ -493,7 +281,7 @@ Renderer::Renderer(const Device& dev,
       auto&& [bytes, instance_size_bytes] =
         make_bytes<InstanceData, 1'000'000>();
       culled_instance_vertex_buffer->upload(
-        std::span<std::byte>{ bytes.get(), instance_size_bytes });
+        std::span{ bytes.get(), instance_size_bytes });
     }
 
     cull_instances_compute_material->upload("InstanceInput",
@@ -504,25 +292,45 @@ Renderer::Renderer(const Device& dev,
                                             culled_instance_count_buffer.get());
   }
 
-  finalize_renderer_descriptor_sets();
+  camera_uniform_buffer =
+    GPUBuffer::zero_initialise(*device,
+                               sizeof(CameraBuffer) * image_count,
+                               VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+                               true,
+                               "camera_ubo");
+  shadow_camera_buffer =
+    GPUBuffer::zero_initialise(*device,
+                               sizeof(ShadowBuffer) * image_count,
+                               VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+                               true,
+                               "shadow_camera_ubo");
+  frustum_buffer =
+    GPUBuffer::zero_initialise(*device,
+                               sizeof(FrustumBuffer) * image_count,
+                               VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+                               true,
+                               "frustum_ubo");
+
+  std::array uniforms{ camera_uniform_buffer.get(),
+                       shadow_camera_buffer.get(),
+                       frustum_buffer.get() };
+  std::array images{ shadow_depth_image.get() };
+  descriptor_set_manager->allocate_sets(std::span(uniforms), std::span(images));
 }
 
 auto
 Renderer::get_renderer_descriptor_set_layout(Badge<AssetReloader>) const
   -> VkDescriptorSetLayout
 {
-  return renderer_descriptor_set_layout;
+  return descriptor_set_manager->get_layout();
 }
 
 auto
 Renderer::destroy() -> void
 {
-  for (auto& semaphore : compute_finished_semaphore) {
+  for (const auto& semaphore : compute_finished_semaphore) {
     vkDestroySemaphore(device->get_device(), semaphore, nullptr);
   }
-  vkDestroyDescriptorPool(device->get_device(), descriptor_pool, nullptr);
-  vkDestroyDescriptorSetLayout(
-    device->get_device(), renderer_descriptor_set_layout, nullptr);
 }
 
 Renderer::~Renderer()
@@ -533,30 +341,33 @@ Renderer::~Renderer()
 auto
 Renderer::submit(const DrawCommand& cmd, const glm::mat4& transform) -> void
 {
-  draw_commands[cmd].emplace_back(transform);
-  if (cmd.casts_shadows) {
-    shadow_draw_commands[cmd].emplace_back(transform);
+  for (auto& submesh : cmd.mesh->get_submeshes()) {
+    auto command = DrawCommand{
+      .mesh = cmd.mesh,
+      .override_material = cmd.override_material,
+      .submesh_index = cmd.mesh->get_submesh_index(submesh),
+      .casts_shadows = cmd.casts_shadows,
+    };
+    draw_commands[command].emplace_back(transform);
+    if (cmd.casts_shadows) {
+      shadow_draw_commands[command].emplace_back(transform);
+    }
   }
 }
 
 auto
 Renderer::submit_lines(const glm::vec3& start,
                        const glm::vec3& end,
-                       float width,
-                       const glm::vec4& color) -> void
+                       const float width,
+                       const glm::vec4& colour) -> void
 {
   std::uint32_t packed_color =
-    (static_cast<std::uint32_t>(color.a * 255.0f) << 24) |
-    (static_cast<std::uint32_t>(color.b * 255.0f) << 16) |
-    (static_cast<std::uint32_t>(color.g * 255.0f) << 8) |
-    (static_cast<std::uint32_t>(color.r * 255.0f) << 0);
+    (static_cast<std::uint32_t>(colour.a * 255.0f) << 24) |
+    (static_cast<std::uint32_t>(colour.b * 255.0f) << 16) |
+    (static_cast<std::uint32_t>(colour.g * 255.0f) << 8) |
+    (static_cast<std::uint32_t>(colour.r * 255.0f) << 0);
 
-  line_instances.push_back(LineInstanceData{
-    .start = start,
-    .width = width,
-    .end = end,
-    .packed_color = packed_color,
-  });
+  line_instances.emplace_back(start, width, end, packed_color);
 }
 
 static auto
@@ -676,7 +487,7 @@ Renderer::update_shadow_buffers(std::uint32_t frame_index) -> void
       return proj * view;
     };
 
-  glm::mat4 vp =
+  const glm::mat4 vp =
     calculate_light_view_projection(light_environment.light_position);
   ShadowBuffer shadow_data{
     .light_vp = vp,
@@ -691,25 +502,31 @@ Renderer::update_shadow_buffers(std::uint32_t frame_index) -> void
 }
 
 auto
-Renderer::update_uniform_buffers(std::uint32_t frame_index,
+Renderer::update_uniform_buffers(const std::uint32_t frame_index,
                                  const glm::mat4& vp,
-                                 const glm::mat4& inverse_vp) -> void
+                                 const glm::mat4& inverse_vp,
+                                 const glm::vec3& camera_position) const -> void
 {
-  const CameraBuffer buffer{ .vp = vp, .inverse_vp = inverse_vp };
+  const CameraBuffer buffer{
+    .vp = vp,
+    .inverse_vp = inverse_vp,
+    .camera_position = camera_position,
+  };
   camera_uniform_buffer->upload_with_offset(std::span{ &buffer, 1 },
                                             sizeof(CameraBuffer) * frame_index);
 
-  const FrustumBuffer frustum{ current_frustum.planes };
+  const FrustumBuffer frustum{ camera_frustum.planes };
   frustum_buffer->upload_with_offset(std::span{ &frustum, 1 },
                                      sizeof(FrustumBuffer) * frame_index);
 }
 
 auto
-Renderer::begin_frame(std::uint32_t frame_index,
-                      const glm::mat4& vp,
-                      const glm::mat4& inverse_vp) -> void
+Renderer::begin_frame(std::uint32_t frame_index, const VP& matrices) -> void
 {
-  update_uniform_buffers(frame_index, vp, inverse_vp);
+  const auto vp = matrices.projection * matrices.view;
+  const auto inverse_vp = matrices.inverse_projection * matrices.view;
+  const auto position = matrices.view[3];
+  update_uniform_buffers(frame_index, vp, inverse_vp, position);
   update_shadow_buffers(frame_index);
   update_frustum(vp);
   draw_commands.clear();
@@ -721,7 +538,7 @@ Renderer::end_frame(std::uint32_t frame_index) -> void
 {
   ZoneScoped;
 
-  if (shadow_draw_commands.empty() && draw_commands.empty())
+  if ((shadow_draw_commands.empty() && draw_commands.empty()))
     return;
 
   DrawList flat_shadow_draw_commands;
@@ -760,7 +577,7 @@ Renderer::end_frame(std::uint32_t frame_index) -> void
         upload_instance_vertex_data(*thread_pool,
                                     *instance_vertex_buffer,
                                     draw_commands,
-                                    current_frustum,
+                                    camera_frustum,
                                     instance_count_this_frame);
       uploads_remaining.count_down();
     });
@@ -818,13 +635,12 @@ Renderer::end_frame(std::uint32_t frame_index) -> void
   run_z_prepass(frame_index, flat_draw_commands);
   run_geometry_pass(frame_index, flat_draw_commands);
   run_line_pass(frame_index);
-  run_gizmo_pass(frame_index);
 
   run_postprocess_passes(frame_index);
 
-  auto semaphore = total_instance_count >= culling_threshold
-                     ? compute_finished_semaphore.at(frame_index)
-                     : VK_NULL_HANDLE;
+  const auto semaphore = total_instance_count >= culling_threshold
+                           ? compute_finished_semaphore.at(frame_index)
+                           : VK_NULL_HANDLE;
   command_buffer->submit_and_end(frame_index, semaphore);
 
   draw_commands.clear();
@@ -861,7 +677,7 @@ Renderer::run_z_prepass(std::uint32_t frame_index, const DrawList& draw_list)
   CoreUtils::cmd_transition_to_depth_attachment(
     cmd, geometry_depth_image->get_image());
 
-  VkClearValue depth_clear = { .depthStencil = { 0.0f, 0 } };
+  const VkClearValue depth_clear = { .depthStencil = { 0.0f, 0 } };
 
   VkRenderingAttachmentInfo depth_attachment = {
     .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
@@ -876,7 +692,7 @@ Renderer::run_z_prepass(std::uint32_t frame_index, const DrawList& draw_list)
     .clearValue = depth_clear,
   };
 
-  VkRenderingInfo rendering_info = {
+  const VkRenderingInfo rendering_info = {
     .sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
     .pNext = nullptr,
     .flags = 0,
@@ -892,7 +708,7 @@ Renderer::run_z_prepass(std::uint32_t frame_index, const DrawList& draw_list)
 
   vkCmdBeginRendering(cmd, &rendering_info);
 
-  VkViewport viewport = {
+  const VkViewport viewport = {
     .x = 0.f,
     .y = static_cast<float>(geometry_image->height()),
     .width = static_cast<float>(geometry_image->width()),
@@ -905,17 +721,25 @@ Renderer::run_z_prepass(std::uint32_t frame_index, const DrawList& draw_list)
   auto& z_prepass_pipeline = z_prepass_material->get_pipeline();
   vkCmdBindPipeline(
     cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, z_prepass_pipeline.pipeline);
+
+  std::vector sets = { descriptor_set_manager->get_set(frame_index) };
+  if (const auto set = z_prepass_material->prepare_for_rendering(frame_index)) {
+    sets.push_back(set);
+  }
   vkCmdBindDescriptorSets(cmd,
                           VK_PIPELINE_BIND_POINT_GRAPHICS,
                           z_prepass_pipeline.layout,
                           0,
                           1,
-                          &renderer_descriptor_sets[frame_index],
+                          &descriptor_set_manager->get_set(frame_index),
                           0,
                           nullptr);
   for (const auto& [cmd_info, offset, count] : draw_list) {
+    const auto& vertex_buffer = cmd_info.mesh->get_vertex_buffer();
+    const auto& index_buffer = cmd_info.mesh->get_index_buffer();
+
     const std::array vertex_buffers = {
-      cmd_info.vertex_buffer->get(),
+      vertex_buffer->get(),
       instance_vertex_buffer->get(),
     };
     constexpr std::array<VkDeviceSize, 2> offsets = { 0ULL, 0ULL };
@@ -924,18 +748,15 @@ Renderer::run_z_prepass(std::uint32_t frame_index, const DrawList& draw_list)
                            static_cast<std::uint32_t>(vertex_buffers.size()),
                            vertex_buffers.data(),
                            offsets.data());
-    vkCmdBindIndexBuffer(cmd,
-                         cmd_info.index_buffer->get(),
-                         0,
-                         cmd_info.index_buffer->get_index_type());
+    vkCmdBindIndexBuffer(
+      cmd, index_buffer->get(), 0, index_buffer->get_index_type());
 
-    vkCmdDrawIndexed(
-      cmd,
-      static_cast<std::uint32_t>(cmd_info.index_buffer->get_count()),
-      count,
-      0,
-      0,
-      offset);
+    vkCmdDrawIndexed(cmd,
+                     static_cast<std::uint32_t>(index_buffer->get_count()),
+                     count,
+                     0,
+                     0,
+                     offset);
   }
 
   vkCmdEndRendering(cmd);
@@ -956,8 +777,8 @@ Renderer::run_geometry_pass(std::uint32_t frame_index,
   CoreUtils::cmd_transition_to_color_attachment(
     cmd, geometry_msaa_image->get_image());
 
-  VkClearValue clear_value = { .color = { { 0.f, 0.f, 0.f, 0.f } } };
-  VkRenderingAttachmentInfo color_attachment = {
+  constexpr VkClearValue clear_value = { .color = { { 0.f, 0.f, 0.f, 0.f } } };
+  const VkRenderingAttachmentInfo color_attachment = {
     .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
     .pNext = nullptr,
     .imageView = geometry_msaa_image->get_view(),
@@ -986,7 +807,7 @@ Renderer::run_geometry_pass(std::uint32_t frame_index,
   const std::array colour_attachments = {
     color_attachment,
   };
-  VkRenderingInfo render_info = {
+  const VkRenderingInfo render_info = {
     .sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
     .pNext = nullptr,
     .flags = 0,
@@ -1002,7 +823,7 @@ Renderer::run_geometry_pass(std::uint32_t frame_index,
 
   vkCmdBeginRendering(cmd, &render_info);
 
-  VkViewport viewport = {
+  const VkViewport viewport = {
     .x = 0.f,
     .y = static_cast<float>(geometry_image->height()),
     .width = static_cast<float>(geometry_image->width()),
@@ -1014,18 +835,27 @@ Renderer::run_geometry_pass(std::uint32_t frame_index,
   vkCmdSetScissor(cmd, 0, 1, &render_info.renderArea);
 
   for (const auto& [cmd_info, offset, instance_count] : draw_list) {
-    auto&& [vertex_buffer, index_buffer, override_material, shadows] = cmd_info;
+    const auto& vertex_buffer = cmd_info.mesh->get_vertex_buffer();
+    const auto& index_buffer = cmd_info.mesh->get_index_buffer();
+    const auto& submesh_material =
+      cmd_info.mesh->get_material_by_submesh_index(cmd_info.submesh_index);
 
-    const auto& material =
-      override_material ? *override_material : *geometry_material;
+    auto& material = cmd_info.override_material ? *cmd_info.override_material
+                                                : *submesh_material;
     auto& pipeline = material.get_pipeline();
 
+    const auto& material_set = material.prepare_for_rendering(frame_index);
+
+    std::array descriptor_sets{
+      descriptor_set_manager->get_set(frame_index),
+      material_set,
+    };
     vkCmdBindDescriptorSets(cmd,
                             VK_PIPELINE_BIND_POINT_GRAPHICS,
                             pipeline.layout,
                             0,
-                            1,
-                            &renderer_descriptor_sets[frame_index],
+                            static_cast<std::uint32_t>(descriptor_sets.size()),
+                            descriptor_sets.data(),
                             0,
                             nullptr);
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.pipeline);
@@ -1034,7 +864,7 @@ Renderer::run_geometry_pass(std::uint32_t frame_index,
       vertex_buffer->get(),
       instance_vertex_buffer->get(),
     };
-    constexpr std::array<VkDeviceSize, 2> offsets = { 0ULL, 0ULL };
+    constexpr std::array offsets = { 0ULL, 0ULL };
     vkCmdBindVertexBuffers(cmd,
                            0,
                            static_cast<std::uint32_t>(vertex_buffers.size()),
@@ -1043,6 +873,10 @@ Renderer::run_geometry_pass(std::uint32_t frame_index,
     vkCmdBindIndexBuffer(
       cmd, index_buffer->get(), 0, index_buffer->get_index_type());
 
+    auto&& [pc_stage, pc_offset, pc_size, pc_pointer] =
+      material.generate_push_constant_data();
+    vkCmdPushConstants(
+      cmd, pipeline.layout, pc_stage, pc_offset, pc_size, pc_pointer);
     vkCmdDrawIndexed(cmd,
                      static_cast<std::uint32_t>(index_buffer->get_count()),
                      instance_count,
@@ -1075,7 +909,7 @@ Renderer::run_culling_compute_pass(std::uint32_t frame_index) -> void
     cull_instances_compute_material->prepare_for_rendering(frame_index);
 
   const std::array descriptor_sets{
-    renderer_descriptor_sets[frame_index],
+    descriptor_set_manager->get_set(frame_index),
     cull_descriptor_set,
   };
 
@@ -1151,7 +985,7 @@ Renderer::run_line_pass(std::uint32_t frame_index) -> void
     .clearValue = {}
   };
 
-  VkRenderingInfo rendering_info{
+  const VkRenderingInfo rendering_info{
     .sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
     .pNext = nullptr,
     .flags = 0,
@@ -1167,7 +1001,7 @@ Renderer::run_line_pass(std::uint32_t frame_index) -> void
 
   vkCmdBeginRendering(cmd, &rendering_info);
 
-  VkViewport viewport{
+  const VkViewport viewport{
     .x = 0.f,
     .y = static_cast<float>(geometry_image->height()),
     .width = static_cast<float>(geometry_image->width()),
@@ -1186,7 +1020,7 @@ Renderer::run_line_pass(std::uint32_t frame_index) -> void
                           line_pipeline.layout,
                           0,
                           1,
-                          &renderer_descriptor_sets[frame_index],
+                          &descriptor_set_manager->get_set(frame_index),
                           0,
                           nullptr);
 
@@ -1202,88 +1036,6 @@ Renderer::run_line_pass(std::uint32_t frame_index) -> void
 }
 
 auto
-Renderer::run_gizmo_pass(std::uint32_t frame_index) -> void
-{
-  ZoneScopedN("Gizmo pass");
-
-  command_buffer->begin_timer(frame_index, "gizmo_pass");
-
-  const VkCommandBuffer cmd = command_buffer->get(frame_index);
-
-  VkRenderingAttachmentInfo color_attachment{
-    .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
-    .pNext = nullptr,
-    .imageView = geometry_msaa_image->get_view(),
-    .imageLayout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
-    .resolveMode = VK_RESOLVE_MODE_AVERAGE_BIT_KHR,
-    .resolveImageView = geometry_image->get_view(),
-    .resolveImageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-    .loadOp = VK_ATTACHMENT_LOAD_OP_LOAD,
-    .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
-    .clearValue = {}
-  };
-
-  VkRenderingInfo rendering_info{
-    .sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
-    .pNext = nullptr,
-    .flags = 0,
-    .renderArea = { { 0, 0 },
-                    { geometry_image->width(), geometry_image->height() } },
-    .layerCount = 1,
-    .viewMask = 0,
-    .colorAttachmentCount = 1,
-    .pColorAttachments = &color_attachment,
-    .pDepthAttachment = nullptr,
-    .pStencilAttachment = nullptr,
-  };
-
-  vkCmdBeginRendering(cmd, &rendering_info);
-
-  VkViewport viewport{
-    .x = 0.f,
-    .y = static_cast<float>(geometry_image->height()),
-    .width = static_cast<float>(geometry_image->width()),
-    .height = -static_cast<float>(geometry_image->height()),
-    .minDepth = 1.f,
-    .maxDepth = 0.f,
-  };
-  vkCmdSetViewport(cmd, 0, 1, &viewport);
-  vkCmdSetScissor(cmd, 0, 1, &rendering_info.renderArea);
-
-  auto& gizmo_pipeline = gizmo_material->get_pipeline();
-  vkCmdBindPipeline(
-    cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, gizmo_pipeline.pipeline);
-  vkCmdBindDescriptorSets(cmd,
-                          VK_PIPELINE_BIND_POINT_GRAPHICS,
-                          gizmo_pipeline.layout,
-                          0,
-                          1,
-                          &renderer_descriptor_sets[frame_index],
-                          0,
-                          nullptr);
-
-  const std::array<VkDeviceSize, 1> offsets{ 0 };
-  const std::array<VkBuffer, 1> buffers{ gizmo_vertex_buffer->get() };
-  vkCmdBindVertexBuffers(cmd, 0, 1, buffers.data(), offsets.data());
-  if (glm::mat4 vp{}; camera_uniform_buffer->read_into_with_offset(
-        vp, frame_index * sizeof(glm::mat4))) {
-    const auto rotation_only = glm::mat4(glm::mat3(vp));
-
-    vkCmdPushConstants(cmd,
-                       gizmo_pipeline.layout,
-                       VK_SHADER_STAGE_VERTEX_BIT,
-                       0,
-                       sizeof(glm::mat4),
-                       &rotation_only);
-  }
-  vkCmdDraw(cmd, 6, 1, 0, 0);
-
-  vkCmdEndRendering(cmd);
-
-  command_buffer->end_timer(frame_index, "gizmo_pass");
-}
-
-auto
 Renderer::run_shadow_pass(std::uint32_t frame_index, const DrawList& draw_list)
   -> void
 {
@@ -1295,7 +1047,7 @@ Renderer::run_shadow_pass(std::uint32_t frame_index, const DrawList& draw_list)
   CoreUtils::cmd_transition_to_depth_attachment(
     cmd, shadow_depth_image->get_image());
 
-  VkClearValue depth_clear = { .depthStencil = { 0.f, 0 } };
+  constexpr VkClearValue depth_clear = { .depthStencil = { 0.f, 0 } };
 
   VkRenderingAttachmentInfo depth_attachment = {
     .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
@@ -1310,7 +1062,7 @@ Renderer::run_shadow_pass(std::uint32_t frame_index, const DrawList& draw_list)
     .clearValue = depth_clear,
   };
 
-  VkRenderingInfo rendering_info = {
+  const VkRenderingInfo rendering_info = {
     .sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
     .pNext = nullptr,
     .flags = 0,
@@ -1327,7 +1079,7 @@ Renderer::run_shadow_pass(std::uint32_t frame_index, const DrawList& draw_list)
 
   vkCmdBeginRendering(cmd, &rendering_info);
 
-  VkViewport viewport = {
+  const VkViewport viewport = {
     .x = 0.f,
     .y = static_cast<float>(shadow_depth_image->height()),
     .width = static_cast<float>(shadow_depth_image->width()),
@@ -1341,38 +1093,45 @@ Renderer::run_shadow_pass(std::uint32_t frame_index, const DrawList& draw_list)
   auto& shadow_pipeline = shadow_material->get_pipeline();
   vkCmdBindPipeline(
     cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, shadow_pipeline.pipeline);
+
+  std::vector sets{
+    descriptor_set_manager->get_set(frame_index),
+  };
+  if (const auto set = shadow_material->prepare_for_rendering(frame_index)) {
+    sets.push_back(set);
+  }
   vkCmdBindDescriptorSets(cmd,
                           VK_PIPELINE_BIND_POINT_GRAPHICS,
                           shadow_pipeline.layout,
                           0,
-                          1,
-                          &renderer_descriptor_sets[frame_index],
+                          static_cast<std::uint32_t>(sets.size()),
+                          sets.data(),
                           0,
                           nullptr);
 
   for (const auto& [cmd_info, offset, count] : draw_list) {
+    const auto& vertex_buffer = cmd_info.mesh->get_vertex_buffer();
+    const auto& index_buffer = cmd_info.mesh->get_index_buffer();
+
     const std::array vertex_buffers = {
-      cmd_info.vertex_buffer->get(),
+      vertex_buffer->get(),
       instance_shadow_vertex_buffer->get(),
     };
-    constexpr std::array<VkDeviceSize, 2> offsets = { 0ULL, 0ULL };
+    constexpr std::array offsets = { 0ULL, 0ULL };
     vkCmdBindVertexBuffers(cmd,
                            0,
                            static_cast<std::uint32_t>(vertex_buffers.size()),
                            vertex_buffers.data(),
                            offsets.data());
-    vkCmdBindIndexBuffer(cmd,
-                         cmd_info.index_buffer->get(),
-                         0,
-                         cmd_info.index_buffer->get_index_type());
+    vkCmdBindIndexBuffer(
+      cmd, index_buffer->get(), 0, index_buffer->get_index_type());
 
-    vkCmdDrawIndexed(
-      cmd,
-      static_cast<std::uint32_t>(cmd_info.index_buffer->get_count()),
-      count,
-      0,
-      0,
-      offset);
+    vkCmdDrawIndexed(cmd,
+                     static_cast<std::uint32_t>(index_buffer->get_count()),
+                     count,
+                     0,
+                     0,
+                     offset);
   }
 
   vkCmdEndRendering(cmd);
@@ -1402,7 +1161,7 @@ Renderer::run_colour_correction_pass(std::uint32_t frame_index) -> void
       .dst_stage_mask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
     });
 
-  VkClearValue clear_value = { .color = { { 0.F, 0.F, 0.F, 0.F } } };
+  const VkClearValue clear_value = { .color = { { 0.F, 0.F, 0.F, 0.F } } };
   VkRenderingAttachmentInfo color_attachment = {
     .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
     .imageView = colour_corrected_image->get_view(),
@@ -1413,7 +1172,7 @@ Renderer::run_colour_correction_pass(std::uint32_t frame_index) -> void
     .clearValue = clear_value,
   };
 
-  VkRenderingInfo rendering_info = {
+  const VkRenderingInfo rendering_info = {
     .sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
     .renderArea = { { 0, 0 },
                     { colour_corrected_image->width(),
@@ -1425,7 +1184,7 @@ Renderer::run_colour_correction_pass(std::uint32_t frame_index) -> void
 
   vkCmdBeginRendering(cmd, &rendering_info);
 
-  VkViewport viewport = {
+  const VkViewport viewport = {
     .x = 0.f,
     .y = static_cast<float>(colour_corrected_image->height()),
     .width = static_cast<float>(colour_corrected_image->width()),
@@ -1443,7 +1202,7 @@ Renderer::run_colour_correction_pass(std::uint32_t frame_index) -> void
   const auto& descriptor_set = material->prepare_for_rendering(frame_index);
 
   const std::array descriptor_sets{
-    renderer_descriptor_sets[frame_index],
+    descriptor_set_manager->get_set(frame_index),
     descriptor_set,
   };
   vkCmdBindDescriptorSets(cmd,

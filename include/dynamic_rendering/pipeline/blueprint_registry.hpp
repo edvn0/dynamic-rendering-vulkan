@@ -40,7 +40,8 @@ public:
 private:
   string_hash_map<PipelineBlueprint> blueprints;
   string_hash_map<std::unordered_set<std::string>> shader_to_pipeline;
-  auto load_one(const std::filesystem::path&, PipelineBlueprint&) const -> bool;
+  static auto load_one(const std::filesystem::path&, PipelineBlueprint&)
+    -> bool;
 
   std::vector<BlueprintChangeCallback> callbacks;
   auto notify_callbacks(BlueprintChangeType type,

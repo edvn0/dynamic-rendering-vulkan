@@ -14,6 +14,7 @@
 #include "core/util.hpp"
 #include "pipeline/compute_pipeline_factory.hpp"
 #include "pipeline/pipeline_factory.hpp"
+#include "renderer/material_data.hpp"
 
 #include <vulkan/vulkan.h>
 
@@ -37,27 +38,61 @@ struct MaterialError
 class Material
 {
 public:
-  static auto create(const Device& device,
-                     const PipelineBlueprint& blueprint,
-                     VkDescriptorSetLayout renderer_set_layout)
+  static auto create(const Device&, const PipelineBlueprint&)
     -> std::expected<std::unique_ptr<Material>, MaterialError>;
-
   ~Material();
 
   auto upload(std::string_view name, const GPUBuffer* buffer) -> void;
   auto upload(std::string_view name, const Image* image) -> void;
 
+  auto use_albedo_map(const bool val = true)
+  {
+    material_data.set_has_albedo_texture(val);
+  };
+  auto use_normal_map(const bool val = true)
+  {
+    material_data.set_has_normal_map(val);
+  }
+  auto use_metallic_map(const bool val = true)
+  {
+    material_data.set_has_metallic_map(val);
+  }
+  auto use_roughness_map(const bool val = true)
+  {
+    material_data.set_has_roughness_map(val);
+  }
+  auto use_ao_map(const bool val = true) { material_data.set_has_ao_map(val); }
+  auto use_emissive_map(const bool val = true)
+  {
+    material_data.set_has_emissive_map(val);
+  }
+
   auto get_pipeline() const -> const CompiledPipeline& { return *pipeline; }
-  auto get_descriptor_set(std::uint32_t frame_index) const -> const auto&
+  auto get_descriptor_set(const std::uint32_t frame_index) const -> const auto&
   {
     return descriptor_sets[frame_index];
   }
 
-  auto invalidate(const Image* image) -> void;
+  auto get_descriptor_set_layout(const std::uint32_t set) const
+    -> VkDescriptorSetLayout
+  {
+    return set < descriptor_set_layouts.size() ? descriptor_set_layouts[set]
+                                               : VK_NULL_HANDLE;
+  }
 
-  auto reload(const PipelineBlueprint&, VkDescriptorSetLayout) -> void;
+  auto invalidate(const Image* image) -> void;
+  auto reload(const PipelineBlueprint&) -> void;
   auto prepare_for_rendering(std::uint32_t frame_index)
     -> const VkDescriptorSet&;
+
+  struct PushConstantInformation
+  {
+    VkShaderStageFlagBits stage;
+    std::uint32_t offset;
+    std::uint32_t size;
+    const void* pointer;
+  };
+  auto generate_push_constant_data() const -> PushConstantInformation;
 
 private:
   string_hash_map<std::unique_ptr<GPUBinding>> bindings;
@@ -66,17 +101,19 @@ private:
 
   const Device* device{ nullptr };
   frame_array<VkDescriptorSet> descriptor_sets{};
-  VkDescriptorSetLayout descriptor_set_layout{};
+  std::vector<VkDescriptorSetLayout> descriptor_set_layouts;
   VkDescriptorPool descriptor_pool{};
   bool destroyed{ false };
 
-  // Materials own the pipeline.
   std::unique_ptr<CompiledPipeline> pipeline{ nullptr };
   std::size_t pipeline_hash{ 0 };
 
-  Material(const Device& device,
+  MaterialData material_data;
+  std::unique_ptr<Image> white_texture{ nullptr };
+
+  Material(const Device&,
            frame_array<VkDescriptorSet>&&,
-           std::span<const VkDescriptorSetLayout>,
+           std::vector<VkDescriptorSetLayout>&&,
            VkDescriptorPool,
            std::unique_ptr<CompiledPipeline>,
            string_hash_map<std::tuple<std::uint32_t, std::uint32_t>>&&);
@@ -87,6 +124,9 @@ private:
   static inline std::unique_ptr<IPipelineFactory> compute_pipeline_factory{
     nullptr
   };
-  auto rebuild_pipeline(const PipelineBlueprint&, VkDescriptorSetLayout)
+
+  auto rebuild_pipeline(const PipelineBlueprint&)
     -> std::expected<std::unique_ptr<CompiledPipeline>, MaterialError>;
+
+  auto upload_default_textures() -> void;
 };

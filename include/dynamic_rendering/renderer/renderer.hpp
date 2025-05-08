@@ -27,7 +27,6 @@ enum class RenderPass : std::uint8_t
 {
   MainGeometry,
   Shadow,
-  Gizmo,
   Line,
   ZPrepass,
   ColourCorrection,
@@ -35,21 +34,24 @@ enum class RenderPass : std::uint8_t
 };
 
 inline auto
-to_renderpass(std::string_view name) -> RenderPass
+to_renderpass(const std::string_view name) -> RenderPass
 {
   if (name == "main_geometry") {
     return RenderPass::MainGeometry;
-  } else if (name == "shadow") {
+  }
+  if (name == "shadow") {
     return RenderPass::Shadow;
-  } else if (name == "gizmo") {
-    return RenderPass::Gizmo;
-  } else if (name == "line") {
+  }
+  if (name == "line") {
     return RenderPass::Line;
-  } else if (name == "z_prepass") {
+  }
+  if (name == "z_prepass") {
     return RenderPass::ZPrepass;
-  } else if (name == "colour_correction") {
+  }
+  if (name == "colour_correction") {
     return RenderPass::ColourCorrection;
-  } else if (name == "compute_culling") {
+  }
+  if (name == "compute_culling") {
     return RenderPass::ComputeCulling;
   }
 
@@ -66,8 +68,8 @@ struct LightEnvironment
 
 struct LineDrawCommand
 {
-  GPUBuffer* vertex_buffer;
-  std::uint32_t vertex_count;
+  GPUBuffer* vertex_buffer{ nullptr };
+  std::uint32_t vertex_count{ 0 };
   Material* override_material{ nullptr };
 };
 struct LineInstanceData
@@ -92,32 +94,42 @@ public:
   auto submit(const DrawCommand&, const glm::mat4& = glm::mat4{ 1.0F }) -> void;
   auto submit_lines(const glm::vec3&, const glm::vec3&, float, const glm::vec4&)
     -> void;
-  auto begin_frame(std::uint32_t, const glm::mat4&, const glm::mat4&) -> void;
+  struct VP
+  {
+    const glm::mat4& projection;
+    const glm::mat4& inverse_projection;
+    const glm::mat4& view;
+  };
+  auto begin_frame(std::uint32_t, const VP&) -> void;
   auto end_frame(std::uint32_t) -> void;
   auto resize(std::uint32_t, std::uint32_t) -> void;
-  auto get_output_image() const -> const Image&;
-  auto get_shadow_image() const -> const Image& { return *shadow_depth_image; }
-  auto get_command_buffer() const -> CommandBuffer& { return *command_buffer; }
-  auto get_compute_command_buffer() const -> CommandBuffer&
+  [[nodiscard]] auto get_output_image() const -> const Image&;
+  [[nodiscard]] auto get_shadow_image() const -> const Image&
+  {
+    return *shadow_depth_image;
+  }
+  [[nodiscard]] auto get_command_buffer() const -> CommandBuffer&
+  {
+    return *command_buffer;
+  }
+  [[nodiscard]] auto get_compute_command_buffer() const -> CommandBuffer&
   {
     return *compute_command_buffer;
   }
   auto update_frustum(const glm::mat4& vp) -> void
   {
-    current_frustum.update(vp);
+    camera_frustum.update(vp);
   }
   auto get_light_environment() -> auto& { return light_environment; }
-  auto get_material_by_name(const std::string& name) -> Material*
+  [[nodiscard]] auto get_material_by_name(const std::string& name) const
+    -> Material*
   {
-    auto current_pass = ::to_renderpass(name);
-    switch (current_pass) {
+    switch (to_renderpass(name)) {
       using enum RenderPass;
       case MainGeometry:
         return geometry_material.get();
       case Shadow:
         return shadow_material.get();
-      case Gizmo:
-        return gizmo_material.get();
       case Line:
         return line_material.get();
       case ZPrepass:
@@ -131,14 +143,17 @@ public:
         return nullptr;
     }
   }
-  auto get_renderer_descriptor_set_layout(Badge<AssetReloader>) const
-    -> VkDescriptorSetLayout;
+  [[nodiscard]] auto get_renderer_descriptor_set_layout(
+    Badge<AssetReloader>) const -> VkDescriptorSetLayout;
 
 private:
   const Device* device{ nullptr };
   const BlueprintRegistry* blueprint_registry{ nullptr };
   BS::priority_thread_pool* thread_pool{ nullptr };
+  std::unique_ptr<DescriptorSetManager> descriptor_set_manager;
 
+  Frustum camera_frustum;
+  Frustum light_frustum;
   LightEnvironment light_environment;
 
   std::unique_ptr<CommandBuffer> command_buffer;
@@ -178,33 +193,26 @@ private:
   DrawCommandMap draw_commands{};
   DrawCommandMap shadow_draw_commands{};
 
-  auto update_uniform_buffers(std::uint32_t, const glm::mat4&, const glm::mat4&)
-    -> void;
-  auto update_shadow_buffers(std::uint32_t) -> void;
-
   std::unique_ptr<GPUBuffer> camera_uniform_buffer;
   std::unique_ptr<GPUBuffer> shadow_camera_buffer;
   std::unique_ptr<GPUBuffer> frustum_buffer;
-  frame_array<VkDescriptorSet> renderer_descriptor_sets{};
-  VkDescriptorSetLayout renderer_descriptor_set_layout{};
-  VkDescriptorPool descriptor_pool{};
+  auto update_uniform_buffers(std::uint32_t,
+                              const glm::mat4&,
+                              const glm::mat4&,
+                              const glm::vec3&) const -> void;
+  auto update_shadow_buffers(std::uint32_t) -> void;
 
   auto run_culling_compute_pass(std::uint32_t) -> void;
   auto run_shadow_pass(std::uint32_t, const DrawList&) -> void;
   auto run_z_prepass(std::uint32_t, const DrawList&) -> void;
   auto run_geometry_pass(std::uint32_t, const DrawList&) -> void;
   auto run_line_pass(std::uint32_t) -> void;
-  auto run_gizmo_pass(std::uint32_t) -> void;
-  auto run_colour_correction_pass(std::uint32_t frame_index) -> void;
-  auto run_postprocess_passes(std::uint32_t frame_index) -> void
+  auto run_colour_correction_pass(std::uint32_t) -> void;
+  auto run_postprocess_passes(const std::uint32_t frame_index) -> void
   {
     run_colour_correction_pass(frame_index);
   }
 
-  Frustum current_frustum;
-  Frustum light_frustum;
-
   auto destroy() -> void;
-  auto create_descriptor_set_layout_from_metadata() -> void;
   auto finalize_renderer_descriptor_sets() -> void;
 };

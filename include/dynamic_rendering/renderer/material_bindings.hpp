@@ -17,7 +17,7 @@ template<typename WriteBufferInfo>
 class BaseGPUBinding : public GPUBinding
 {
 public:
-  BaseGPUBinding(VkDescriptorType type, std::uint32_t binding)
+  BaseGPUBinding(const VkDescriptorType type, const std::uint32_t binding)
     : type(type)
     , binding(binding)
   {
@@ -39,12 +39,12 @@ private:
   frame_array<WriteBufferInfo> buffer_infos;
 };
 
-class BufferBinding : public BaseGPUBinding<VkDescriptorBufferInfo>
+class BufferBinding final : public BaseGPUBinding<VkDescriptorBufferInfo>
 {
 public:
   BufferBinding(const GPUBuffer* buf,
-                VkDescriptorType type,
-                std::uint32_t binding)
+                const VkDescriptorType type,
+                const std::uint32_t binding)
     : BaseGPUBinding(type, binding)
     , buffer(buf)
   {
@@ -60,10 +60,12 @@ private:
   const GPUBuffer* buffer;
 };
 
-class ImageBinding : public BaseGPUBinding<VkDescriptorImageInfo>
+class ImageBinding final : public BaseGPUBinding<VkDescriptorImageInfo>
 {
 public:
-  ImageBinding(const Image* img, VkDescriptorType type, std::uint32_t binding)
+  ImageBinding(const Image* img,
+               const VkDescriptorType type,
+               const std::uint32_t binding)
     : BaseGPUBinding(type, binding)
     , image(img)
   {

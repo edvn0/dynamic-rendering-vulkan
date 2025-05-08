@@ -3,6 +3,7 @@
 #include "core/config.hpp"
 #include "core/device.hpp"
 #include "core/image_configuration.hpp"
+#include "debug_utils.hpp"
 
 #include "core/allocator.hpp"
 #include "core/sampler_manager.hpp"
@@ -35,6 +36,11 @@ public:
                                                 config.aspect,
                                                 config.allow_in_ui,
                                                 config.sample_count));
+
+    if (!config.debug_name.empty()) {
+      img->set_debug_name(config.debug_name);
+    }
+
     img->recreate();
     return img;
   }
@@ -48,7 +54,8 @@ public:
   {
     return std::bit_cast<T>(texture_implementation_pointer);
   }
-  auto get_mip_layer_view(uint32_t mip, uint32_t layer) const -> VkImageView
+  auto get_mip_layer_view(const uint32_t mip, const uint32_t layer) const
+    -> VkImageView
   {
     return mip_layer_views[layer * mip_levels + mip];
   }
@@ -62,25 +69,38 @@ public:
     return image_descriptor_info;
   }
 
-  auto resize(uint32_t new_width, uint32_t new_height)
+  auto resize(const uint32_t new_width, const uint32_t new_height)
   {
     extent.width = new_width;
     extent.height = new_height;
     std::cout << "Resizing image to: " << new_width << "x" << new_height
               << std::endl;
     recreate();
+
+    // Reapply debug name after recreation
+    if (!debug_name.empty()) {
+      set_debug_name(debug_name);
+    }
   }
+  auto set_debug_name(std::string_view name) -> void;
+  auto get_name() const -> const std::string& { return debug_name; }
+
+  auto upload_rgba(std::span<const unsigned char>) -> void;
+
+  static auto load_from_file(const Device&,
+                             const std::string&,
+                             bool flip_y = true) -> std::unique_ptr<Image>;
 
 private:
   Image(const Device& dev,
-        VkFormat fmt,
-        Extent2D ext,
-        uint32_t mips,
-        uint32_t layers,
-        VkImageUsageFlags usage_flags,
-        VkImageAspectFlags aspect_flags,
-        bool allow,
-        VkSampleCountFlags sc)
+        const VkFormat fmt,
+        const Extent2D ext,
+        const uint32_t mips,
+        const uint32_t layers,
+        const VkImageUsageFlags usage_flags,
+        const VkImageAspectFlags aspect_flags,
+        const bool allow,
+        const VkSampleCountFlags sc)
     : extent(ext)
     , mip_levels(mips)
     , array_layers(layers)
@@ -110,6 +130,7 @@ private:
   VkImageAspectFlags aspect{};
   VkSampleCountFlags sample_count{};             // For MSAA images.
   VkDescriptorImageInfo image_descriptor_info{}; // For descriptor sets.
+  std::string debug_name{};
 
   // For UI systems.
   bool allow_in_ui{ true }; // For UI systems

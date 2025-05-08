@@ -1,5 +1,7 @@
 #include "core/app.hpp"
 
+#include "renderer/mesh.hpp"
+
 #include <dynamic_rendering/core/asset_file_watcher.hpp>
 #include <dynamic_rendering/core/asset_reloader.hpp>
 #include <dynamic_rendering/core/fs.hpp>
@@ -219,6 +221,8 @@ App::run() -> std::error_code
   for (const auto& layer : layers)
     layer->on_destroy();
 
+  layers.clear();
+
   renderer.reset();
   gui_system->shutdown();
   swapchain.reset();
@@ -360,9 +364,13 @@ App::render()
 {
   const auto frame_index = swapchain->get_frame_index();
 
-  renderer->begin_frame(frame_index,
-                        camera->compute_view_projection(),
-                        camera->compute_inverse_view_projection());
+  renderer->begin_frame(
+    frame_index,
+    {
+      .projection = camera->get_projection(),
+      .inverse_projection = camera->get_inverse_projection(),
+      .view = camera->get_view(),
+    });
 
   for (const auto& layer : layers)
     layer->on_render(*renderer);
@@ -389,10 +397,9 @@ parse_command_line_args(int argc, char** argv)
     lyra::opt(args.window_size.width, "width")["--width"]("Window width") |
     lyra::opt(args.window_size.height, "height")["--height"]("Window height");
 
-  // Add help
   cli |= lyra::help(asked_for_help);
 
-  if (auto result = cli.parse({ argc, argv }); !result)
+  if (const auto result = cli.parse({ argc, argv }); !result)
     return std::unexpected(std::make_error_code(std::errc::invalid_argument));
 
   if (asked_for_help) {
@@ -400,7 +407,6 @@ parse_command_line_args(int argc, char** argv)
     return std::unexpected(std::make_error_code(std::errc::invalid_argument));
   }
 
-  // Hook up base path to the working directory
   set_base_path(args.working_directory);
 
   return args;

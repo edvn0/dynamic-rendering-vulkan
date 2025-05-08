@@ -62,9 +62,10 @@ ComputePipelineFactory::create_pipeline(
     .pSpecializationInfo = nullptr,
   };
 
-  std::vector<VkDescriptorSetLayout> layouts{
-    descriptor_layout_info.renderer_set_layout,
-  };
+  std::vector<VkDescriptorSetLayout> layouts;
+  if (descriptor_layout_info.renderer_set_layout != VK_NULL_HANDLE) {
+    layouts.push_back(descriptor_layout_info.renderer_set_layout);
+  }
   layouts.insert(layouts.end(),
                  descriptor_layout_info.material_sets.begin(),
                  descriptor_layout_info.material_sets.end());

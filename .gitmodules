@@ -17,3 +17,6 @@
 [submodule "third_party/implot"]
 	path = third_party/implot
 	url = git@github.com:epezent/implot.git
+[submodule "third_party/stb"]
+	path = third_party/stb
+	url = git@github.com:nothings/stb.git

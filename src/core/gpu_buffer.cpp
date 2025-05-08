@@ -25,6 +25,22 @@ upload_to_device_buffer(const Device& device,
   device.flush(command_buffer, command_pool);
 }
 
+auto
+GPUBuffer::zero_initialise(const Device& device,
+                           std::size_t bytes,
+                           const VkBufferUsageFlags usage,
+                           const bool mapped_on_create,
+                           const std::string_view name)
+  -> std::unique_ptr<GPUBuffer>
+{
+  auto buffer =
+    std::make_unique<GPUBuffer>(device, usage, mapped_on_create, name);
+
+  const auto memory = std::make_unique<std::byte[]>(bytes);
+  buffer->upload(std::span(memory.get(), bytes));
+  return std::move(buffer);
+}
+
 GPUBuffer::~GPUBuffer()
 {
   vmaDestroyBuffer(device.get_allocator().get(), buffer, allocation);

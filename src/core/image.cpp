@@ -5,6 +5,44 @@
 #include "imgui_impl_vulkan.h"
 
 #include "core/allocator.hpp"
+#include "core/gpu_buffer.hpp"
+#include "core/image_transition.hpp"
+#include "renderer/material_bindings.hpp"
+
+#include <stb_image.h>
+
+auto
+Image::set_debug_name(const std::string_view name) -> void
+{
+  debug_name = name;
+  if (image) {
+    ::set_debug_name(
+      *device, std::bit_cast<std::uint64_t>(image), VK_OBJECT_TYPE_IMAGE, name);
+    std::string view_name = std::string(name) + " (Default View)";
+    ::set_debug_name(*device,
+                     std::bit_cast<std::uint64_t>(default_view),
+                     VK_OBJECT_TYPE_IMAGE_VIEW,
+                     view_name);
+    // Set debug name for each mip-layer view
+    for (uint32_t layer = 0; layer < array_layers; ++layer) {
+      for (uint32_t mip = 0; mip < mip_levels; ++mip) {
+        auto view = mip_layer_views[layer * mip_levels + mip];
+        std::string mip_layer_name = std::string(name) + " (Layer " +
+                                     std::to_string(layer) + ", Mip " +
+                                     std::to_string(mip) + ")";
+        ::set_debug_name(*device,
+                         std::bit_cast<std::uint64_t>(view),
+                         VK_OBJECT_TYPE_IMAGE_VIEW,
+                         mip_layer_name);
+      }
+    }
+
+    // Set allocation name
+    if (allocation) {
+      ::set_vma_allocation_name(*device, allocation, name);
+    }
+  }
+}
 
 auto
 Image::recreate() -> void
@@ -184,4 +222,166 @@ Image::destroy() -> void
     image = nullptr;
     allocation = nullptr;
   }
+}
+
+auto
+Image::upload_rgba(const std::span<const unsigned char> data) -> void
+{
+  if (data.empty())
+    return;
+  if (data.size_bytes() % 4 != 0)
+    return;
+
+  auto&& [cmd, pool] =
+    device->create_one_time_command_buffer(device->graphics_queue());
+
+  GPUBuffer staging{ *device, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, true };
+  staging.upload(data);
+
+  CoreUtils::cmd_transition_image(
+    cmd,
+    {
+      .image = image,
+      .old_layout = VK_IMAGE_LAYOUT_UNDEFINED,
+      .new_layout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+      .src_access_mask = 0,
+      .dst_access_mask = VK_ACCESS_TRANSFER_WRITE_BIT,
+      .src_stage_mask = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+      .dst_stage_mask = VK_PIPELINE_STAGE_TRANSFER_BIT,
+      .subresource_range = { VK_IMAGE_ASPECT_COLOR_BIT, 0, mip_levels, 0, 1 },
+    });
+
+  VkBufferImageCopy region{};
+  region.bufferOffset = 0;
+  region.bufferRowLength = 0;
+  region.bufferImageHeight = 0;
+  region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  region.imageSubresource.mipLevel = 0;
+  region.imageSubresource.baseArrayLayer = 0;
+  region.imageSubresource.layerCount = 1;
+  region.imageOffset = { 0, 0, 0 };
+  region.imageExtent = { extent.width, extent.height, 1 };
+
+  vkCmdCopyBufferToImage(cmd,
+                         staging.get(),
+                         image,
+                         VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                         1,
+                         &region);
+
+  uint32_t mip_width = extent.width;
+  uint32_t mip_height = extent.height;
+
+  for (uint32_t i = 1; i < mip_levels; ++i) {
+    VkImageBlit blit{};
+    blit.srcOffsets[1] = { static_cast<int32_t>(mip_width),
+                           static_cast<int32_t>(mip_height),
+                           1 };
+    blit.srcSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, i - 1, 0, 1 };
+    blit.dstOffsets[1] = {
+      static_cast<int32_t>(mip_width > 1 ? mip_width / 2 : 1),
+      static_cast<int32_t>(mip_height > 1 ? mip_height / 2 : 1),
+      1
+    };
+    blit.dstSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, i, 0, 1 };
+
+    CoreUtils::cmd_transition_image(
+      cmd,
+      {
+        .image = image,
+        .old_layout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+        .new_layout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+        .src_access_mask = VK_ACCESS_TRANSFER_WRITE_BIT,
+        .dst_access_mask = VK_ACCESS_TRANSFER_READ_BIT,
+        .src_stage_mask = VK_PIPELINE_STAGE_TRANSFER_BIT,
+        .dst_stage_mask = VK_PIPELINE_STAGE_TRANSFER_BIT,
+        .subresource_range = { VK_IMAGE_ASPECT_COLOR_BIT, i - 1, 1, 0, 1 },
+      });
+
+    vkCmdBlitImage(cmd,
+                   image,
+                   VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                   image,
+                   VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                   1,
+                   &blit,
+                   VK_FILTER_LINEAR);
+
+    CoreUtils::cmd_transition_image(
+      cmd,
+      {
+        .image = image,
+        .old_layout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+        .new_layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+        .src_access_mask = VK_ACCESS_TRANSFER_READ_BIT,
+        .dst_access_mask = VK_ACCESS_SHADER_READ_BIT,
+        .src_stage_mask = VK_PIPELINE_STAGE_TRANSFER_BIT,
+        .dst_stage_mask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+        .subresource_range = { VK_IMAGE_ASPECT_COLOR_BIT, i - 1, 1, 0, 1 },
+      });
+
+    mip_width = mip_width > 1 ? mip_width / 2 : 1;
+    mip_height = mip_height > 1 ? mip_height / 2 : 1;
+  }
+
+  CoreUtils::cmd_transition_image(
+    cmd,
+    {
+      .image = image,
+      .old_layout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+      .new_layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+      .src_access_mask = VK_ACCESS_TRANSFER_WRITE_BIT,
+      .dst_access_mask = VK_ACCESS_SHADER_READ_BIT,
+      .src_stage_mask = VK_PIPELINE_STAGE_TRANSFER_BIT,
+      .dst_stage_mask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+      .subresource_range = { VK_IMAGE_ASPECT_COLOR_BIT,
+                             mip_levels - 1,
+                             1,
+                             0,
+                             1 },
+    });
+
+  device->flush(cmd, pool, device->graphics_queue());
+}
+
+auto
+Image::load_from_file(const Device& device,
+                      const std::string& path,
+                      bool flip_y) -> std::unique_ptr<Image>
+{
+  stbi_set_flip_vertically_on_load(flip_y ? 1 : 0);
+
+  int width, height, channels;
+  stbi_uc* pixels =
+    stbi_load(path.c_str(), &width, &height, &channels, STBI_rgb_alpha);
+
+  if (!pixels) {
+    std::cerr << "Failed to load image: " << path << "\n";
+    return nullptr;
+  }
+
+  uint32_t mip_levels =
+    1 + static_cast<uint32_t>(std::floor(std::log2(std::max(width, height))));
+
+  const auto img_config = ImageConfiguration{
+    .extent = { static_cast<uint32_t>(width), static_cast<uint32_t>(height) },
+    .format = VK_FORMAT_R8G8B8A8_UNORM,
+    .mip_levels = mip_levels,
+    .array_layers = 1,
+    .usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT |
+             VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+    .aspect = VK_IMAGE_ASPECT_COLOR_BIT,
+    .sample_count = VK_SAMPLE_COUNT_1_BIT,
+    .allow_in_ui = true,
+    .debug_name = std::filesystem::path{ path }.filename().string(),
+  };
+
+  auto image = create(device, img_config);
+
+  image->upload_rgba(
+    std::span{ pixels, static_cast<size_t>(width * height * STBI_rgb_alpha) });
+
+  stbi_image_free(pixels);
+
+  return image;
 }
