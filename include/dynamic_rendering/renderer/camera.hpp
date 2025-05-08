@@ -61,6 +61,10 @@ public:
 
   auto get_view() const -> const glm::mat4& { return view; }
   auto get_projection() const -> const glm::mat4& { return projection; }
+  auto get_inverse_projection() const -> const glm::mat4&
+  {
+    return inverse_projection;
+  }
 
   auto compute_view_projection() const { return projection * view; }
   auto compute_inverse_view_projection() const

@@ -26,9 +26,9 @@ class GPUBuffer
 {
 public:
   GPUBuffer(const Device& device,
-            VkBufferUsageFlags usage,
-            bool mapped_on_create = false,
-            std::string_view name = {})
+            const VkBufferUsageFlags usage,
+            const bool mapped_on_create = false,
+            const std::string_view name = {})
     : device(device)
     , usage_flags(usage)
     , mapped_on_create(mapped_on_create)
@@ -38,10 +38,18 @@ public:
     }
   }
 
+  static auto zero_initialise(const Device& device,
+                              std::size_t bytes,
+                              VkBufferUsageFlags usage,
+                              bool mapped_on_create = false,
+                              std::string_view name = {})
+    -> std::unique_ptr<GPUBuffer>;
+
   ~GPUBuffer();
 
   auto get_usage_flags() const -> VkBufferUsageFlags { return usage_flags; }
   auto get() const -> const VkBuffer& { return buffer; }
+  auto get_size() const -> const auto& { return current_size; }
 
   auto set_name(std::string_view name) -> void
   {
@@ -50,6 +58,7 @@ public:
       set_debug_name(debug_name);
     }
   }
+  auto get_name() const -> const auto& { return debug_name; }
 
   template<AdmitsGPUBuffer T, std::size_t N = std::dynamic_extent>
   auto upload(std::span<const T, N> data) -> void
@@ -147,7 +156,7 @@ public:
 private:
   auto recreate(size_t size) -> void;
 
-  auto set_debug_name(std::string_view name) -> void
+  auto set_debug_name(const std::string_view name) -> void
   {
     ::set_debug_name(
       device, reinterpret_cast<uint64_t>(buffer), VK_OBJECT_TYPE_BUFFER, name);
@@ -167,9 +176,9 @@ private:
 class IndexBuffer
 {
 public:
-  IndexBuffer(const Device& device,
-              VkIndexType type = VK_INDEX_TYPE_UINT32,
-              std::string_view name = {})
+  explicit IndexBuffer(const Device& device,
+                       const VkIndexType type = VK_INDEX_TYPE_UINT32,
+                       const std::string_view name = {})
     : buffer(device,
              VK_BUFFER_USAGE_INDEX_BUFFER_BIT |
                VK_BUFFER_USAGE_TRANSFER_DST_BIT,
@@ -211,9 +220,9 @@ private:
 class VertexBuffer
 {
 public:
-  VertexBuffer(const Device& device,
-               bool mapped_on_create = false,
-               std::string_view name = {})
+  explicit VertexBuffer(const Device& device,
+                        const bool mapped_on_create = false,
+                        const std::string_view name = {})
     : buffer(device,
              VK_BUFFER_USAGE_VERTEX_BUFFER_BIT |
                VK_BUFFER_USAGE_TRANSFER_DST_BIT,

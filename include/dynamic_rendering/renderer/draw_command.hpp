@@ -1,7 +1,6 @@
 #pragma once
 
-#include "core/gpu_buffer.hpp"
-#include "renderer/material.hpp"
+#include "core/forward.hpp"
 
 #include <glm/glm.hpp>
 #include <memory>
@@ -12,9 +11,9 @@
 
 struct DrawCommand
 {
-  VertexBuffer* vertex_buffer;
-  IndexBuffer* index_buffer;
+  Mesh* mesh;
   Material* override_material{ nullptr };
+  std::int32_t submesh_index{ -1 };
   bool casts_shadows{ true };
 
   bool operator==(const DrawCommand& rhs) const = default;
@@ -22,14 +21,7 @@ struct DrawCommand
 
 struct DrawCommandHasher
 {
-  auto operator()(const DrawCommand& dc) const -> std::size_t
-  {
-    std::size_t h1 = std::hash<VertexBuffer*>{}(dc.vertex_buffer);
-    std::size_t h2 = std::hash<IndexBuffer*>{}(dc.index_buffer);
-    std::size_t h3 = std::hash<Material*>{}(dc.override_material);
-    std::size_t h4 = std::hash<bool>{}(dc.casts_shadows);
-    return h1 ^ (h2 << 1) ^ (h3 << 2) ^ (h4 << 3);
-  }
+  auto operator()(const DrawCommand& dc) const -> std::size_t;
 };
 
 // Represents one instance's transformation

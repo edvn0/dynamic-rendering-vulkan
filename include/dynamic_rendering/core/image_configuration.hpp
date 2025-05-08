@@ -16,4 +16,5 @@ struct ImageConfiguration
   VkImageAspectFlags aspect = VK_IMAGE_ASPECT_COLOR_BIT;
   VkSampleCountFlagBits sample_count = VK_SAMPLE_COUNT_1_BIT;
   bool allow_in_ui{ true };
+  std::string debug_name{};
 };

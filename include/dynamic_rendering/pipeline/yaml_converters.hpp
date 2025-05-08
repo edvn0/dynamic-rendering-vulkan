@@ -428,7 +428,7 @@ struct convert<PipelineBlueprint>
       rhs.depth_write = depth_stencil["depth_write"].as<bool>(false);
 
       if (depth_stencil["format"]) {
-        auto format_result = depth_stencil["format"].as<VkFormat>();
+        const auto format_result = depth_stencil["format"].as<VkFormat>();
         rhs.depth_attachment = Attachment{ .format = format_result };
       }
 
@@ -454,15 +454,18 @@ struct convert<PipelineBlueprint>
       }
 
       if (depth_stencil["compare_op"] && !rhs.depth_test) {
-        log_warning("Using depth compare_op without depth_test may lead to "
+        log_warning(rhs.name +
+                    "- Using depth compare_op without depth_test may lead to "
                     "undefined behavior");
       }
 
       if ((rhs.depth_compare_op == VK_COMPARE_OP_GREATER ||
            rhs.depth_compare_op == VK_COMPARE_OP_GREATER_OR_EQUAL) &&
           !rhs.depth_write) {
-        log_warning("Greater depth compare used but depth_write is false. This "
-                    "may be unintended.");
+        log_warning(
+          rhs.name +
+          "- Greater depth compare used but depth_write is false. This "
+          "may be unintended.");
       }
     }
 
@@ -470,8 +473,8 @@ struct convert<PipelineBlueprint>
       rhs.attachments = node["attachments"].as<std::vector<Attachment>>();
 
     if (node["msaa_samples"]) {
-      auto samples = node["msaa_samples"].as<std::string>("1x");
-      if (samples == "1x" || samples == "1")
+      if (auto samples = node["msaa_samples"].as<std::string>("1x");
+          samples == "1x" || samples == "1")
         rhs.msaa_samples = VK_SAMPLE_COUNT_1_BIT;
       else if (samples == "2x" || samples == "2")
         rhs.msaa_samples = VK_SAMPLE_COUNT_2_BIT;

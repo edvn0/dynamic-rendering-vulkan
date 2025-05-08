@@ -87,7 +87,7 @@ AssetReloader::reload_blueprint_and_material(
     return;
   }
 
-  mat->reload(blueprint, renderer.get_renderer_descriptor_set_layout({}));
+  mat->reload(blueprint);
   std::cout << "Reloaded material: " << blueprint.name << std::endl;
 }
 

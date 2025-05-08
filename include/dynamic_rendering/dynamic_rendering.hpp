@@ -34,6 +34,7 @@
 #include <dynamic_rendering/renderer/layer.hpp>
 #include <dynamic_rendering/renderer/material.hpp>
 #include <dynamic_rendering/renderer/material_bindings.hpp>
+#include <dynamic_rendering/renderer/mesh.hpp>
 #include <dynamic_rendering/renderer/renderer.hpp>
 
 // Window

@@ -33,9 +33,9 @@ auto
 BlueprintRegistry::load_from_directory(const std::filesystem::path& path)
   -> void
 {
-  const auto base = assets_path() / path;
 
-  for (const auto& entry : std::filesystem::directory_iterator(base)) {
+  for (const auto base = assets_path() / path;
+       const auto& entry : std::filesystem::directory_iterator(base)) {
     if (!entry.is_regular_file() || !is_valid_extension(entry.path())) {
       continue;
     }
@@ -87,14 +87,16 @@ BlueprintRegistry::update(const std::filesystem::path& path)
 
 auto
 BlueprintRegistry::load_one(const std::filesystem::path& file_path,
-                            PipelineBlueprint& output_blueprint) const -> bool
+                            PipelineBlueprint& output_blueprint) -> bool
 {
-  if (auto node = YAML::LoadFile(file_path.string());
+  std::cout << "Loading blueprint " << file_path.string() << std::endl;
+  if (const auto node = YAML::LoadFile(file_path.string());
       !YAML::convert<PipelineBlueprint>::decode(node, output_blueprint)) {
     return false;
   }
 
   output_blueprint.full_path = file_path;
   output_blueprint.name = file_path.stem().string();
+  std::cout << "Done loading blueprint\n";
   return true;
 }

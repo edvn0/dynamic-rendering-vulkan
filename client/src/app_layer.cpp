@@ -1,5 +1,7 @@
 #include "app_layer.hpp"
 
+#include "dynamic_rendering/renderer/mesh.hpp"
+
 #include <dynamic_rendering/renderer/renderer.hpp>
 
 #include <array>
@@ -13,7 +15,7 @@
 #include <latch>
 #include <tracy/Tracy.hpp>
 
-struct Vertex
+struct CubeVertex
 {
   glm::vec3 position;
   glm::vec3 normal;
@@ -23,8 +25,7 @@ struct Vertex
 auto
 generate_cube_counter_clockwise(const Device& device)
 {
-
-  static constexpr std::array<Vertex, 24> vertices = { {
+  static constexpr std::array<CubeVertex, 24> vertices = { {
     { { -1.f, -1.f, 1.f }, { 0.f, 0.f, 1.f }, { 0.f, 0.f } },
     { { 1.f, -1.f, 1.f }, { 0.f, 0.f, 1.f }, { 1.f, 0.f } },
     { { 1.f, 1.f, 1.f }, { 0.f, 0.f, 1.f }, { 1.f, 1.f } },
@@ -67,37 +68,27 @@ generate_cube_counter_clockwise(const Device& device)
   return std::make_pair(std::move(vertex_buffer), std::move(index_buffer));
 }
 
-AppLayer::AppLayer(const Device& dev, BS::priority_thread_pool* pool)
+AppLayer::AppLayer(const Device& dev,
+                   BS::priority_thread_pool* pool,
+                   BlueprintRegistry* registry)
   : thread_pool(pool)
+  , blueprint_registry(registry)
 {
-  quad_vertex_buffer =
-    std::make_unique<VertexBuffer>(dev, false, "quad_vertices");
-
-  std::array<Vertex, 4> square_vertices = {
-    Vertex{ { -0.5f, -0.5f, 0.f }, { 0.f, 0.f, 1.f }, { 0.f, 0.f } },
-    Vertex{ { 0.5f, -0.5f, 0.f }, { 0.f, 0.f, 1.f }, { 1.f, 0.f } },
-    Vertex{ { 0.5f, 0.5f, 0.f }, { 0.f, 0.f, 1.f }, { 1.f, 1.f } },
-    Vertex{ { -0.5f, 0.5f, 0.f }, { 0.f, 0.f, 1.f }, { 0.f, 1.f } },
-  };
-  quad_vertex_buffer->upload_vertices(std::span(square_vertices));
-
-  quad_index_buffer =
-    std::make_unique<IndexBuffer>(dev, VK_INDEX_TYPE_UINT32, "quad_indices");
-  std::array<std::uint32_t, 6> square_indices = { 0, 1, 2, 2, 3, 0 };
-  quad_index_buffer->upload_indices(std::span(square_indices));
-
   auto&& [cube_vertex, cube_index] = generate_cube_counter_clockwise(dev);
   cube_vertex_buffer = std::move(cube_vertex);
   cube_index_buffer = std::move(cube_index);
+  mesh = std::make_unique<Mesh>();
 
+  if (mesh->load_from_file(dev, *blueprint_registry, "cerberus/scene.gltf")) {
+  }
   generate_scene();
 }
+
+AppLayer::~AppLayer() = default;
 
 auto
 AppLayer::on_destroy() -> void
 {
-  quad_vertex_buffer.reset();
-  quad_index_buffer.reset();
   cube_vertex_buffer.reset();
   cube_index_buffer.reset();
 }
@@ -157,41 +148,12 @@ AppLayer::on_render(Renderer& renderer) -> void
   light_env.light_position = light_position;
   light_env.light_color = light_color;
 
-  if (transforms.size() < 6)
-    return;
-
-  // Render ground plane (quad)
   renderer.submit(
     {
-      .vertex_buffer = quad_vertex_buffer.get(),
-      .index_buffer = quad_index_buffer.get(),
-      .casts_shadows = true,
+      .mesh = mesh.get(),
     },
-    transforms[0]);
+    glm::mat4(1.f));
 
-  // Render 5 cubes
-  for (std::size_t i = 1; i <= 5; ++i) {
-    renderer.submit(
-      {
-        .vertex_buffer = cube_vertex_buffer.get(),
-        .index_buffer = cube_index_buffer.get(),
-        .casts_shadows = true,
-      },
-      transforms[i]);
-  }
-
-  // Optional: render light as small cube
-  renderer.submit(
-    {
-      .vertex_buffer = cube_vertex_buffer.get(),
-      .index_buffer = cube_index_buffer.get(),
-      .override_material = nullptr,
-      .casts_shadows = false,
-    },
-    glm::translate(glm::mat4(1.f), light_position) *
-      glm::scale(glm::mat4(1.f), { 0.5f, 0.5f, 0.5f }));
-
-  // Axis lines for debugging
   static constexpr float line_width = 0.1f;
   static constexpr float line_length = 50.f;
 
@@ -207,6 +169,16 @@ AppLayer::on_render(Renderer& renderer) -> void
                         { 0.f, 0.f, line_length },
                         line_width,
                         { 0.f, 0.f, 1.f, 1.f });
+
+  for (const auto& transform : transforms) {
+    renderer.submit(
+      {
+        .vertex_buffer = cube_vertex_buffer.get(),
+        .index_buffer = cube_index_buffer.get(),
+        .casts_shadows = true,
+      },
+      transform);
+  }
 }
 
 auto
@@ -220,25 +192,17 @@ auto
 AppLayer::generate_scene() -> void
 {
   transforms.clear();
-  transforms.reserve(6);
 
-  // Ground plane at Y=0, scaled large
-  transforms.emplace_back(glm::scale(glm::mat4(1.f), { 200.f, 1.f, 200.f }) *
-                          glm::rotate(glm::mat4(1.f),
-                                      glm::radians(-90.f),
-                                      { 1.f, 0.f, 0.f })); // Rotate to XZ plane
-
-  // Floating cubes at different XZ positions, all at Y = 5.f
-  static constexpr float y = 5.f;
-
-  std::array<glm::vec3, 5> positions = {
-    glm::vec3{ -20.f, y, -10.f }, glm::vec3{ 10.f, y, -5.f },
-    glm::vec3{ -5.f, y, 15.f },   glm::vec3{ 25.f, y, 10.f },
-    glm::vec3{ 0.f, y, 0.f },
-  };
-
-  for (const auto& pos : positions) {
-    transforms.emplace_back(glm::translate(glm::mat4(1.f), pos) *
-                            glm::scale(glm::mat4(1.f), { 5.f, 5.f, 5.f }));
+  for (int z = 0; z < 3; ++z) {
+    for (int x = 0; x < 4; ++x) {
+      glm::mat4 model =
+        glm::translate(glm::mat4(1.0f), glm::vec3(x * 4.0f, 1.0f, z * 4.0f));
+      transforms.push_back(model);
+    }
   }
+
+  glm::mat4 ground =
+    glm::translate(glm::mat4(1.0f), glm::vec3(6.0f, -1.0f, 6.0f)) *
+    glm::scale(glm::mat4(1.0f), glm::vec3(24.0f, 1.0f, 24.0f));
+  transforms.insert(transforms.begin(), ground);
 }

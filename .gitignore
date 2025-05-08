@@ -22,3 +22,5 @@ conan_profiles
 CMakeUserPresets.json
 
 *.spv
+
+.idea

@@ -47,7 +47,17 @@ public:
     if constexpr (std::is_constructible_v<T,
                                           Device&,
                                           BS::priority_thread_pool*,
+                                          BlueprintRegistry*,
                                           Args...>) {
+      auto layer = std::make_unique<T>(*device,
+                                       &thread_pool,
+                                       blueprint_registry.get(),
+                                       std::forward<Args>(args)...);
+      layers.emplace_back(std::move(layer));
+    } else if constexpr (std::is_constructible_v<T,
+                                                 Device&,
+                                                 BS::priority_thread_pool*,
+                                                 Args...>) {
       auto layer =
         std::make_unique<T>(*device, &thread_pool, std::forward<Args>(args)...);
       layers.emplace_back(std::move(layer));
@@ -68,7 +78,6 @@ private:
   void render();
   auto interface() -> void;
 
-private:
   BS::thread_pool<BS::tp::priority> thread_pool;
   std::unique_ptr<Core::Instance> instance;
   std::unique_ptr<Window> window;

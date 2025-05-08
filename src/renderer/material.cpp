@@ -18,17 +18,50 @@ static constexpr auto equal = [](const VkDescriptorSetLayoutBinding& a,
          a.descriptorCount == b.descriptorCount;
 };
 
-static auto
-merge_descriptor_binding(std::vector<VkDescriptorSetLayoutBinding>& dst,
-                         VkDescriptorSetLayoutBinding const& binding) -> void
+struct descriptor_binding_hash
 {
-  for (auto& ex : dst) {
-    if (equal(ex, binding)) {
-      ex.stageFlags |= binding.stageFlags;
-      return;
-    }
+  auto operator()(const VkDescriptorSetLayoutBinding& b) const noexcept
+    -> std::size_t
+  {
+    std::size_t h = 0;
+    h ^=
+      std::hash<std::uint32_t>{}(b.binding) + 0x9e3779b9 + (h << 6) + (h >> 2);
+    h ^= std::hash<std::uint32_t>{}(b.descriptorType) + 0x9e3779b9 + (h << 6) +
+         (h >> 2);
+    h ^= std::hash<std::uint32_t>{}(b.descriptorCount) + 0x9e3779b9 + (h << 6) +
+         (h >> 2);
+    return h;
   }
-  dst.push_back(binding);
+};
+
+struct descriptor_binding_equal
+{
+  auto operator()(const VkDescriptorSetLayoutBinding& a,
+                  const VkDescriptorSetLayoutBinding& b) const noexcept -> bool
+  {
+    return a.binding == b.binding && a.descriptorType == b.descriptorType &&
+           a.descriptorCount == b.descriptorCount;
+  }
+};
+
+using BindingSet = std::unordered_set<VkDescriptorSetLayoutBinding,
+                                      descriptor_binding_hash,
+                                      descriptor_binding_equal>;
+
+static auto
+merge_descriptor_binding(BindingSet& dst, VkDescriptorSetLayoutBinding& binding)
+  -> void
+{
+  if (binding.descriptorType == VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER) {
+    static constexpr auto stages = VK_SHADER_STAGE_VERTEX_BIT |
+                                   VK_SHADER_STAGE_FRAGMENT_BIT |
+                                   VK_SHADER_STAGE_COMPUTE_BIT;
+    binding.stageFlags = stages;
+  }
+  if (binding.descriptorType == VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER) {
+    binding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+  }
+  dst.insert(binding);
 }
 
 static auto
@@ -60,8 +93,8 @@ handle_block_declaration_naming(const SpvReflectDescriptorBinding* refl,
 
 auto
 reflect_shader_using_spirv_reflect(
-  std::string_view file_path,
-  std::vector<VkDescriptorSetLayoutBinding>& bindings,
+  const std::string_view file_path,
+  std::unordered_map<std::uint32_t, BindingSet>& bindings,
   std::vector<VkPushConstantRange>& push_constant_ranges,
   string_hash_map<std::tuple<std::uint32_t, std::uint32_t>>& binding_info)
   -> void
@@ -71,8 +104,8 @@ reflect_shader_using_spirv_reflect(
     std::cerr << "Failed to load shader: " << file_path << "\n";
     return;
   }
-  spv_reflect::ShaderModule shader_module(shader_code.size(),
-                                          shader_code.data());
+  const spv_reflect::ShaderModule shader_module(shader_code.size(),
+                                                shader_code.data());
   if (shader_module.GetResult() != SPV_REFLECT_RESULT_SUCCESS) {
     std::cerr << "Failed to reflect shader: " << file_path << "\n";
     return;
@@ -97,22 +130,23 @@ reflect_shader_using_spirv_reflect(
   // --- descriptors ---
   uint32_t set_count = 0;
   shader_module.EnumerateDescriptorSets(&set_count, nullptr);
-  std::vector<SpvReflectDescriptorSet*> sets(set_count);
-  shader_module.EnumerateDescriptorSets(&set_count, sets.data());
+  std::vector<SpvReflectDescriptorSet*> sets;
+  if (set_count > 0) {
+    sets.resize(set_count);
+    shader_module.EnumerateDescriptorSets(&set_count, sets.data());
+  }
 
   for (const auto* ds : sets) {
-    if (ds->set != 1)
-      continue;
     for (uint32_t i = 0; i < ds->binding_count; ++i) {
       const auto* refl = ds->bindings[i];
       VkDescriptorSetLayoutBinding b{};
       b.binding = refl->binding;
-      b.descriptorType = VkDescriptorType(refl->descriptor_type);
+      b.descriptorType = static_cast<VkDescriptorType>(refl->descriptor_type);
       b.descriptorCount = refl->count;
       b.stageFlags = vk_stage;
       b.pImmutableSamplers = nullptr;
 
-      merge_descriptor_binding(bindings, b);
+      merge_descriptor_binding(bindings[ds->set], b);
 
       /** This business logic handles
       ** layout(set = 1, binding = 0) uniform SomeUBO { some stuff... } ubo;
@@ -126,8 +160,11 @@ reflect_shader_using_spirv_reflect(
   // --- push constants ---
   uint32_t pc_count = 0;
   shader_module.EnumeratePushConstantBlocks(&pc_count, nullptr);
-  std::vector<SpvReflectBlockVariable*> pcs(pc_count);
-  shader_module.EnumeratePushConstantBlocks(&pc_count, pcs.data());
+  std::vector<SpvReflectBlockVariable*> pcs;
+  if (pc_count > 0) {
+    pcs.resize(pc_count);
+    shader_module.EnumeratePushConstantBlocks(&pc_count, pcs.data());
+  }
 
   for (const auto* pc : pcs) {
     VkPushConstantRange r{};
@@ -140,9 +177,7 @@ reflect_shader_using_spirv_reflect(
 }
 
 auto
-Material::create(const Device& device,
-                 const PipelineBlueprint& blueprint,
-                 VkDescriptorSetLayout renderer_set_layout)
+Material::create(const Device& device, const PipelineBlueprint& blueprint)
   -> std::expected<std::unique_ptr<Material>, MaterialError>
 {
   if (!pipeline_factory || !compute_pipeline_factory) {
@@ -150,7 +185,7 @@ Material::create(const Device& device,
     compute_pipeline_factory = std::make_unique<ComputePipelineFactory>(device);
   }
 
-  std::vector<VkDescriptorSetLayoutBinding> binds;
+  std::unordered_map<std::uint32_t, BindingSet> binds;
   std::vector<VkPushConstantRange> push_constants;
   string_hash_map<std::tuple<std::uint32_t, std::uint32_t>> binds_info;
 
@@ -160,77 +195,89 @@ Material::create(const Device& device,
         stage.filepath, binds, push_constants, binds_info);
   }
 
-  VkDescriptorSetLayoutCreateInfo layout_info{
-    .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-    .bindingCount = static_cast<std::uint32_t>(binds.size()),
-    .pBindings = binds.data(),
-  };
+  std::vector<VkDescriptorSetLayout> all_layouts(binds.size(), VK_NULL_HANDLE);
+  for (auto& [set, binding_set] : binds) {
+    std::vector<VkDescriptorSetLayoutBinding> binding_vec{ binding_set.begin(),
+                                                           binding_set.end() };
 
-  VkDescriptorSetLayout material_set_layout{ VK_NULL_HANDLE };
-  if (vkCreateDescriptorSetLayout(
-        device.get_device(), &layout_info, nullptr, &material_set_layout) !=
-      VK_SUCCESS)
-    return std::unexpected(MaterialError{
-      .message = "Failed to create descriptor set layout",
-      .code = MaterialError::Code::descriptor_layout_failed,
-    });
+    VkDescriptorSetLayoutCreateInfo layout_info{
+      .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+      .bindingCount = static_cast<uint32_t>(binding_vec.size()),
+      .pBindings = binding_vec.data(),
+    };
 
-  frame_array<VkDescriptorSet> sets{};
-  sets.fill(VK_NULL_HANDLE);
+    if (vkCreateDescriptorSetLayout(
+          device.get_device(), &layout_info, nullptr, &all_layouts.at(set)) !=
+        VK_SUCCESS)
+      return std::unexpected(MaterialError{
+        .message = "Failed to create descriptor set layout",
+        .code = MaterialError::Code::descriptor_layout_failed,
+      });
+  }
 
-  std::unordered_map<VkDescriptorType, std::uint32_t> type_counts;
-  for (const auto& b : binds)
-    type_counts[b.descriptorType] += b.descriptorCount;
-
-  std::vector<VkDescriptorPoolSize> pool_sizes;
-  pool_sizes.reserve(type_counts.size());
-  for (const auto& [type, count] : type_counts)
-    pool_sizes.push_back({
-      .type = type,
-      .descriptorCount = count * image_count,
-    });
-
-  VkDescriptorPoolCreateInfo pool_info{
-    .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
-    .maxSets = image_count,
-    .poolSizeCount = static_cast<std::uint32_t>(pool_sizes.size()),
-    .pPoolSizes = pool_sizes.data(),
-  };
-
+  frame_array<VkDescriptorSet> material_descriptor_sets{};
+  material_descriptor_sets.fill(VK_NULL_HANDLE);
   VkDescriptorPool pool{ VK_NULL_HANDLE };
-  if (vkCreateDescriptorPool(device.get_device(), &pool_info, nullptr, &pool) !=
-      VK_SUCCESS)
-    return std::unexpected(MaterialError{
-      .message = "Failed to create descriptor pool",
-      .code = MaterialError::Code::pool_creation_failed,
-    });
 
-  std::array<VkDescriptorSetLayout, image_count> layouts{};
-  layouts.fill(material_set_layout);
+  std::vector<VkDescriptorSetLayout> material_sets;
+  if (binds.contains(0)) {
+    material_sets.push_back(all_layouts.at(0));
+  }
 
-  VkDescriptorSetAllocateInfo alloc_info{
-    .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
-    .descriptorPool = pool,
-    .descriptorSetCount = image_count,
-    .pSetLayouts = layouts.data(),
-  };
+  if (binds.contains(1)) {
+    std::unordered_map<VkDescriptorType, uint32_t> type_counts;
+    for (const auto& b : binds.at(1))
+      type_counts[b.descriptorType] += b.descriptorCount;
 
-  if (vkAllocateDescriptorSets(device.get_device(), &alloc_info, sets.data()) !=
-      VK_SUCCESS)
-    return std::unexpected(MaterialError{
-      .message = "Failed to allocate descriptor sets",
-      .code = MaterialError::Code::descriptor_allocation_failed });
+    std::vector<VkDescriptorPoolSize> pool_sizes;
+    for (const auto& [type, count] : type_counts)
+      pool_sizes.push_back(
+        { .type = type, .descriptorCount = count * image_count });
 
-  auto factory = blueprint.shader_stages.size() == 1 &&
-                     blueprint.shader_stages[0].stage == ShaderStage::compute
-                   ? compute_pipeline_factory.get()
-                   : pipeline_factory.get();
+    VkDescriptorPoolCreateInfo pool_info{
+      .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+      .maxSets = image_count,
+      .poolSizeCount = static_cast<uint32_t>(pool_sizes.size()),
+      .pPoolSizes = pool_sizes.data(),
+    };
+
+    if (vkCreateDescriptorPool(
+          device.get_device(), &pool_info, nullptr, &pool) != VK_SUCCESS)
+      return std::unexpected(MaterialError{
+        .message = "Failed to create descriptor pool",
+        .code = MaterialError::Code::pool_creation_failed,
+      });
+
+    std::vector repeated_layouts(image_count, all_layouts.at(1));
+    VkDescriptorSetAllocateInfo alloc_info{
+      .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+      .descriptorPool = pool,
+      .descriptorSetCount = image_count,
+      .pSetLayouts = repeated_layouts.data(),
+    };
+
+    if (vkAllocateDescriptorSets(device.get_device(),
+                                 &alloc_info,
+                                 material_descriptor_sets.data()) != VK_SUCCESS)
+      return std::unexpected(MaterialError{
+        .message = "Failed to allocate descriptor sets",
+        .code = MaterialError::Code::descriptor_allocation_failed,
+      });
+
+    material_sets.push_back(all_layouts.at(1));
+  }
+
+  const bool is_compute =
+    blueprint.shader_stages.size() == 1 &&
+    blueprint.shader_stages[0].stage == ShaderStage::compute;
+
+  const auto* factory =
+    is_compute ? compute_pipeline_factory.get() : pipeline_factory.get();
 
   auto pipeline_result =
     factory->create_pipeline(blueprint,
                              PipelineLayoutInfo{
-                               .renderer_set_layout = renderer_set_layout,
-                               .material_sets = { material_set_layout },
+                               .material_sets = material_sets,
                                .push_constants = push_constants,
                              });
 
@@ -238,12 +285,21 @@ Material::create(const Device& device,
     return std::unexpected(MaterialError{
       .message = "Pipeline creation failed: " + pipeline_result.error().message,
       .code = MaterialError::Code::pipeline_error,
-      .inner_pipeline_error = std::move(pipeline_result.error()) });
+      .inner_pipeline_error = std::move(pipeline_result.error()),
+    });
+
+  // Store all necessary descriptor set layouts
+  std::vector<VkDescriptorSetLayout> layouts_to_store;
+  for (const auto& layout : all_layouts) {
+    if (layout != VK_NULL_HANDLE) {
+      layouts_to_store.push_back(layout);
+    }
+  }
 
   std::unique_ptr<Material> mat;
   mat.reset(new Material(device,
-                         std::move(sets),
-                         std::span{ &material_set_layout, 1 },
+                         std::move(material_descriptor_sets),
+                         std::move(layouts_to_store),
                          pool,
                          std::move(*pipeline_result),
                          std::move(binds_info)));
@@ -265,8 +321,7 @@ Material::invalidate(const Image* image) -> void
 }
 
 auto
-Material::reload(const PipelineBlueprint& blueprint,
-                 VkDescriptorSetLayout renderer_set_layout) -> void
+Material::reload(const PipelineBlueprint& blueprint) -> void
 {
   const auto new_hash = blueprint.hash();
   if (new_hash != 0 && new_hash == pipeline_hash) {
@@ -274,7 +329,7 @@ Material::reload(const PipelineBlueprint& blueprint,
     return;
   }
 
-  auto rebuilt_result = rebuild_pipeline(blueprint, renderer_set_layout);
+  auto rebuilt_result = rebuild_pipeline(blueprint);
   if (!rebuilt_result) {
     std::cerr << "Failed to rebuild pipeline: "
               << rebuilt_result.error().message << "\n";
@@ -289,34 +344,83 @@ Material::reload(const PipelineBlueprint& blueprint,
 Material::Material(
   const Device& dev,
   frame_array<VkDescriptorSet>&& sets,
-  std::span<const VkDescriptorSetLayout> ls,
-  VkDescriptorPool p,
+  std::vector<VkDescriptorSetLayout>&& set_layouts,
+  VkDescriptorPool pool,
   std::unique_ptr<CompiledPipeline> pipe,
   string_hash_map<std::tuple<std::uint32_t, std::uint32_t>>&& binds)
   : binding_info(std::move(binds))
   , device(&dev)
   , descriptor_sets(std::move(sets))
-  , descriptor_set_layout(ls[0]) // FIXME: This is risky
-  , descriptor_pool(p)
+  , descriptor_set_layouts(std::move(set_layouts))
+  , descriptor_pool(pool)
   , pipeline(std::move(pipe))
-  , pipeline_hash()
 {
+  // Rest of the constructor remains the same
+  white_texture = Image::create(*device,
+                                {
+                                  .extent = { 1, 1 },
+                                  .format = VK_FORMAT_R8G8B8A8_UNORM,
+                                  .usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
+                                           VK_IMAGE_USAGE_SAMPLED_BIT |
+                                           VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                                  .sample_count = VK_SAMPLE_COUNT_1_BIT,
+                                  .allow_in_ui = false,
+                                  .debug_name = "white_texture",
+                                });
+  static constexpr std::array<unsigned char, 4> white_pixel = {
+    0xff, 0xff, 0xff, 0xff
+  };
+  white_texture->upload_rgba(white_pixel);
+  upload_default_textures();
 }
 
 auto
-Material::rebuild_pipeline(const PipelineBlueprint& blueprint,
-                           VkDescriptorSetLayout renderer_set_layout)
+Material::rebuild_pipeline(const PipelineBlueprint& blueprint)
   -> std::expected<std::unique_ptr<CompiledPipeline>, MaterialError>
 {
+  std::unordered_map<std::uint32_t, BindingSet> binds;
   std::vector<VkPushConstantRange> push_constants;
-  std::vector<VkDescriptorSetLayoutBinding> new_bindings;
-
   binding_info.clear();
 
   for (const auto& stage : blueprint.shader_stages) {
     if (!stage.empty)
       reflect_shader_using_spirv_reflect(
-        stage.filepath, new_bindings, push_constants, binding_info);
+        stage.filepath, binds, push_constants, binding_info);
+  }
+
+  std::vector<VkDescriptorSetLayout> all_layouts;
+  all_layouts.resize(binds.size());
+
+  std::vector<VkDescriptorSetLayout> new_layouts;
+
+  std::size_t i = 0;
+  for (auto& [set, b] : binds) {
+    std::vector<VkDescriptorSetLayoutBinding> new_bindings{ b.begin(),
+                                                            b.end() };
+
+    VkDescriptorSetLayoutCreateInfo layout_info{
+      .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+      .bindingCount = static_cast<std::uint32_t>(new_bindings.size()),
+      .pBindings = new_bindings.data(),
+    };
+
+    VkDescriptorSetLayout layout;
+    if (vkCreateDescriptorSetLayout(
+          device->get_device(), &layout_info, nullptr, &layout) != VK_SUCCESS)
+      return std::unexpected(MaterialError{
+        .message = "Failed to create descriptor set layout in rebuild_pipeline",
+        .code = MaterialError::Code::descriptor_layout_failed,
+      });
+    all_layouts[i++] = layout;
+    new_layouts.push_back(layout);
+  }
+
+  std::vector<VkDescriptorSetLayout> material_sets;
+  if (binds.contains(0)) {
+    material_sets.push_back(all_layouts[0]);
+  }
+  if (binds.contains(1)) {
+    material_sets.push_back(all_layouts[1]);
   }
 
   const bool is_compute =
@@ -326,28 +430,55 @@ Material::rebuild_pipeline(const PipelineBlueprint& blueprint,
   const auto* factory =
     is_compute ? compute_pipeline_factory.get() : pipeline_factory.get();
 
-  auto result =
-    factory->create_pipeline(blueprint,
-                             PipelineLayoutInfo{
-                               .renderer_set_layout = renderer_set_layout,
-                               .material_sets = { descriptor_set_layout },
-                               .push_constants = push_constants,
-                             });
+  auto result = factory->create_pipeline(blueprint,
+                                         PipelineLayoutInfo{
+                                           .material_sets = material_sets,
+                                           .push_constants = push_constants,
+                                         });
 
-  if (!result)
+  if (!result) {
+    for (auto layout : new_layouts) {
+      vkDestroyDescriptorSetLayout(device->get_device(), layout, nullptr);
+    }
+
     return std::unexpected(MaterialError{
       .message = "Failed to rebuild pipeline: " + result.error().message,
       .code = MaterialError::Code::pipeline_error,
-      .inner_pipeline_error = result.error() });
+      .inner_pipeline_error = result.error(),
+    });
+  }
+
+  for (const auto& layout : descriptor_set_layouts) {
+    vkDestroyDescriptorSetLayout(device->get_device(), layout, nullptr);
+  }
+
+  // Store the new layouts
+  descriptor_set_layouts = std::move(new_layouts);
 
   return std::move(*result);
 }
 
 auto
-Material::upload(std::string_view name, const GPUBuffer* buffer) -> void
+Material::upload_default_textures() -> void
 {
-  auto key = std::string(name);
-  auto it = bindings.find(key);
+  using namespace std::string_view_literals;
+  static constexpr auto names = std::array{
+    "albedo_map"sv,   "normal_map"sv, "roughness_map"sv,
+    "metallic_map"sv, "ao_map"sv,     "emissive_map"sv,
+  };
+
+  for (const auto& name : names) {
+    if (binding_info.contains(name)) {
+      upload(name, white_texture.get());
+    }
+  }
+}
+
+auto
+Material::upload(const std::string_view name, const GPUBuffer* buffer) -> void
+{
+  const auto key = std::string(name);
+  const auto it = bindings.find(key);
 
   const bool is_uniform =
     (buffer->get_usage_flags() & VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT);
@@ -362,8 +493,8 @@ Material::upload(std::string_view name, const GPUBuffer* buffer) -> void
 
   bool needs_update = true;
   if (it != bindings.end()) {
-    const auto* existing = dynamic_cast<BufferBinding*>(it->second.get());
-    if (existing && existing->get_underlying_buffer() == buffer) {
+    if (const auto* existing = dynamic_cast<BufferBinding*>(it->second.get());
+        existing && existing->get_underlying_buffer() == buffer) {
       needs_update = false;
     }
   }
@@ -378,10 +509,13 @@ Material::upload(std::string_view name, const GPUBuffer* buffer) -> void
 }
 
 auto
-Material::upload(std::string_view name, const Image* image) -> void
+Material::upload(const std::string_view name, const Image* image) -> void
 {
-  auto key = std::string(name);
-  auto it = bindings.find(key);
+  if (image == nullptr)
+    return;
+
+  const auto key = std::string(name);
+  const auto it = bindings.find(key);
 
   const auto binding_it = binding_info.find(key);
   if (binding_it == binding_info.end())
@@ -391,8 +525,8 @@ Material::upload(std::string_view name, const Image* image) -> void
 
   bool needs_update = true;
   if (it != bindings.end()) {
-    const auto* existing = dynamic_cast<ImageBinding*>(it->second.get());
-    if (existing && existing->get_underlying_image() == image) {
+    if (const auto* existing = dynamic_cast<ImageBinding*>(it->second.get());
+        existing && existing->get_underlying_image() == image) {
       needs_update = false;
     }
   }
@@ -407,7 +541,7 @@ Material::upload(std::string_view name, const Image* image) -> void
 }
 
 auto
-Material::prepare_for_rendering(std::uint32_t frame_index)
+Material::prepare_for_rendering(const std::uint32_t frame_index)
   -> const VkDescriptorSet&
 {
   auto& dirty = per_frame_dirty_flags[frame_index];
@@ -434,6 +568,17 @@ Material::prepare_for_rendering(std::uint32_t frame_index)
   dirty.clear();
   return descriptor_sets[frame_index];
 }
+auto
+Material::generate_push_constant_data() const -> PushConstantInformation
+{
+  return {
+    .stage = VK_SHADER_STAGE_FRAGMENT_BIT,
+    .offset = 0,
+    .size = static_cast<std::uint32_t>(sizeof(MaterialData)),
+    .pointer = &material_data,
+  };
+}
+
 Material::~Material()
 {
   destroy();
@@ -447,8 +592,8 @@ Material::destroy() -> void
   destroyed = true;
 
   vkDestroyDescriptorPool(device->get_device(), descriptor_pool, nullptr);
-  vkDestroyDescriptorSetLayout(
-    device->get_device(), descriptor_set_layout, nullptr);
+  for (auto& layout : descriptor_set_layouts)
+    vkDestroyDescriptorSetLayout(device->get_device(), layout, nullptr);
   descriptor_sets.fill(VK_NULL_HANDLE);
 
   pipeline.reset();
