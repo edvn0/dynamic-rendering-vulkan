@@ -79,6 +79,8 @@ AppLayer::AppLayer(const Device& dev,
   cube_index_buffer = std::move(cube_index);
   mesh = std::make_unique<Mesh>();
 
+  Logger::log_info("Here!");
+
   if (mesh->load_from_file(dev, *blueprint_registry, "cerberus/scene.gltf")) {
   }
   generate_scene();

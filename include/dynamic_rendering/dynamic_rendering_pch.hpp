@@ -10,6 +10,8 @@
 #include <glm/gtc/quaternion.hpp>
 #include <glm/gtx/quaternion.hpp>
 
+#include <dynamic_rendering/core/logger.hpp>
+
 // Standard C++
 #include <algorithm>
 #include <array>
