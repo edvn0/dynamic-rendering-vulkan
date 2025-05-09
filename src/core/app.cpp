@@ -163,6 +163,8 @@ App::App(const ApplicationArguments& args)
 
   asset_reloader =
     std::make_unique<AssetReloader>(*blueprint_registry, *renderer);
+
+  MeshCache::initialise(*device, *blueprint_registry);
 }
 
 App::~App() = default;
@@ -217,6 +219,7 @@ App::run() -> std::error_code
   }
 
   vkDeviceWaitIdle(device->get_device());
+  MeshCache::destroy();
   Image::destroy_samplers();
   for (const auto& layer : layers)
     layer->on_destroy();

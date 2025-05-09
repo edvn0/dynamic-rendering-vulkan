@@ -170,11 +170,18 @@ AppLayer::on_render(Renderer& renderer) -> void
                         line_width,
                         { 0.f, 0.f, 1.f, 1.f });
 
+  auto maybe_cube_mesh = MeshCache::the().get_mesh<MeshType::Cube>();
+
+  if (!maybe_cube_mesh.has_value()) {
+    return;
+  }
+
+  auto cube_mesh = maybe_cube_mesh.value();
+
   for (const auto& transform : transforms) {
     renderer.submit(
       {
-        .vertex_buffer = cube_vertex_buffer.get(),
-        .index_buffer = cube_index_buffer.get(),
+        .mesh = cube_mesh,
         .casts_shadows = true,
       },
       transform);
