@@ -117,6 +117,7 @@ add_library(DynamicRendering_Renderer STATIC
         src/renderer/draw_list_manager.cpp
         src/renderer/draw_command.cpp
         src/renderer/mesh.cpp
+        src/renderer/mesh_cache.cpp
 )
 
 target_include_directories(DynamicRendering_Renderer PUBLIC
