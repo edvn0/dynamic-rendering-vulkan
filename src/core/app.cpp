@@ -115,6 +115,7 @@ private:
 App::App(const ApplicationArguments& args)
   : thread_pool(std::thread::hardware_concurrency())
 {
+  Logger::init_logger();
 
   {
     ZoneScopedN("Create instance");
@@ -194,7 +195,7 @@ App::run() -> std::error_code
 
     glfwPollEvents();
     if (window->is_iconified()) {
-      std::this_thread::sleep_for(std::chrono::milliseconds(100));
+      std::this_thread::sleep_for(std::chrono::seconds(1));
       continue;
     }
 

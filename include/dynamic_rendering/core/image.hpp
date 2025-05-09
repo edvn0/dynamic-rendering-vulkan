@@ -3,6 +3,7 @@
 #include "core/config.hpp"
 #include "core/device.hpp"
 #include "core/image_configuration.hpp"
+#include "core/logger.hpp"
 #include "debug_utils.hpp"
 
 #include "core/allocator.hpp"
@@ -73,8 +74,7 @@ public:
   {
     extent.width = new_width;
     extent.height = new_height;
-    std::cout << "Resizing image to: " << new_width << "x" << new_height
-              << std::endl;
+    Logger::log_info("Resizing image to: {}x{}", new_width, new_height);
     recreate();
 
     // Reapply debug name after recreation

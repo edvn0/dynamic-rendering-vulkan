@@ -340,8 +340,8 @@ Swapchain::create_swapchain(VkSwapchainKHR old_swapchain)
 
   swapchain_extent = choose_extent(caps);
 
-  std::cout << "Swapchain extent: " << swapchain_extent.width << "x"
-            << swapchain_extent.height << std::endl;
+  Logger::log_info(
+    "Swapchain extent: {}x{}", swapchain_extent.width, swapchain_extent.height);
 
   std::uint32_t format_count;
   vkGetPhysicalDeviceSurfaceFormatsKHR(
@@ -360,8 +360,7 @@ Swapchain::create_swapchain(VkSwapchainKHR old_swapchain)
     physical_device, surface, &present_mode_count, present_modes.data());
   auto present_mode = choose_present_mode(present_modes);
 
-  // Calculate desired image count (potentially more than minimum)
-  uint32_t desired_image_count = caps.minImageCount + 1;
+  std::uint32_t desired_image_count = caps.minImageCount + 1;
   if (caps.maxImageCount > 0 && desired_image_count > caps.maxImageCount) {
     desired_image_count = caps.maxImageCount;
   }
@@ -380,13 +379,12 @@ Swapchain::create_swapchain(VkSwapchainKHR old_swapchain)
   create_info.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
   create_info.presentMode = present_mode;
   create_info.clipped = VK_TRUE;
-  create_info.oldSwapchain =
-    old_swapchain; // Pass the old swapchain for proper recreation
+  create_info.oldSwapchain = old_swapchain;
 
   VkResult result =
     vkCreateSwapchainKHR(device, &create_info, nullptr, &swapchain);
   if (result != VK_SUCCESS) {
-    assert(false);
+    assert(false && "Failed to create swapchain");
   }
 
   std::uint32_t count;

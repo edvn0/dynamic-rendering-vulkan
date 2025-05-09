@@ -6,28 +6,28 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(DISABLE_EXCEPTIONS ON)
 
 function(dynamic_rendering_set_target_options target)
-    if (MSVC)
-        target_compile_options(${target} PRIVATE /W4 /WX)
+        if(MSVC)
+                target_compile_options(${target} PRIVATE /W4 /WX)
 
-        if (DISABLE_EXCEPTIONS)
-            target_compile_definitions(${target} PRIVATE _HAS_EXCEPTIONS=0)
-        endif ()
-    else ()
-        target_compile_options(${target} PRIVATE -Wall -Wextra -Werror -Wno-unused-command-line-argument)
+                if(DISABLE_EXCEPTIONS)
+                        target_compile_definitions(${target} PRIVATE _HAS_EXCEPTIONS=0)
+                endif()
+        else()
+                target_compile_options(${target} PRIVATE -Wall -Wextra -Werror -Wno-unused-command-line-argument)
 
-        if (DISABLE_EXCEPTIONS)
-            target_compile_options(${target} PRIVATE -fno-exceptions)
-        endif ()
-    endif ()
+                if(DISABLE_EXCEPTIONS)
+                        target_compile_options(${target} PRIVATE -fno-exceptions)
+                endif()
+        endif()
 
-    if (CMAKE_BUILD_TYPE STREQUAL "Debug" OR CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo")
-        target_compile_definitions(${target} PRIVATE IS_DEBUG)
-    endif ()
+        if(CMAKE_BUILD_TYPE STREQUAL "Debug" OR CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo")
+                target_compile_definitions(${target} PRIVATE IS_DEBUG)
+        endif()
 
-    target_compile_definitions(${target} PRIVATE
-            GLM_FORCE_LEFT_HANDED
-            GLM_FORCE_DEPTH_ZERO_TO_ONE
-    )
+        target_compile_definitions(${target} PRIVATE
+                GLM_FORCE_LEFT_HANDED
+                GLM_FORCE_DEPTH_ZERO_TO_ONE
+        )
 endfunction()
 
 find_package(Python COMPONENTS Interpreter REQUIRED)
@@ -39,6 +39,7 @@ find_package(glm REQUIRED CONFIG)
 find_package(efsw REQUIRED CONFIG)
 find_package(lyra REQUIRED CONFIG)
 find_package(Tracy REQUIRED CONFIG)
+find_package(spdlog REQUIRED CONFIG)
 find_package(bshoshany-thread-pool REQUIRED CONFIG)
 find_package(assimp REQUIRED CONFIG)
 
@@ -59,6 +60,7 @@ add_library(DynamicRendering_Core STATIC
         src/core/asset_reloader.cpp
         src/core/fs.cpp
         src/core/debug_utils.cpp
+        src/core/logger.cpp
 )
 
 target_include_directories(DynamicRendering_Core PUBLIC
@@ -77,6 +79,7 @@ target_link_libraries(DynamicRendering_Core PUBLIC
         VulkanMemoryAllocator
         Tracy::TracyClient
         bshoshany-thread-pool::bshoshany-thread-pool
+        spdlog::spdlog
         PRIVATE
         implot
         efsw::efsw
@@ -172,38 +175,38 @@ dynamic_rendering_set_target_options(DynamicRendering_Renderer)
 dynamic_rendering_set_target_options(DynamicRendering_Window)
 
 function(generate_shaders target)
-    add_custom_command(
-            OUTPUT shaders_compiled
-            COMMAND ${CMAKE_COMMAND} -E echo "Compiling shaders using Python script..."
-            COMMAND ${Python_EXECUTABLE} ${CMAKE_SOURCE_DIR}/scripts/compile_shaders.py
-            --source ${CMAKE_SOURCE_DIR}/assets/shaders
-            --output ${CMAKE_BINARY_DIR}/assets/shaders
-            COMMAND ${CMAKE_COMMAND} -E touch shaders_compiled
-            DEPENDS ${CMAKE_SOURCE_DIR}/assets/shaders
-            COMMENT "Running shader compiler"
-            VERBATIM
-    )
+        add_custom_command(
+                OUTPUT shaders_compiled
+                COMMAND ${CMAKE_COMMAND} -E echo "Compiling shaders using Python script..."
+                COMMAND ${Python_EXECUTABLE} ${CMAKE_SOURCE_DIR}/scripts/compile_shaders.py
+                --source ${CMAKE_SOURCE_DIR}/assets/shaders
+                --output ${CMAKE_BINARY_DIR}/assets/shaders
+                COMMAND ${CMAKE_COMMAND} -E touch shaders_compiled
+                DEPENDS ${CMAKE_SOURCE_DIR}/assets/shaders
+                COMMENT "Running shader compiler"
+                VERBATIM
+        )
 
-    add_custom_target(compile_shaders_target ALL DEPENDS shaders_compiled)
-    add_dependencies(${target} compile_shaders_target)
+        add_custom_target(compile_shaders_target ALL DEPENDS shaders_compiled)
+        add_dependencies(${target} compile_shaders_target)
 endfunction()
 
 function(copy_blueprints target)
-    set(blueprint_source_dir ${CMAKE_SOURCE_DIR}/assets/blueprints)
-    set(blueprint_binary_dir ${CMAKE_BINARY_DIR}/assets/blueprints)
+        set(blueprint_source_dir ${CMAKE_SOURCE_DIR}/assets/blueprints)
+        set(blueprint_binary_dir ${CMAKE_BINARY_DIR}/assets/blueprints)
 
-    file(GLOB_RECURSE blueprint_files ${blueprint_source_dir}/*)
+        file(GLOB_RECURSE blueprint_files ${blueprint_source_dir}/*)
 
-    add_custom_command(
-            OUTPUT ${blueprint_binary_dir}
-            COMMAND ${CMAKE_COMMAND} -E copy_directory ${blueprint_source_dir} ${blueprint_binary_dir}
-            DEPENDS ${blueprint_files}
-            COMMENT "Copying blueprint YAMLs to output directory"
-            VERBATIM
-    )
+        add_custom_command(
+                OUTPUT ${blueprint_binary_dir}
+                COMMAND ${CMAKE_COMMAND} -E copy_directory ${blueprint_source_dir} ${blueprint_binary_dir}
+                DEPENDS ${blueprint_files}
+                COMMENT "Copying blueprint YAMLs to output directory"
+                VERBATIM
+        )
 
-    add_custom_target(copy_blueprints_target ALL DEPENDS ${blueprint_binary_dir})
-    add_dependencies(${target} copy_blueprints_target)
+        add_custom_target(copy_blueprints_target ALL DEPENDS ${blueprint_binary_dir})
+        add_dependencies(${target} copy_blueprints_target)
 endfunction()
 
 # === Shader / Blueprint Tools ===

@@ -17,6 +17,7 @@ class VulkanAppConan(ConanFile):
         cmake_layout(self)
 
     def requirements(self):
+        self.requires("spdlog/1.15.1", options={"use_std_fmt": True, "no_exceptions": True, "shared":False})
         self.requires("glfw/3.4")
         self.requires("imguizmo/1.83")
         self.requires("yaml-cpp/0.8.0")
