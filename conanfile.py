@@ -22,6 +22,7 @@ class VulkanAppConan(ConanFile):
         self.requires("imguizmo/1.83")
         self.requires("yaml-cpp/0.8.0")
         self.requires("glm/1.0.1")
+        self.requires("ktx/4.3.2")
         self.requires("efsw/1.4.1")
         self.requires("lyra/1.6.1")
         self.requires("tracy/0.11.1")

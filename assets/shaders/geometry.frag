@@ -71,14 +71,16 @@ float calculate_shadow(vec4 light_space_pos)
     vec3 proj_coords = light_space_pos.xyz / light_space_pos.w;
 
     if (proj_coords.x < 0.0 || proj_coords.x > 1.0 ||
-    proj_coords.y < 0.0 || proj_coords.y > 1.0 ||
-    proj_coords.z < 0.0 || proj_coords.z > 1.0)
-    return 1.0;
+        proj_coords.y < 0.0 || proj_coords.y > 1.0 ||
+        proj_coords.z < 0.0 || proj_coords.z > 1.0)
+        return 1.0;
 
     float shadow = 0.0;
 
-    for (int x = -PCF_SAMPLES; x <= PCF_SAMPLES; ++x) {
-        for (int y = -PCF_SAMPLES; y <= PCF_SAMPLES; ++y) {
+    for (int x = -PCF_SAMPLES; x <= PCF_SAMPLES; ++x)
+    {
+        for (int y = -PCF_SAMPLES; y <= PCF_SAMPLES; ++y)
+        {
             vec2 offset = vec2(x, y) * INVERSE_SHADOW_MAP_SIZE;
             shadow += texture(shadow_image, vec3(proj_coords.xy + offset, proj_coords.z));
         }
@@ -113,23 +115,24 @@ void main()
     vec4 metallic_sample = texture(metallic_map, v_uv);
 
     float roughness = has_roughness_map()
-    ? material.roughness * roughness_sample.g
-    : material.roughness;
+                          ? material.roughness * roughness_sample.g
+                          : material.roughness;
 
     float metallic = has_metallic_map()
-    ? material.metallic * metallic_sample.b
-    : material.metallic;
+                         ? material.metallic * metallic_sample.b
+                         : material.metallic;
 
     float ao = has_ao_map()
-    ? material.ao * texture(ao_map, v_uv).r
-    : material.ao;
+                   ? material.ao * texture(ao_map, v_uv).r
+                   : material.ao;
 
     vec3 N = normalize(v_normal);
-    if (has_normal_map()) {
+    if (has_normal_map())
+    {
         N = calculateNormalFromMap(v_uv, N, v_world_pos);
     }
 
-    vec3 V = normalize(camera_ubo.camera_position - v_world_pos);
+    vec3 V = normalize(vec3(camera_ubo.camera_position) - v_world_pos);
     vec3 F0 = mix(vec3(0.04), albedo, metallic);
 
     vec3 Lo = vec3(0.0);
@@ -157,19 +160,22 @@ void main()
     vec3 ambient = AMBIENT_LIGHT * albedo * ao * vec3(shadow_ubo.light_color);
     vec3 color = ambient + shadow_factor * Lo;
 
-    if (is_emissive()) {
+    if (is_emissive())
+    {
         vec3 emissive_tex = has_emissive_map()
-        ? texture(emissive_map, v_uv).rgb
-        : vec3(1.0);
+                                ? texture(emissive_map, v_uv).rgb
+                                : vec3(1.0);
         color += material.emissive_color * material.emissive_strength * emissive_tex;
     }
 
     float alpha = material.albedo.a;
-    if (has_albedo_texture()) {
+    if (has_albedo_texture())
+    {
         alpha *= albedo_tex.a;
     }
 
-    if (is_alpha_testing() && alpha < material.alpha_cutoff) {
+    if (is_alpha_testing() && alpha < material.alpha_cutoff)
+    {
         discard;
     }
 

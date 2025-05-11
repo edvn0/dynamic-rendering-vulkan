@@ -2,6 +2,7 @@
 
 #include "core/image_transition.hpp"
 #include "renderer/draw_list_manager.hpp"
+#include "renderer/mesh_cache.hpp"
 
 #include <execution>
 #include <functional>
@@ -26,9 +27,10 @@ struct CameraBuffer
 {
   alignas(16) const glm::mat4 vp;
   alignas(16) const glm::mat4 inverse_vp;
-  glm::vec3 camera_position;
-  std::array<float, 1> padding{};
-  std::array<glm::vec4, 3> padding_2{};
+  alignas(16) const glm::mat4 projection;
+  alignas(16) const glm::mat4 view;
+  alignas(16) const glm::vec4 camera_position;
+  std::array<glm::vec4, 3> padding{};
 };
 ASSERT_VULKAN_UBO_COMPATIBLE(CameraBuffer);
 
@@ -152,6 +154,24 @@ Renderer::Renderer(const Device& dev,
     } else {
       assert(false && "Failed to create main geometry material.");
     }
+  }
+
+  {
+    // Environment map
+    environment_cubemap_image = Image::load_cubemap(*device, "new.ktx2");
+    if (!environment_cubemap_image) {
+      assert(false && "Failed to load environment map.");
+    }
+
+    auto result =
+      Material::create(*device, blueprint_registry->get("environment_map"));
+    if (!result.has_value()) {
+      assert(false && "Failed to create environment map material.");
+    }
+
+    environment_cubemap_material = std::move(result.value());
+    environment_cubemap_material->upload("environment_map_sampler",
+                                         environment_cubemap_image.get());
   }
 
   {
@@ -503,14 +523,17 @@ Renderer::update_shadow_buffers(std::uint32_t frame_index) -> void
 
 auto
 Renderer::update_uniform_buffers(const std::uint32_t frame_index,
-                                 const glm::mat4& vp,
-                                 const glm::mat4& inverse_vp,
+                                 const glm::mat4& view,
+                                 const glm::mat4& projection,
+                                 const glm::mat4& inverse_projection,
                                  const glm::vec3& camera_position) const -> void
 {
   const CameraBuffer buffer{
-    .vp = vp,
-    .inverse_vp = inverse_vp,
-    .camera_position = camera_position,
+    .vp = projection * view,
+    .inverse_vp = inverse_projection * view,
+    .projection = projection,
+    .view = view,
+    .camera_position = { camera_position, 1.0F },
   };
   camera_uniform_buffer->upload_with_offset(std::span{ &buffer, 1 },
                                             sizeof(CameraBuffer) * frame_index);
@@ -526,7 +549,11 @@ Renderer::begin_frame(std::uint32_t frame_index, const VP& matrices) -> void
   const auto vp = matrices.projection * matrices.view;
   const auto inverse_vp = matrices.inverse_projection * matrices.view;
   const auto position = matrices.view[3];
-  update_uniform_buffers(frame_index, vp, inverse_vp, position);
+  update_uniform_buffers(frame_index,
+                         matrices.view,
+                         matrices.projection,
+                         matrices.inverse_projection,
+                         position);
   update_shadow_buffers(frame_index);
   update_frustum(vp);
   draw_commands.clear();
@@ -631,6 +658,7 @@ Renderer::end_frame(std::uint32_t frame_index) -> void
 
   command_buffer->begin_frame(frame_index);
 
+  run_environment_cubemap_pass(frame_index);
   run_shadow_pass(frame_index, flat_shadow_draw_commands);
   run_z_prepass(frame_index, flat_draw_commands);
   run_geometry_pass(frame_index, flat_draw_commands);
@@ -664,6 +692,105 @@ Renderer::get_output_image() const -> const Image&
 }
 
 #pragma region RenderPasses
+
+auto
+Renderer::run_environment_cubemap_pass(std::uint32_t frame_index) -> void
+{
+  ZoneScopedN("Environment Cubemap");
+
+  command_buffer->begin_timer(frame_index, "environment_cubemap_pass");
+
+  const VkCommandBuffer cmd = command_buffer->get(frame_index);
+  CoreUtils::cmd_transition_to_color_attachment(cmd,
+                                                geometry_image->get_image());
+
+  const VkClearValue clear_value = { .color = { { 0.f, 0.f, 0.f, 0.f } } };
+  const VkRenderingAttachmentInfo color_attachment = {
+    .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+    .pNext = nullptr,
+    .imageView = geometry_image->get_view(),
+    .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+    .resolveMode = VK_RESOLVE_MODE_NONE,
+    .resolveImageView = VK_NULL_HANDLE,
+    .resolveImageLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+    .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+    .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+    .clearValue = clear_value
+  };
+
+  const VkRenderingInfo rendering_info = {
+    .sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
+    .pNext = nullptr,
+    .flags = 0,
+    .renderArea = { .offset = { 0, 0 },
+                    .extent = { geometry_image->width(),
+                                geometry_image->height() }, },
+    .layerCount = 6,
+    .viewMask = 0,
+    .colorAttachmentCount = 1,
+    .pColorAttachments = &color_attachment,
+    .pDepthAttachment = nullptr,
+    .pStencilAttachment = nullptr,
+  };
+
+  vkCmdBeginRendering(cmd, &rendering_info);
+
+  const VkViewport viewport = {
+    .x = 0.f,
+    .y = static_cast<float>(geometry_image->height()),
+    .width = static_cast<float>(geometry_image->width()),
+    .height = -static_cast<float>(geometry_image->height()),
+    .minDepth = 1.f,
+    .maxDepth = 0.f,
+  };
+
+  vkCmdSetViewport(cmd, 0, 1, &viewport);
+  vkCmdSetScissor(cmd, 0, 1, &rendering_info.renderArea);
+  auto& environment_cubemap_pipeline =
+    environment_cubemap_material->get_pipeline();
+  vkCmdBindPipeline(cmd,
+                    VK_PIPELINE_BIND_POINT_GRAPHICS,
+                    environment_cubemap_pipeline.pipeline);
+
+  const std::array descriptor_sets = {
+    descriptor_set_manager->get_set(frame_index),
+    environment_cubemap_material->prepare_for_rendering(frame_index),
+  };
+  vkCmdBindDescriptorSets(cmd,
+                          VK_PIPELINE_BIND_POINT_GRAPHICS,
+                          environment_cubemap_pipeline.layout,
+                          0,
+                          static_cast<std::uint32_t>(descriptor_sets.size()),
+                          descriptor_sets.data(),
+                          0,
+                          nullptr);
+
+  auto cube_mesh_expected = MeshCache::the().get_mesh<MeshType::Cube>();
+  if (cube_mesh_expected.has_value()) {
+    auto cube_mesh = cube_mesh_expected.value();
+    const auto& vertex_buffer = cube_mesh->get_vertex_buffer();
+    const auto& index_buffer = cube_mesh->get_index_buffer();
+
+    const std::array vertex_buffers = {
+      vertex_buffer->get(),
+      instance_vertex_buffer->get(),
+    };
+    constexpr std::array<VkDeviceSize, 2> offsets = { 0ULL, 0ULL };
+    vkCmdBindVertexBuffers(cmd,
+                           0,
+                           static_cast<std::uint32_t>(vertex_buffers.size()),
+                           vertex_buffers.data(),
+                           offsets.data());
+    vkCmdBindIndexBuffer(
+      cmd, index_buffer->get(), 0, index_buffer->get_index_type());
+
+    vkCmdDrawIndexed(
+      cmd, static_cast<std::uint32_t>(index_buffer->get_count()), 1, 0, 0, 0);
+  }
+
+  vkCmdEndRendering(cmd);
+  command_buffer->end_timer(frame_index, "environment_cubemap_pass");
+}
 
 auto
 Renderer::run_z_prepass(std::uint32_t frame_index, const DrawList& draw_list)

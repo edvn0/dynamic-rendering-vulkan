@@ -3,11 +3,12 @@
 
 layout(set = 0, binding = 0) uniform CameraUBO
 {
-    mat4 vp;
-    mat4 inverse_vp;
-    vec3 camera_position;
-    float _padding_;
-    vec4 _padding_2[3];
+  mat4 vp;
+  mat4 inverse_vp;
+  mat4 projection;
+  mat4 view;
+  vec4 camera_position;
+  vec4 _padding_[3];
 }
 camera_ubo;
 

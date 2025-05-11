@@ -36,7 +36,8 @@ public:
                                                 config.usage,
                                                 config.aspect,
                                                 config.allow_in_ui,
-                                                config.sample_count));
+                                                config.sample_count,
+                                                config.is_cubemap));
 
     if (!config.debug_name.empty()) {
       img->set_debug_name(config.debug_name);
@@ -90,6 +91,8 @@ public:
   static auto load_from_file(const Device&,
                              const std::string&,
                              bool flip_y = true) -> std::unique_ptr<Image>;
+  static auto load_cubemap(const Device&, const std::string&)
+    -> std::unique_ptr<Image>;
 
 private:
   Image(const Device& dev,
@@ -100,7 +103,8 @@ private:
         const VkImageUsageFlags usage_flags,
         const VkImageAspectFlags aspect_flags,
         const bool allow,
-        const VkSampleCountFlags sc)
+        const VkSampleCountFlags sc,
+        const bool cube)
     : extent(ext)
     , mip_levels(mips)
     , array_layers(layers)
@@ -109,6 +113,7 @@ private:
     , usage(usage_flags)
     , aspect(aspect_flags)
     , sample_count(sc)
+    , is_cubemap(cube)
     , allow_in_ui(allow)
   {
   }
@@ -130,6 +135,7 @@ private:
   VkImageAspectFlags aspect{};
   VkSampleCountFlags sample_count{};             // For MSAA images.
   VkDescriptorImageInfo image_descriptor_info{}; // For descriptor sets.
+  bool is_cubemap{ false };
   std::string debug_name{};
 
   // For UI systems.

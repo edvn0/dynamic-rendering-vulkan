@@ -4,13 +4,13 @@
 
 namespace Util::Vulkan {
 
-constexpr size_t
+consteval size_t
 get_alignment_requirement(size_t)
 {
   return 16;
 }
 
-constexpr bool
+consteval bool
 is_properly_aligned(const size_t size)
 {
   return (size % 64) == 0;

@@ -21,12 +21,6 @@ struct ApplicationArguments
   std::string working_directory = ".";
   Extent2D window_size = { 1280, 720 };
   std::optional<std::filesystem::path> window_config_path{};
-
-  auto assets_path() const -> std::filesystem::path
-  {
-    namespace fs = std::filesystem;
-    return fs::path{ working_directory } / fs::path{ "assets" };
-  }
 };
 
 auto

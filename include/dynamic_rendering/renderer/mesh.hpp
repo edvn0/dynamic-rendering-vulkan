@@ -6,6 +6,7 @@
 #include "core/forward.hpp"
 #include "core/gpu_buffer.hpp"
 #include "core/image.hpp"
+#include "core/util.hpp"
 #include "renderer/material.hpp"
 
 #include <glm/glm.hpp>
@@ -40,6 +41,10 @@ public:
   auto load_from_file(const Device&,
                       const BlueprintRegistry&,
                       const std::string& path) -> bool;
+  static auto load_from_memory(const Device&,
+                               const BlueprintRegistry&,
+                               std::unique_ptr<VertexBuffer>&& vertex_buffer,
+                               std::unique_ptr<IndexBuffer>&& index_buffer);
 
   auto get_vertex_buffer() const -> VertexBuffer*
   {
@@ -80,8 +85,10 @@ private:
   std::vector<std::uint32_t> indices;
   std::vector<Submesh> submeshes;
   std::vector<std::unique_ptr<Material>> materials;
-  std::unordered_map<std::string, std::unique_ptr<Image>> loaded_textures;
+  string_hash_map<std::unique_ptr<Image>> loaded_textures;
 
   std::unique_ptr<VertexBuffer> vertex_buffer;
   std::unique_ptr<IndexBuffer> index_buffer;
+
+  friend class MeshCache;
 };

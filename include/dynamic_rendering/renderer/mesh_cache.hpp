@@ -64,7 +64,15 @@ public:
 
 private:
   explicit MeshCache(const Device&, const BlueprintRegistry&);
+  const Device* device{ nullptr };
+  const BlueprintRegistry* blueprint_registry{ nullptr };
+
   std::unordered_map<MeshType, std::unique_ptr<Mesh>> meshes;
   static inline std::unique_ptr<MeshCache> instance{ nullptr };
   static inline std::mutex mutex{};
+
+  auto initialise_cube() -> void;
+  auto initialise_quad() -> void;
+
+  friend class Mesh;
 };
