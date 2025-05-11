@@ -1,0 +1,22 @@
+shaders:
+  - stage: vertex
+    path: skybox.vert
+  - stage: fragment
+    path: skybox.frag
+attachments:
+  - format: r32g32b32a32_sfloat
+    blend_enable: false
+    write_mask_rgba: true
+depth_stencil:
+  depth_test: false
+  depth_write: false
+vertex_input:
+  bindings:
+    - binding: 0
+      stride: 12
+      input_rate: vertex
+  attributes:
+    - location: 0
+      binding: 0
+      format: vec3
+      offset: 0

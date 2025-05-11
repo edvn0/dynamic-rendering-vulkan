@@ -23,7 +23,7 @@ struct texture_context
   aiMaterial* ai_mat;
   const std::string& directory;
   const Device& device;
-  std::unordered_map<std::string, std::unique_ptr<Image>>& cache;
+  string_hash_map<std::unique_ptr<Image>>& cache;
   Material& mat;
 };
 
@@ -185,5 +185,20 @@ Mesh::load_from_file(const Device& device,
   vertex_buffer->upload_vertices(std::span(vertices.data(), vertices.size()));
   index_buffer->upload_indices(std::span(indices.data(), indices.size()));
 
+  return true;
+}
+
+auto
+Mesh::load_from_memory(const Device& device,
+                       const BlueprintRegistry& registry,
+                       std::unique_ptr<VertexBuffer>&& vertex_buffer,
+                       std::unique_ptr<IndexBuffer>&& index_buffer)
+{
+  auto mesh = std::make_unique<Mesh>();
+  mesh->vertex_buffer = std::move(vertex_buffer);
+  mesh->index_buffer = std::move(index_buffer);
+  mesh->materials.reserve(1);
+  mesh->materials.push_back(
+    Material::create(device, registry.get("main_geometry")).value());
   return true;
 }

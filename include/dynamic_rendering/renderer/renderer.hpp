@@ -169,6 +169,9 @@ private:
   std::unique_ptr<Material> z_prepass_material;
   std::unique_ptr<Material> geometry_material;
 
+  std::unique_ptr<Material> environment_cubemap_material;
+  std::unique_ptr<Image> environment_cubemap_image;
+
   std::unique_ptr<Image> colour_corrected_image;
   std::unique_ptr<Material> colour_corrected_material;
 
@@ -197,12 +200,14 @@ private:
   std::unique_ptr<GPUBuffer> shadow_camera_buffer;
   std::unique_ptr<GPUBuffer> frustum_buffer;
   auto update_uniform_buffers(std::uint32_t,
-                              const glm::mat4&,
-                              const glm::mat4&,
+                              const glm::mat4& view,
+                              const glm::mat4& proj,
+                              const glm::mat4& inverse_proj,
                               const glm::vec3&) const -> void;
   auto update_shadow_buffers(std::uint32_t) -> void;
 
   auto run_culling_compute_pass(std::uint32_t) -> void;
+  auto run_environment_cubemap_pass(std::uint32_t) -> void;
   auto run_shadow_pass(std::uint32_t, const DrawList&) -> void;
   auto run_z_prepass(std::uint32_t, const DrawList&) -> void;
   auto run_geometry_pass(std::uint32_t, const DrawList&) -> void;

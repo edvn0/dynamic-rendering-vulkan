@@ -42,6 +42,7 @@ find_package(Tracy REQUIRED CONFIG)
 find_package(spdlog REQUIRED CONFIG)
 find_package(bshoshany-thread-pool REQUIRED CONFIG)
 find_package(assimp REQUIRED CONFIG)
+find_package(Ktx REQUIRED CONFIG)
 
 add_subdirectory(third_party)
 add_subdirectory(client)
@@ -80,6 +81,7 @@ target_link_libraries(DynamicRendering_Core PUBLIC
         Tracy::TracyClient
         bshoshany-thread-pool::bshoshany-thread-pool
         spdlog::spdlog
+        KTX::ktx
         PRIVATE
         implot
         efsw::efsw

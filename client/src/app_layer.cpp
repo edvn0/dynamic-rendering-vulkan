@@ -15,72 +15,15 @@
 #include <latch>
 #include <tracy/Tracy.hpp>
 
-struct CubeVertex
-{
-  glm::vec3 position;
-  glm::vec3 normal;
-  glm::vec2 uv;
-};
-
-auto
-generate_cube_counter_clockwise(const Device& device)
-{
-  static constexpr std::array<CubeVertex, 24> vertices = { {
-    { { -1.f, -1.f, 1.f }, { 0.f, 0.f, 1.f }, { 0.f, 0.f } },
-    { { 1.f, -1.f, 1.f }, { 0.f, 0.f, 1.f }, { 1.f, 0.f } },
-    { { 1.f, 1.f, 1.f }, { 0.f, 0.f, 1.f }, { 1.f, 1.f } },
-    { { -1.f, 1.f, 1.f }, { 0.f, 0.f, 1.f }, { 0.f, 1.f } },
-    { { 1.f, -1.f, -1.f }, { 0.f, 0.f, -1.f }, { 0.f, 0.f } },
-    { { -1.f, -1.f, -1.f }, { 0.f, 0.f, -1.f }, { 1.f, 0.f } },
-    { { -1.f, 1.f, -1.f }, { 0.f, 0.f, -1.f }, { 1.f, 1.f } },
-    { { 1.f, 1.f, -1.f }, { 0.f, 0.f, -1.f }, { 0.f, 1.f } },
-    { { -1.f, -1.f, -1.f }, { -1.f, 0.f, 0.f }, { 0.f, 0.f } },
-    { { -1.f, -1.f, 1.f }, { -1.f, 0.f, 0.f }, { 1.f, 0.f } },
-    { { -1.f, 1.f, 1.f }, { -1.f, 0.f, 0.f }, { 1.f, 1.f } },
-    { { -1.f, 1.f, -1.f }, { -1.f, 0.f, 0.f }, { 0.f, 1.f } },
-    { { 1.f, -1.f, 1.f }, { 1.f, 0.f, 0.f }, { 0.f, 0.f } },
-    { { 1.f, -1.f, -1.f }, { 1.f, 0.f, 0.f }, { 1.f, 0.f } },
-    { { 1.f, 1.f, -1.f }, { 1.f, 0.f, 0.f }, { 1.f, 1.f } },
-    { { 1.f, 1.f, 1.f }, { 1.f, 0.f, 0.f }, { 0.f, 1.f } },
-    { { -1.f, 1.f, 1.f }, { 0.f, 1.f, 0.f }, { 0.f, 0.f } },
-    { { 1.f, 1.f, 1.f }, { 0.f, 1.f, 0.f }, { 1.f, 0.f } },
-    { { 1.f, 1.f, -1.f }, { 0.f, 1.f, 0.f }, { 1.f, 1.f } },
-    { { -1.f, 1.f, -1.f }, { 0.f, 1.f, 0.f }, { 0.f, 1.f } },
-    { { -1.f, -1.f, -1.f }, { 0.f, -1.f, 0.f }, { 0.f, 0.f } },
-    { { 1.f, -1.f, -1.f }, { 0.f, -1.f, 0.f }, { 1.f, 0.f } },
-    { { 1.f, -1.f, 1.f }, { 0.f, -1.f, 0.f }, { 1.f, 1.f } },
-    { { -1.f, -1.f, 1.f }, { 0.f, -1.f, 0.f }, { 0.f, 1.f } },
-  } };
-
-  static constexpr std::array<std::uint32_t, 36> indices = {
-    0,  1,  2,  2,  3,  0,  4,  5,  6,  6,  7,  4,  8,  9,  10, 10, 11, 8,
-    12, 13, 14, 14, 15, 12, 16, 17, 18, 18, 19, 16, 20, 21, 22, 22, 23, 20,
-  };
-
-  auto vertex_buffer =
-    std::make_unique<VertexBuffer>(device, false, "cube_vertices");
-  vertex_buffer->upload_vertices(std::span(vertices));
-
-  auto index_buffer =
-    std::make_unique<IndexBuffer>(device, VK_INDEX_TYPE_UINT32, "cube_indices");
-  index_buffer->upload_indices(std::span(indices));
-
-  return std::make_pair(std::move(vertex_buffer), std::move(index_buffer));
-}
-
 AppLayer::AppLayer(const Device& dev,
                    BS::priority_thread_pool* pool,
                    BlueprintRegistry* registry)
   : thread_pool(pool)
   , blueprint_registry(registry)
 {
-  auto&& [cube_vertex, cube_index] = generate_cube_counter_clockwise(dev);
-  cube_vertex_buffer = std::move(cube_vertex);
-  cube_index_buffer = std::move(cube_index);
-  mesh = std::make_unique<Mesh>();
-
   Logger::log_info("Here!");
 
+  mesh = std::make_unique<Mesh>();
   if (mesh->load_from_file(dev, *blueprint_registry, "cerberus/scene.gltf")) {
   }
   generate_scene();
@@ -91,8 +34,6 @@ AppLayer::~AppLayer() = default;
 auto
 AppLayer::on_destroy() -> void
 {
-  cube_vertex_buffer.reset();
-  cube_index_buffer.reset();
 }
 
 auto

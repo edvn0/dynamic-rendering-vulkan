@@ -5,10 +5,14 @@
 #include "imgui_impl_vulkan.h"
 
 #include "core/allocator.hpp"
+#include "core/fs.hpp"
 #include "core/gpu_buffer.hpp"
 #include "core/image_transition.hpp"
+#include "core/logger.hpp"
 #include "renderer/material_bindings.hpp"
 
+#include <ktx.h>
+#include <ktxvulkan.h>
 #include <stb_image.h>
 
 auto
@@ -52,7 +56,8 @@ Image::recreate() -> void
   VkImageCreateInfo image_info{
     .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
     .pNext = nullptr,
-    .flags = 0,
+    .flags = is_cubemap ? VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT
+                        : VkImageCreateFlags{ 0 },
     .imageType = VK_IMAGE_TYPE_2D,
     .format = format,
     .extent = { extent.width, extent.height, 1 },
@@ -77,12 +82,21 @@ Image::recreate() -> void
                  &allocation,
                  nullptr);
 
+  const bool is_array = array_layers > 1;
+  VkImageViewType view_type = VK_IMAGE_VIEW_TYPE_2D;
+  if (is_cubemap) {
+    view_type = array_layers > 6 ? VK_IMAGE_VIEW_TYPE_CUBE_ARRAY
+                                 : VK_IMAGE_VIEW_TYPE_CUBE;
+  } else if (is_array) {
+    view_type = VK_IMAGE_VIEW_TYPE_2D_ARRAY;
+  }
+
   VkImageViewCreateInfo default_view_info{
     .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
     .pNext = nullptr,
-    .flags = 0,
+     .flags = 0,
     .image = image,
-    .viewType = array_layers > 1 ? VK_IMAGE_VIEW_TYPE_2D_ARRAY : VK_IMAGE_VIEW_TYPE_2D,
+    .viewType = view_type,
     .format = format,
     .components = {
         .r = VK_COMPONENT_SWIZZLE_IDENTITY,
@@ -150,31 +164,16 @@ Image::recreate() -> void
     .maxAnisotropy = 1.f,
     .compareEnable = VK_FALSE,
     .compareOp = VK_COMPARE_OP_ALWAYS,
-    .minLod = 0.f,
-    .maxLod = VK_LOD_CLAMP_NONE,
+    .minLod = 0.0f,
+    .maxLod = static_cast<float>(mip_levels),
     .borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK,
     .unnormalizedCoordinates = VK_FALSE,
   };
 
   if (Attachment attachment{ format }; attachment.is_depth()) {
-    sampler_info = {
-      .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
-      .magFilter = VK_FILTER_LINEAR,
-      .minFilter = VK_FILTER_LINEAR,
-      .mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST,
-      .addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER,
-      .addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER,
-      .addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER,
-      .mipLodBias = 0.0f,
-      .anisotropyEnable = VK_FALSE,
-      .maxAnisotropy = 1.f,
-      .compareEnable = VK_TRUE,
-      .compareOp = VK_COMPARE_OP_GREATER_OR_EQUAL,
-      .minLod = 0.f,
-      .maxLod = 0.f,
-      .borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE,
-      .unnormalizedCoordinates = VK_FALSE,
-    };
+    sampler_info.compareEnable = VK_TRUE;
+    sampler_info.compareOp = VK_COMPARE_OP_GREATER_OR_EQUAL;
+    sampler_info.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE;
   }
 
   sampler = sampler_manager.get_sampler(sampler_info);
@@ -351,7 +350,9 @@ Image::load_from_file(const Device& device,
 {
   stbi_set_flip_vertically_on_load(flip_y ? 1 : 0);
 
-  int width, height, channels;
+  int width;
+  int height;
+  int channels;
   stbi_uc* pixels =
     stbi_load(path.c_str(), &width, &height, &channels, STBI_rgb_alpha);
 
@@ -382,6 +383,148 @@ Image::load_from_file(const Device& device,
     std::span{ pixels, static_cast<size_t>(width * height * STBI_rgb_alpha) });
 
   stbi_image_free(pixels);
+
+  return image;
+}
+
+auto
+Image::load_cubemap(const Device& device, const std::string& path)
+  -> std::unique_ptr<Image>
+{
+  const auto image_path = assets_path() / "environment" / path;
+
+  if (!std::filesystem::exists(image_path)) {
+    Logger::log_error("Cubemap image not found: {}", image_path.string());
+    return nullptr;
+  }
+
+  ktxTexture2* texture = nullptr;
+  ktxResult result =
+    ktxTexture2_CreateFromNamedFile(image_path.string().c_str(),
+                                    KTX_TEXTURE_CREATE_LOAD_IMAGE_DATA_BIT,
+                                    &texture);
+
+  if (result != KTX_SUCCESS || !texture) {
+    auto error = ktxErrorString(result);
+    Logger::log_error("Failed to load ktx2 cubemap: {}. Reason: {}",
+                      image_path.string(),
+                      error);
+    return nullptr;
+  }
+
+  if (texture->numFaces != 6 || texture->numLayers != 1 ||
+      texture->numLevels < 1) {
+    Logger::log_error(
+      "Invalid cubemap layout in KTX2: must be 6 faces, 1 layer");
+    ktxTexture_Destroy(ktxTexture(texture));
+    return nullptr;
+  }
+
+  const auto format = static_cast<VkFormat>(texture->vkFormat);
+  const auto mip_levels = texture->numLevels;
+  const auto width = texture->baseWidth;
+  const auto height = texture->baseHeight;
+
+  const auto config = ImageConfiguration{
+    .extent = { width, height },
+    .format = format,
+    .mip_levels = mip_levels,
+    .array_layers = 6,
+    .usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+    .aspect = VK_IMAGE_ASPECT_COLOR_BIT,
+    .sample_count = VK_SAMPLE_COUNT_1_BIT,
+    .allow_in_ui = false,
+    .is_cubemap = true,
+    .debug_name = std::filesystem::path{ path }.filename().string(),
+  };
+
+  auto image = create(device, config);
+
+  std::vector<VkBufferImageCopy> regions;
+  std::size_t total_size = 0;
+
+  for (uint32_t level = 0; level < mip_levels; ++level) {
+    for (uint32_t face = 0; face < 6; ++face) {
+      ktx_size_t offset;
+      auto ret =
+        ktxTexture_GetImageOffset(ktxTexture(texture), level, 0, face, &offset);
+      assert(ret == KTX_SUCCESS);
+      std::size_t face_size =
+        ktxTexture_GetImageSize(ktxTexture(texture), level);
+      total_size = std::max(total_size, offset + face_size);
+    }
+  }
+
+  GPUBuffer staging{ device, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, true };
+  staging.upload(std::span{
+    static_cast<const std::uint8_t*>(ktxTexture_GetData(ktxTexture(texture))),
+    total_size });
+
+  for (uint32_t level = 0; level < mip_levels; ++level) {
+    for (uint32_t face = 0; face < 6; ++face) {
+      ktx_size_t offset;
+      auto ret =
+        ktxTexture_GetImageOffset(ktxTexture(texture), level, 0, face, &offset);
+      assert(ret == KTX_SUCCESS);
+      regions.push_back({
+        .bufferOffset = offset,
+        .bufferRowLength = 0,
+        .bufferImageHeight = 0,
+        .imageSubresource = {
+          .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+          .mipLevel = level,
+          .baseArrayLayer = face,
+          .layerCount = 1,
+        },
+        .imageOffset = { 0, 0, 0 },
+        .imageExtent = {
+          std::max(1u, width >> level),
+          std::max(1u, height >> level),
+          1,
+        },
+      });
+    }
+  }
+
+  auto&& [cmd, pool] =
+    device.create_one_time_command_buffer(device.graphics_queue());
+
+  CoreUtils::cmd_transition_image(
+    cmd,
+    {
+      .image = image->get_image(),
+      .old_layout = VK_IMAGE_LAYOUT_UNDEFINED,
+      .new_layout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+      .src_access_mask = 0,
+      .dst_access_mask = VK_ACCESS_TRANSFER_WRITE_BIT,
+      .src_stage_mask = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+      .dst_stage_mask = VK_PIPELINE_STAGE_TRANSFER_BIT,
+      .subresource_range = { VK_IMAGE_ASPECT_COLOR_BIT, 0, mip_levels, 0, 6 },
+    });
+
+  vkCmdCopyBufferToImage(cmd,
+                         staging.get(),
+                         image->get_image(),
+                         VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                         static_cast<uint32_t>(regions.size()),
+                         regions.data());
+
+  CoreUtils::cmd_transition_image(
+    cmd,
+    {
+      .image = image->get_image(),
+      .old_layout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+      .new_layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+      .src_access_mask = VK_ACCESS_TRANSFER_WRITE_BIT,
+      .dst_access_mask = VK_ACCESS_SHADER_READ_BIT,
+      .src_stage_mask = VK_PIPELINE_STAGE_TRANSFER_BIT,
+      .dst_stage_mask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+      .subresource_range = { VK_IMAGE_ASPECT_COLOR_BIT, 0, mip_levels, 0, 6 },
+    });
+
+  device.flush(cmd, pool, device.graphics_queue());
+
+  ktxTexture_Destroy(ktxTexture(texture));
 
   return image;
 }

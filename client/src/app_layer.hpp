@@ -26,9 +26,6 @@ private:
   float rotation_speed = 90.f;
   glm::vec2 bounds{};
 
-  std::unique_ptr<VertexBuffer> cube_vertex_buffer;
-  std::unique_ptr<IndexBuffer> cube_index_buffer;
-
   std::unique_ptr<Mesh> mesh;
 
   glm::vec3 light_position{ 28.f, 23.f, 1.f };
