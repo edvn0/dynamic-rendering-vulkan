@@ -97,7 +97,7 @@ AppLayer::on_render(Renderer& renderer) -> void
     },
     glm::mat4(1.f));
 
-  static constexpr float line_width = 0.1f;
+  static constexpr float line_width = 1.2f;
   static constexpr float line_length = 50.f;
 
   renderer.submit_lines({ 0.f, 0.f, 0.f },

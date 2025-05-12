@@ -9,26 +9,21 @@ layout(location = 3) in uint instance_packed_color;
 
 layout(location = 0) out vec3 frag_color;
 
-void main()
-{
-  // camera right/up vectors
-  vec3 cam_right = vec3(camera_ubo.vp[0][0], camera_ubo.vp[1][0], camera_ubo.vp[2][0]);
-  vec3 cam_up = vec3(camera_ubo.vp[0][1], camera_ubo.vp[1][1], camera_ubo.vp[2][1]);
+void main() {
+  vec3 cam_right =
+      vec3(camera_ubo.vp[0][0], camera_ubo.vp[1][0], camera_ubo.vp[2][0]);
+  vec3 cam_up =
+      vec3(camera_ubo.vp[0][1], camera_ubo.vp[1][1], camera_ubo.vp[2][1]);
 
-  // pick start or end per instance vertex index
   bool is_end = bool((gl_VertexIndex >> 1) & 1);
   float sign = (gl_VertexIndex & 1) == 0 ? 1.0 : -1.0;
   vec3 center = mix(instance_start, instance_end, is_end ? 1.0 : 0.0);
 
-  // screen‐aligned quad offset
   vec3 line_dir = normalize(instance_end - instance_start);
   vec3 side = cross(line_dir, cam_up);
-  if (length(side) < 0.001)
-  {
+  if (length(side) < 0.001) {
     side = cam_right;
-  }
-  else
-  {
+  } else {
     side = normalize(side);
   }
   vec3 offset = side * instance_width * 0.5 * sign;

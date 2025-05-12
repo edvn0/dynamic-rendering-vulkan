@@ -6,7 +6,6 @@
 
 MeshCache::~MeshCache()
 {
-  std::lock_guard lock(mutex);
   meshes.clear();
 }
 
@@ -67,74 +66,142 @@ MeshCache::MeshCache(const Device& dev, const BlueprintRegistry& reg)
   initialise_cube();
 }
 
+template<bool OnlyPositions = false>
 auto
 generate_cube_counter_clockwise(const Device& device)
 {
-  struct CubeVertex
-  {
-    glm::vec3 position;
-    glm::vec3 normal;
-    glm::vec2 uv;
-  };
-  static constexpr std::array<CubeVertex, 24> vertices = { {
-    { { -1.f, -1.f, 1.f }, { 0.f, 0.f, 1.f }, { 0.f, 0.f } },
-    { { 1.f, -1.f, 1.f }, { 0.f, 0.f, 1.f }, { 1.f, 0.f } },
-    { { 1.f, 1.f, 1.f }, { 0.f, 0.f, 1.f }, { 1.f, 1.f } },
-    { { -1.f, 1.f, 1.f }, { 0.f, 0.f, 1.f }, { 0.f, 1.f } },
-    { { 1.f, -1.f, -1.f }, { 0.f, 0.f, -1.f }, { 0.f, 0.f } },
-    { { -1.f, -1.f, -1.f }, { 0.f, 0.f, -1.f }, { 1.f, 0.f } },
-    { { -1.f, 1.f, -1.f }, { 0.f, 0.f, -1.f }, { 1.f, 1.f } },
-    { { 1.f, 1.f, -1.f }, { 0.f, 0.f, -1.f }, { 0.f, 1.f } },
-    { { -1.f, -1.f, -1.f }, { -1.f, 0.f, 0.f }, { 0.f, 0.f } },
-    { { -1.f, -1.f, 1.f }, { -1.f, 0.f, 0.f }, { 1.f, 0.f } },
-    { { -1.f, 1.f, 1.f }, { -1.f, 0.f, 0.f }, { 1.f, 1.f } },
-    { { -1.f, 1.f, -1.f }, { -1.f, 0.f, 0.f }, { 0.f, 1.f } },
-    { { 1.f, -1.f, 1.f }, { 1.f, 0.f, 0.f }, { 0.f, 0.f } },
-    { { 1.f, -1.f, -1.f }, { 1.f, 0.f, 0.f }, { 1.f, 0.f } },
-    { { 1.f, 1.f, -1.f }, { 1.f, 0.f, 0.f }, { 1.f, 1.f } },
-    { { 1.f, 1.f, 1.f }, { 1.f, 0.f, 0.f }, { 0.f, 1.f } },
-    { { -1.f, 1.f, 1.f }, { 0.f, 1.f, 0.f }, { 0.f, 0.f } },
-    { { 1.f, 1.f, 1.f }, { 0.f, 1.f, 0.f }, { 1.f, 0.f } },
-    { { 1.f, 1.f, -1.f }, { 0.f, 1.f, 0.f }, { 1.f, 1.f } },
-    { { -1.f, 1.f, -1.f }, { 0.f, 1.f, 0.f }, { 0.f, 1.f } },
-    { { -1.f, -1.f, -1.f }, { 0.f, -1.f, 0.f }, { 0.f, 0.f } },
-    { { 1.f, -1.f, -1.f }, { 0.f, -1.f, 0.f }, { 1.f, 0.f } },
-    { { 1.f, -1.f, 1.f }, { 0.f, -1.f, 0.f }, { 1.f, 1.f } },
-    { { -1.f, -1.f, 1.f }, { 0.f, -1.f, 0.f }, { 0.f, 1.f } },
-  } };
+  if constexpr (OnlyPositions) {
+    struct Vertex
+    {
+      glm::vec3 position;
+    };
 
-  static constexpr std::array<std::uint32_t, 36> indices = {
-    0,  1,  2,  2,  3,  0,  4,  5,  6,  6,  7,  4,  8,  9,  10, 10, 11, 8,
-    12, 13, 14, 14, 15, 12, 16, 17, 18, 18, 19, 16, 20, 21, 22, 22, 23, 20,
-  };
+    static constexpr std::array<Vertex, 24> vertices = { {
+      { { -1.f, -1.f, 1.f } },  { { 1.f, -1.f, 1.f } },
+      { { 1.f, 1.f, 1.f } },    { { -1.f, 1.f, 1.f } },
+      { { 1.f, -1.f, -1.f } },  { { -1.f, -1.f, -1.f } },
+      { { -1.f, 1.f, -1.f } },  { { 1.f, 1.f, -1.f } },
+      { { -1.f, -1.f, -1.f } }, { { -1.f, -1.f, 1.f } },
+      { { -1.f, 1.f, 1.f } },   { { -1.f, 1.f, -1.f } },
+      { { 1.f, -1.f, 1.f } },   { { 1.f, -1.f, -1.f } },
+      { { 1.f, 1.f, -1.f } },   { { 1.f, 1.f, 1.f } },
+      { { -1.f, 1.f, 1.f } },   { { 1.f, 1.f, 1.f } },
+      { { 1.f, 1.f, -1.f } },   { { -1.f, 1.f, -1.f } },
+      { { -1.f, -1.f, -1.f } }, { { 1.f, -1.f, -1.f } },
+      { { 1.f, -1.f, 1.f } },   { { -1.f, -1.f, 1.f } },
+    } };
 
-  auto vertex_buffer =
-    std::make_unique<VertexBuffer>(device, false, "cube_vertices");
-  vertex_buffer->upload_vertices(std::span(vertices));
+    static constexpr std::array<std::uint32_t, 36> indices = {
+      0,  1,  2,  2,  3,  0,  4,  5,  6,  6,  7,  4,  8,  9,  10, 10, 11, 8,
+      12, 13, 14, 14, 15, 12, 16, 17, 18, 18, 19, 16, 20, 21, 22, 22, 23, 20,
+    };
 
-  auto index_buffer =
-    std::make_unique<IndexBuffer>(device, VK_INDEX_TYPE_UINT32, "cube_indices");
-  index_buffer->upload_indices(std::span(indices));
+    auto vertex_buffer =
+      std::make_unique<VertexBuffer>(device, false, "cube_vertices_pos");
+    vertex_buffer->upload_vertices(std::span(vertices));
 
-  return std::make_pair(std::move(vertex_buffer), std::move(index_buffer));
+    auto index_buffer = std::make_unique<IndexBuffer>(
+      device, VK_INDEX_TYPE_UINT32, "cube_indices");
+    index_buffer->upload_indices(std::span(indices));
+
+    return std::make_pair(std::move(vertex_buffer), std::move(index_buffer));
+  } else {
+    struct Vertex
+    {
+      glm::vec3 position;
+      glm::vec3 normal;
+      glm::vec2 uv;
+    };
+
+    static constexpr std::array<Vertex, 24> vertices = { {
+      // Front
+      { { -1.f, -1.f, 1.f }, { 0.f, 0.f, 1.f }, { 0.f, 0.f } },
+      { { 1.f, -1.f, 1.f }, { 0.f, 0.f, 1.f }, { 1.f, 0.f } },
+      { { 1.f, 1.f, 1.f }, { 0.f, 0.f, 1.f }, { 1.f, 1.f } },
+      { { -1.f, 1.f, 1.f }, { 0.f, 0.f, 1.f }, { 0.f, 1.f } },
+      // Back
+      { { 1.f, -1.f, -1.f }, { 0.f, 0.f, -1.f }, { 0.f, 0.f } },
+      { { -1.f, -1.f, -1.f }, { 0.f, 0.f, -1.f }, { 1.f, 0.f } },
+      { { -1.f, 1.f, -1.f }, { 0.f, 0.f, -1.f }, { 1.f, 1.f } },
+      { { 1.f, 1.f, -1.f }, { 0.f, 0.f, -1.f }, { 0.f, 1.f } },
+      // Left
+      { { -1.f, -1.f, -1.f }, { -1.f, 0.f, 0.f }, { 0.f, 0.f } },
+      { { -1.f, -1.f, 1.f }, { -1.f, 0.f, 0.f }, { 1.f, 0.f } },
+      { { -1.f, 1.f, 1.f }, { -1.f, 0.f, 0.f }, { 1.f, 1.f } },
+      { { -1.f, 1.f, -1.f }, { -1.f, 0.f, 0.f }, { 0.f, 1.f } },
+      // Right
+      { { 1.f, -1.f, 1.f }, { 1.f, 0.f, 0.f }, { 0.f, 0.f } },
+      { { 1.f, -1.f, -1.f }, { 1.f, 0.f, 0.f }, { 1.f, 0.f } },
+      { { 1.f, 1.f, -1.f }, { 1.f, 0.f, 0.f }, { 1.f, 1.f } },
+      { { 1.f, 1.f, 1.f }, { 1.f, 0.f, 0.f }, { 0.f, 1.f } },
+      // Top
+      { { -1.f, 1.f, 1.f }, { 0.f, 1.f, 0.f }, { 0.f, 0.f } },
+      { { 1.f, 1.f, 1.f }, { 0.f, 1.f, 0.f }, { 1.f, 0.f } },
+      { { 1.f, 1.f, -1.f }, { 0.f, 1.f, 0.f }, { 1.f, 1.f } },
+      { { -1.f, 1.f, -1.f }, { 0.f, 1.f, 0.f }, { 0.f, 1.f } },
+      // Bottom
+      { { -1.f, -1.f, -1.f }, { 0.f, -1.f, 0.f }, { 0.f, 0.f } },
+      { { 1.f, -1.f, -1.f }, { 0.f, -1.f, 0.f }, { 1.f, 0.f } },
+      { { 1.f, -1.f, 1.f }, { 0.f, -1.f, 0.f }, { 1.f, 1.f } },
+      { { -1.f, -1.f, 1.f }, { 0.f, -1.f, 0.f }, { 0.f, 1.f } },
+    } };
+
+    static constexpr std::array<std::uint32_t, 36> indices = {
+      0,  1,  2,  2,  3,  0,  4,  5,  6,  6,  7,  4,  8,  9,  10, 10, 11, 8,
+      12, 13, 14, 14, 15, 12, 16, 17, 18, 18, 19, 16, 20, 21, 22, 22, 23, 20,
+    };
+
+    auto vertex_buffer =
+      std::make_unique<VertexBuffer>(device, false, "cube_vertices_full");
+    vertex_buffer->upload_vertices(std::span(vertices));
+
+    auto index_buffer = std::make_unique<IndexBuffer>(
+      device, VK_INDEX_TYPE_UINT32, "cube_indices");
+    index_buffer->upload_indices(std::span(indices));
+
+    return std::make_pair(std::move(vertex_buffer), std::move(index_buffer));
+  }
 }
 
 auto
 MeshCache::initialise_cube() -> void
 {
-  auto&& [cube_vertex, cube_index] = generate_cube_counter_clockwise(*device);
-  auto& mesh = meshes[MeshType::Cube];
-  mesh = std::make_unique<Mesh>();
-  mesh->vertex_buffer = std::move(cube_vertex);
-  mesh->index_buffer = std::move(cube_index);
-  mesh->submeshes.push_back(Submesh{
-    .index_offset = 0,
-    .index_count = static_cast<std::uint32_t>(mesh->index_buffer->get_count()),
-    .material_index = 0,
-  });
+  {
+    auto&& [cube_vertex, cube_index] = generate_cube_counter_clockwise(*device);
+    auto& mesh = meshes[MeshType::Cube];
+    mesh = std::make_unique<Mesh>();
+    mesh->vertex_buffer = std::move(cube_vertex);
+    mesh->index_buffer = std::move(cube_index);
+    mesh->submeshes.push_back(Submesh{
+      .index_offset = 0,
+      .index_count =
+        static_cast<std::uint32_t>(mesh->index_buffer->get_count()),
+      .material_index = 0,
+    });
 
-  mesh->materials.reserve(1);
-  mesh->materials.push_back(
-    Material::create(*device, blueprint_registry->get("main_geometry"))
-      .value());
+    mesh->materials.reserve(1);
+    mesh->materials.push_back(
+      Material::create(*device, blueprint_registry->get("main_geometry"))
+        .value());
+  }
+
+  {
+    auto&& [cube_vertex, cube_index] =
+      generate_cube_counter_clockwise<true>(*device);
+    auto& mesh = meshes[MeshType::CubeOnlyPosition];
+    mesh = std::make_unique<Mesh>();
+    mesh->vertex_buffer = std::move(cube_vertex);
+    mesh->index_buffer = std::move(cube_index);
+    mesh->submeshes.push_back(Submesh{
+      .index_offset = 0,
+      .index_count =
+        static_cast<std::uint32_t>(mesh->index_buffer->get_count()),
+      .material_index = 0,
+    });
+
+    mesh->materials.reserve(1);
+    mesh->materials.push_back(
+      Material::create(*device, blueprint_registry->get("main_geometry"))
+        .value());
+  }
 }

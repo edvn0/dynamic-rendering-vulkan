@@ -232,11 +232,11 @@ Material::create(const Device& device, const PipelineBlueprint& blueprint)
     std::vector<VkDescriptorPoolSize> pool_sizes;
     for (const auto& [type, count] : type_counts)
       pool_sizes.push_back(
-        { .type = type, .descriptorCount = count * image_count });
+        { .type = type, .descriptorCount = count * frames_in_flight });
 
     VkDescriptorPoolCreateInfo pool_info{
       .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
-      .maxSets = image_count,
+      .maxSets = frames_in_flight,
       .poolSizeCount = static_cast<uint32_t>(pool_sizes.size()),
       .pPoolSizes = pool_sizes.data(),
     };
@@ -248,11 +248,11 @@ Material::create(const Device& device, const PipelineBlueprint& blueprint)
         .code = MaterialError::Code::pool_creation_failed,
       });
 
-    std::vector repeated_layouts(image_count, all_layouts.at(1));
+    std::vector repeated_layouts(frames_in_flight, all_layouts.at(1));
     VkDescriptorSetAllocateInfo alloc_info{
       .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
       .descriptorPool = pool,
-      .descriptorSetCount = image_count,
+      .descriptorSetCount = frames_in_flight,
       .pSetLayouts = repeated_layouts.data(),
     };
 
@@ -355,7 +355,6 @@ Material::Material(
   , descriptor_pool(pool)
   , pipeline(std::move(pipe))
 {
-  // Rest of the constructor remains the same
   white_texture = Image::create(*device,
                                 {
                                   .extent = { 1, 1 },

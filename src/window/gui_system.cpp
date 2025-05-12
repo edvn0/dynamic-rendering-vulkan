@@ -4,6 +4,7 @@
 
 #include "core/device.hpp"
 #include "core/instance.hpp"
+#include "window/swapchain.hpp"
 #include "window/window.hpp"
 
 #include <imgui.h>
@@ -77,15 +78,17 @@ GUISystem::~GUISystem()
 
 GUISystem::GUISystem(const Core::Instance& instance,
                      const Device& device,
-                     Window& window)
+                     Window& window,
+                     Swapchain& sc)
 {
-  init_for_vulkan(instance, device, window);
+  init_for_vulkan(instance, device, window, sc);
 }
 
 auto
 GUISystem::init_for_vulkan(const Core::Instance& instance,
                            const Device& device,
-                           Window& window) const -> void
+                           Window& window,
+                           Swapchain& swapchain) const -> void
 {
   ImGui::CreateContext();
   ImPlot::CreateContext();
@@ -102,8 +105,8 @@ GUISystem::init_for_vulkan(const Core::Instance& instance,
   info.PipelineCache = VK_NULL_HANDLE;
   info.DescriptorPool = VK_NULL_HANDLE;
   info.ApiVersion = VK_API_VERSION_1_4;
-  info.MinImageCount = image_count;
-  info.ImageCount = image_count;
+  info.MinImageCount = swapchain.get_image_count();
+  info.ImageCount = swapchain.get_image_count();
   info.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
   info.DescriptorPoolSize = 100;
   info.Allocator = nullptr;

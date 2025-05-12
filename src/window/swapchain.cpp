@@ -7,6 +7,7 @@
 #include "core/device.hpp"
 
 #include <imgui.h>
+#include <iostream>
 
 Swapchain::Swapchain(const Device& device_ref, const Window& window_ref)
   : device(device_ref.get_device())
@@ -25,10 +26,12 @@ Swapchain::Swapchain(const Device& device_ref, const Window& window_ref)
 auto
 Swapchain::draw_frame(const GUISystem& gui_system) -> void
 {
+  // Wait for the current frame to be finished
   vkWaitForFences(
     device, 1, &in_flight_fences[frame_index], VK_TRUE, UINT64_MAX);
   vkResetFences(device, 1, &in_flight_fences[frame_index]);
 
+  // Acquire an image from the swapchain
   std::uint32_t image_index;
   auto result = vkAcquireNextImageKHR(device,
                                       swapchain,
@@ -42,6 +45,7 @@ Swapchain::draw_frame(const GUISystem& gui_system) -> void
     return;
   }
 
+  // Reset and begin recording command buffer
   VkCommandBuffer cmd = command_buffers[frame_index];
   vkResetCommandBuffer(cmd, 0);
 
@@ -149,7 +153,7 @@ Swapchain::draw_frame(const GUISystem& gui_system) -> void
     recreate_swapchain();
   }
 
-  frame_index = (frame_index + 1) % image_count;
+  frame_index = (frame_index + 1) % frames_in_flight;
 }
 
 auto
@@ -191,7 +195,7 @@ Swapchain::~Swapchain()
   vkDeviceWaitIdle(device);
   cleanup_swapchain();
   vkDestroyCommandPool(device, command_pool, nullptr);
-  for (std::uint32_t i = 0; i < image_count; ++i) {
+  for (std::uint32_t i = 0; i < frames_in_flight; ++i) {
     vkDestroySemaphore(device, render_finished_semaphores[i], nullptr);
     vkDestroySemaphore(device, image_available_semaphores[i], nullptr);
     vkDestroyFence(device, in_flight_fences[i], nullptr);
@@ -210,7 +214,7 @@ Swapchain::destroy() -> void
   vkDeviceWaitIdle(device);
   cleanup_swapchain();
   vkDestroyCommandPool(device, command_pool, nullptr);
-  for (std::uint32_t i = 0; i < image_count; ++i) {
+  for (std::uint32_t i = 0; i < frames_in_flight; ++i) {
     vkDestroySemaphore(device, render_finished_semaphores[i], nullptr);
     vkDestroySemaphore(device, image_available_semaphores[i], nullptr);
     vkDestroyFence(device, in_flight_fences[i], nullptr);
@@ -257,7 +261,7 @@ Swapchain::allocate_command_buffers() -> void
   alloc_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
   alloc_info.commandPool = command_pool;
   alloc_info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-  alloc_info.commandBufferCount = image_count;
+  alloc_info.commandBufferCount = frames_in_flight;
   vkAllocateCommandBuffers(device, &alloc_info, command_buffers.data());
 }
 
@@ -275,61 +279,13 @@ Swapchain::create_sync_objects() -> void
     .flags = VK_FENCE_CREATE_SIGNALED_BIT,
   };
 
-  for (std::uint32_t i = 0; i < image_count; ++i) {
+  for (std::uint32_t i = 0; i < frames_in_flight; ++i) {
     vkCreateSemaphore(
       device, &semaphore_info, nullptr, &image_available_semaphores[i]);
     vkCreateSemaphore(
       device, &semaphore_info, nullptr, &render_finished_semaphores[i]);
     vkCreateFence(device, &fence_info, nullptr, &in_flight_fences[i]);
   }
-}
-
-auto
-Swapchain::choose_surface_format(
-  const std::vector<VkSurfaceFormatKHR>& available_formats) const
-  -> VkSurfaceFormatKHR
-{
-  for (auto& format : available_formats) {
-    if (format.format == VK_FORMAT_B8G8R8A8_SRGB &&
-        format.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
-      return format;
-    }
-  }
-  return available_formats[0];
-}
-
-auto
-Swapchain::choose_present_mode(
-  const std::vector<VkPresentModeKHR>& available_present_modes) const
-  -> VkPresentModeKHR
-{
-  for (auto& mode : available_present_modes) {
-    if (mode == VK_PRESENT_MODE_MAILBOX_KHR) {
-      return mode;
-    }
-  }
-  return VK_PRESENT_MODE_FIFO_KHR;
-}
-
-auto
-Swapchain::choose_extent(const VkSurfaceCapabilitiesKHR& capabilities) const
-  -> VkExtent2D
-{
-  if (capabilities.currentExtent.width != UINT32_MAX) {
-    return capabilities.currentExtent;
-  }
-
-  auto&& [width, height] = window->framebuffer_size();
-
-  VkExtent2D actual_extent = { width, height };
-
-  actual_extent.width = std::clamp(actual_extent.width,
-                                   capabilities.minImageExtent.width,
-                                   capabilities.maxImageExtent.width);
-  actual_extent.height = std::clamp(actual_extent.height,
-                                    capabilities.minImageExtent.height,
-                                    capabilities.maxImageExtent.height);
-  return actual_extent;
 }
 
 void
@@ -360,7 +316,10 @@ Swapchain::create_swapchain(VkSwapchainKHR old_swapchain)
     physical_device, surface, &present_mode_count, present_modes.data());
   auto present_mode = choose_present_mode(present_modes);
 
-  std::uint32_t desired_image_count = caps.minImageCount + 1;
+  // Ensure we have at least max_swapchain_image_count images, but respect
+  // device limits
+  std::uint32_t desired_image_count =
+    std::max(caps.minImageCount, max_swapchain_image_count);
   if (caps.maxImageCount > 0 && desired_image_count > caps.maxImageCount) {
     desired_image_count = caps.maxImageCount;
   }
@@ -387,8 +346,10 @@ Swapchain::create_swapchain(VkSwapchainKHR old_swapchain)
     assert(false && "Failed to create swapchain");
   }
 
+  // Get actual swapchain image count
   std::uint32_t count;
   vkGetSwapchainImagesKHR(device, swapchain, &count, nullptr);
+  swapchain_image_count = count;
   swapchain_images.resize(count);
   vkGetSwapchainImagesKHR(device, swapchain, &count, swapchain_images.data());
 
@@ -409,4 +370,55 @@ Swapchain::create_swapchain(VkSwapchainKHR old_swapchain)
       assert(false);
     }
   }
+}
+
+[[nodiscard]] auto
+Swapchain::choose_surface_format(
+  const std::vector<VkSurfaceFormatKHR>& available_formats) const
+  -> VkSurfaceFormatKHR
+{
+  for (const auto& format : available_formats) {
+    if (format.format == VK_FORMAT_B8G8R8A8_SRGB &&
+        format.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
+      return format;
+    }
+  }
+
+  return available_formats[0];
+}
+
+[[nodiscard]] auto
+Swapchain::choose_present_mode(
+  const std::vector<VkPresentModeKHR>& available_present_modes) const
+  -> VkPresentModeKHR
+{
+  for (const auto& mode : available_present_modes) {
+    if (mode == VK_PRESENT_MODE_MAILBOX_KHR) {
+      return mode;
+    }
+  }
+
+  return VK_PRESENT_MODE_FIFO_KHR;
+}
+
+[[nodiscard]] auto
+Swapchain::choose_extent(const VkSurfaceCapabilitiesKHR& capabilities) const
+  -> VkExtent2D
+{
+  if (capabilities.currentExtent.width !=
+      std::numeric_limits<std::uint32_t>::max()) {
+    return capabilities.currentExtent;
+  }
+
+  auto [width, height] = window->framebuffer_size();
+
+  width = std::clamp(width,
+                     capabilities.minImageExtent.width,
+                     capabilities.maxImageExtent.width);
+  height = std::clamp(height,
+                      capabilities.minImageExtent.height,
+                      capabilities.maxImageExtent.height);
+
+  return { static_cast<std::uint32_t>(width),
+           static_cast<std::uint32_t>(height) };
 }

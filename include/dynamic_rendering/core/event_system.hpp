@@ -224,9 +224,7 @@ public:
     requires std::invocable<Fn, Evt&>
   auto dispatch(Fn&& fn) -> bool
   {
-    // 1) Check that the runtime type of event matches the template Evt
     if (event.get_event_type() == Evt::get_static_type() && !event.handled) {
-      // 2) Cast to the concrete event and invoke the handler
       auto& concrete = static_cast<Evt&>(event);
       event.handled = fn(concrete);
       return true;
@@ -294,7 +292,6 @@ public:
   EVENT_CLASS_CATEGORY(Application)
 };
 
-// Input events
 class KeyPressedEvent : public Event
 {
 public:
