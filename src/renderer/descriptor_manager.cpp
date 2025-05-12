@@ -61,11 +61,11 @@ DescriptorSetManager::DescriptorSetManager(const Device& dev,
   , bindings(builder.get_bindings())
   , descriptor_set_layout(builder.create_layout(dev))
 {
-  auto pool_sizes = builder.get_pool_sizes(image_count);
+  auto pool_sizes = builder.get_pool_sizes(frames_in_flight);
 
   const VkDescriptorPoolCreateInfo pool_info{
     .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
-    .maxSets = image_count,
+    .maxSets = frames_in_flight,
     .poolSizeCount = static_cast<uint32_t>(pool_sizes.size()),
     .pPoolSizes = pool_sizes.data(),
   };
@@ -84,21 +84,21 @@ DescriptorSetManager::allocate_sets(std::span<GPUBuffer*> buffers,
                                     std::span<Image*> images) -> void
 {
   // Allocate descriptor sets
-  std::vector layouts(image_count, descriptor_set_layout);
+  std::vector layouts(frames_in_flight, descriptor_set_layout);
   const VkDescriptorSetAllocateInfo alloc_info{
     .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
     .descriptorPool = descriptor_pool,
-    .descriptorSetCount = image_count,
+    .descriptorSetCount = frames_in_flight,
     .pSetLayouts = layouts.data(),
   };
   vkAllocateDescriptorSets(
     device->get_device(), &alloc_info, descriptor_sets.data());
 
   auto divided_by_image_count = [](const auto& val) {
-    if (val % image_count != 0)
+    if (val % frames_in_flight != 0)
       assert(false && "Must be a multiple of image_count.");
 
-    return val / image_count;
+    return val / frames_in_flight;
   };
 
   for (auto& meta : bindings) {
@@ -126,19 +126,19 @@ DescriptorSetManager::allocate_sets(std::span<GPUBuffer*> buffers,
     }
   }
 
-  update_sets({ descriptor_sets.data(), image_count });
+  update_sets({ descriptor_sets.data(), frames_in_flight });
 }
 
 auto
 DescriptorSetManager::update_sets(const std::span<VkDescriptorSet> sets) const
   -> void
 {
-  const std::size_t total = bindings.size() * image_count;
+  const std::size_t total = bindings.size() * frames_in_flight;
   std::vector<VkWriteDescriptorSet> writes(total);
   std::vector<VkDescriptorBufferInfo> buffers(total);
   std::vector<VkDescriptorImageInfo> images(total);
 
-  for (std::size_t i = 0; i < image_count; ++i) {
+  for (std::size_t i = 0; i < frames_in_flight; ++i) {
     for (std::size_t j = 0; j < bindings.size(); ++j) {
       const auto& meta = bindings[j];
       const std::size_t index = i * bindings.size() + j;

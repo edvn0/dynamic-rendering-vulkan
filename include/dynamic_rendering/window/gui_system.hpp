@@ -7,7 +7,7 @@
 class GUISystem
 {
 public:
-  GUISystem(const Core::Instance&, const Device&, Window&);
+  GUISystem(const Core::Instance&, const Device&, Window&, Swapchain&);
   ~GUISystem();
 
   auto shutdown() -> void;
@@ -15,9 +15,10 @@ public:
   auto end_frame(VkCommandBuffer cmd_buf) const -> void;
 
 private:
-  auto init_for_vulkan(const Core::Instance& instance,
-                       const Device& device,
-                       Window& window) const -> void;
+  auto init_for_vulkan(const Core::Instance&,
+                       const Device&,
+                       Window&,
+                       Swapchain&) const -> void;
 
   bool destroyed{ false };
 };

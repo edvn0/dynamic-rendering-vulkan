@@ -43,7 +43,7 @@ main()
 
   mat4 transform = instance_transforms[id];
   vec3 center = vec3(transform[3]);
-  float radius = length(transform[0].xyz); // assume uniform scaling
+  float radius = length(transform[0].xyz);
 
   if (is_inside_frustum(center, radius)) {
     uint index = atomicAdd(culled_instance_count, 1);

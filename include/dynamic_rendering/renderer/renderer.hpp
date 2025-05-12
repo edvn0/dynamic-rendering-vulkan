@@ -31,33 +31,10 @@ enum class RenderPass : std::uint8_t
   ZPrepass,
   ColourCorrection,
   ComputeCulling,
+  Skybox
 };
-
-inline auto
-to_renderpass(const std::string_view name) -> RenderPass
-{
-  if (name == "main_geometry") {
-    return RenderPass::MainGeometry;
-  }
-  if (name == "shadow") {
-    return RenderPass::Shadow;
-  }
-  if (name == "line") {
-    return RenderPass::Line;
-  }
-  if (name == "z_prepass") {
-    return RenderPass::ZPrepass;
-  }
-  if (name == "colour_correction") {
-    return RenderPass::ColourCorrection;
-  }
-  if (name == "compute_culling") {
-    return RenderPass::ComputeCulling;
-  }
-
-  assert(false && "Unknown render pass name");
-  return RenderPass::MainGeometry;
-}
+auto
+to_renderpass(const std::string_view name) -> RenderPass;
 
 struct LightEnvironment
 {
@@ -138,6 +115,8 @@ public:
         return colour_corrected_material.get();
       case ComputeCulling:
         return cull_instances_compute_material.get();
+      case Skybox:
+        return skybox_material.get();
       default:
         assert(false && "Unknown render pass name");
         return nullptr;
@@ -169,11 +148,15 @@ private:
   std::unique_ptr<Material> z_prepass_material;
   std::unique_ptr<Material> geometry_material;
 
-  std::unique_ptr<Material> environment_cubemap_material;
-  std::unique_ptr<Image> environment_cubemap_image;
+  std::unique_ptr<Material> skybox_material;
+  std::unique_ptr<Image> skybox_image;
+  std::unique_ptr<Image> skybox_attachment_texture;
 
   std::unique_ptr<Image> colour_corrected_image;
   std::unique_ptr<Material> colour_corrected_material;
+
+  std::unique_ptr<Image> composite_attachment_texture;
+  std::unique_ptr<Material> composite_attachment_material;
 
   std::unique_ptr<Image> shadow_depth_image;
   std::unique_ptr<Material> shadow_material;
@@ -207,10 +190,11 @@ private:
   auto update_shadow_buffers(std::uint32_t) -> void;
 
   auto run_culling_compute_pass(std::uint32_t) -> void;
-  auto run_environment_cubemap_pass(std::uint32_t) -> void;
+  auto run_skybox_pass(std::uint32_t) -> void;
   auto run_shadow_pass(std::uint32_t, const DrawList&) -> void;
   auto run_z_prepass(std::uint32_t, const DrawList&) -> void;
   auto run_geometry_pass(std::uint32_t, const DrawList&) -> void;
+  auto run_composite_pass(std::uint32_t) -> void;
   auto run_line_pass(std::uint32_t) -> void;
   auto run_colour_correction_pass(std::uint32_t) -> void;
   auto run_postprocess_passes(const std::uint32_t frame_index) -> void

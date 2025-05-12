@@ -143,8 +143,9 @@ App::App(const ApplicationArguments& args)
   blueprint_registry = std::make_unique<BlueprintRegistry>();
   blueprint_registry->load_from_directory("blueprints");
 
-  gui_system = std::make_unique<GUISystem>(*instance, *device, *window);
   swapchain = std::make_unique<Swapchain>(*device, *window);
+  gui_system =
+    std::make_unique<GUISystem>(*instance, *device, *window, *swapchain);
   renderer = std::make_unique<Renderer>(
     *device, *blueprint_registry, *window, thread_pool);
 

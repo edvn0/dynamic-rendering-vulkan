@@ -1,8 +1,8 @@
 #version 460
 
+#include "material.glsl"
 #include "matrix_math.glsl"
 #include "set0.glsl"
-#include "material.glsl"
 
 layout(set = 1, binding = 0) uniform sampler2D albedo_map;
 layout(set = 1, binding = 1) uniform sampler2D normal_map;
@@ -19,165 +19,134 @@ layout(location = 3) in vec2 v_uv;
 layout(location = 0) out vec4 frag_colour;
 
 #define AMBIENT_LIGHT 0.03
-#define SHADOW_INTENSITY 0.1
 #define PI 3.14159265359
 
 const int PCF_SAMPLES = 1;
 const int PCF_TOTAL = (PCF_SAMPLES * 2 + 1) * (PCF_SAMPLES * 2 + 1);
 const float INVERSE_SHADOW_MAP_SIZE = 1.0 / 2048.0;
 
-vec3 fresnelSchlick(float cosTheta, vec3 F0)
-{
-    return F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
+vec3 fresnel_schlick(float cos_theta, vec3 f0) {
+  return f0 + (1.0 - f0) * pow(clamp(1.0 - cos_theta, 0.0, 1.0), 5.0);
 }
 
-float DistributionGGX(vec3 N, vec3 H, float roughness)
-{
-    float a = roughness * roughness;
-    float a2 = a * a;
-    float NdotH = max(dot(N, H), 0.0);
-    float NdotH2 = NdotH * NdotH;
+float distribution_ggx(vec3 n, vec3 h, float roughness) {
+  float a = roughness * roughness;
+  float a2 = a * a;
+  float ndoth = max(dot(n, h), 0.0);
+  float ndoth2 = ndoth * ndoth;
 
-    float num = a2;
-    float denom = (NdotH2 * (a2 - 1.0) + 1.0);
-    denom = PI * denom * denom;
-
-    return num / denom;
+  float denom = (ndoth2 * (a2 - 1.0) + 1.0);
+  return a2 / (PI * denom * denom);
 }
 
-float GeometrySchlickGGX(float NdotV, float roughness)
-{
-    float r = (roughness + 1.0);
-    float k = (r * r) / 8.0;
-
-    float num = NdotV;
-    float denom = NdotV * (1.0 - k) + k;
-
-    return num / denom;
+float geometry_schlick_ggx(float ndotv, float roughness) {
+  float r = (roughness + 1.0);
+  float k = (r * r) / 8.0;
+  return ndotv / (ndotv * (1.0 - k) + k);
 }
 
-float GeometrySmith(vec3 N, vec3 V, vec3 L, float roughness)
-{
-    float NdotV = max(dot(N, V), 0.0);
-    float NdotL = max(dot(N, L), 0.0);
-    float ggx2 = GeometrySchlickGGX(NdotV, roughness);
-    float ggx1 = GeometrySchlickGGX(NdotL, roughness);
-
-    return ggx1 * ggx2;
+float geometry_smith(vec3 n, vec3 v, vec3 l, float roughness) {
+  float ndotv = max(dot(n, v), 0.0);
+  float ndotl = max(dot(n, l), 0.0);
+  float ggx1 = geometry_schlick_ggx(ndotl, roughness);
+  float ggx2 = geometry_schlick_ggx(ndotv, roughness);
+  return ggx1 * ggx2;
 }
 
-float calculate_shadow(vec4 light_space_pos)
-{
-    vec3 proj_coords = light_space_pos.xyz / light_space_pos.w;
+float calculate_shadow(vec4 light_space_pos) {
+  vec3 proj_coords = light_space_pos.xyz / light_space_pos.w;
+  if (proj_coords.x < 0.0 || proj_coords.x > 1.0 || proj_coords.y < 0.0 ||
+      proj_coords.y > 1.0 || proj_coords.z < 0.0 || proj_coords.z > 1.0)
+    return 1.0;
 
-    if (proj_coords.x < 0.0 || proj_coords.x > 1.0 ||
-        proj_coords.y < 0.0 || proj_coords.y > 1.0 ||
-        proj_coords.z < 0.0 || proj_coords.z > 1.0)
-        return 1.0;
-
-    float shadow = 0.0;
-
-    for (int x = -PCF_SAMPLES; x <= PCF_SAMPLES; ++x)
-    {
-        for (int y = -PCF_SAMPLES; y <= PCF_SAMPLES; ++y)
-        {
-            vec2 offset = vec2(x, y) * INVERSE_SHADOW_MAP_SIZE;
-            shadow += texture(shadow_image, vec3(proj_coords.xy + offset, proj_coords.z));
-        }
+  float shadow = 0.0;
+  for (int x = -PCF_SAMPLES; x <= PCF_SAMPLES; ++x) {
+    for (int y = -PCF_SAMPLES; y <= PCF_SAMPLES; ++y) {
+      vec2 offset = vec2(x, y) * INVERSE_SHADOW_MAP_SIZE;
+      shadow +=
+          texture(shadow_image, vec3(proj_coords.xy + offset, proj_coords.z));
     }
-
-    return shadow / float(PCF_TOTAL);
+  }
+  return shadow / float(PCF_TOTAL);
 }
 
-vec3 calculateNormalFromMap(vec2 uv, vec3 normal, vec3 worldPos)
-{
-    vec3 tangentNormal = texture(normal_map, uv).xyz * 2.0 - 1.0;
+vec3 calculate_normal_from_map(vec2 uv, vec3 normal, vec3 world_pos) {
+  vec3 tangent_normal = texture(normal_map, uv).xyz * 2.0 - 1.0;
 
-    vec3 Q1 = dFdx(worldPos);
-    vec3 Q2 = dFdy(worldPos);
-    vec2 st1 = dFdx(uv);
-    vec2 st2 = dFdy(uv);
+  vec3 q1 = dFdx(world_pos);
+  vec3 q2 = dFdy(world_pos);
+  vec2 st1 = dFdx(uv);
+  vec2 st2 = dFdy(uv);
 
-    vec3 N = normalize(normal);
-    vec3 T = normalize(Q1 * st2.y - Q2 * st1.y);
-    vec3 B = -normalize(cross(N, T));
-    mat3 TBN = mat3(T, B, N);
+  vec3 n = normalize(normal);
+  vec3 t = normalize(q1 * st2.y - q2 * st1.y);
+  vec3 b = -normalize(cross(n, t));
+  mat3 tbn = mat3(t, b, n);
 
-    return normalize(TBN * tangentNormal);
+  return normalize(tbn * tangent_normal);
 }
 
-void main()
-{
-    vec4 albedo_tex = texture(albedo_map, v_uv);
-    vec3 albedo = has_albedo_texture() ? material.albedo.rgb * albedo_tex.rgb : material.albedo.rgb;
+void main() {
+  vec4 albedo_tex = texture(albedo_map, v_uv);
+  vec3 albedo = has_albedo_texture() ? material.albedo.rgb * albedo_tex.rgb
+                                     : material.albedo.rgb;
 
-    vec4 roughness_sample = texture(roughness_map, v_uv);
-    vec4 metallic_sample = texture(metallic_map, v_uv);
+  float roughness = has_roughness_map()
+                        ? material.roughness * texture(roughness_map, v_uv).g
+                        : material.roughness;
 
-    float roughness = has_roughness_map()
-                          ? material.roughness * roughness_sample.g
-                          : material.roughness;
+  float metallic = has_metallic_map()
+                       ? material.metallic * texture(metallic_map, v_uv).b
+                       : material.metallic;
 
-    float metallic = has_metallic_map()
-                         ? material.metallic * metallic_sample.b
-                         : material.metallic;
+  float ao = has_ao_map() ? material.ao * texture(ao_map, v_uv).r : material.ao;
 
-    float ao = has_ao_map()
-                   ? material.ao * texture(ao_map, v_uv).r
-                   : material.ao;
+  vec3 n = normalize(v_normal);
+  if (has_normal_map())
+    n = calculate_normal_from_map(v_uv, n, v_world_pos);
 
-    vec3 N = normalize(v_normal);
-    if (has_normal_map())
-    {
-        N = calculateNormalFromMap(v_uv, N, v_world_pos);
-    }
+  vec3 v = normalize(vec3(camera_ubo.camera_position) - v_world_pos);
+  vec3 l = normalize(vec3(shadow_ubo.light_position) - v_world_pos);
+  vec3 h = normalize(v + l);
 
-    vec3 V = normalize(vec3(camera_ubo.camera_position) - v_world_pos);
-    vec3 F0 = mix(vec3(0.04), albedo, metallic);
+  float distance = length(vec3(shadow_ubo.light_position) - v_world_pos);
+  float attenuation = 1.0 / (distance + 1.0);
+  vec3 light_color = vec3(shadow_ubo.light_color);
+  vec3 radiance = light_color * attenuation;
 
-    vec3 Lo = vec3(0.0);
-    vec3 L = normalize(vec3(shadow_ubo.light_position) - v_world_pos);
-    vec3 H = normalize(V + L);
-    float distance = length(vec3(shadow_ubo.light_position) - v_world_pos);
-    float attenuation = 1.0 / (distance * distance);
-    vec3 radiance = vec3(shadow_ubo.light_color) * attenuation;
+  vec3 f0 = mix(vec3(0.04), albedo, metallic);
+  vec3 f = fresnel_schlick(max(dot(h, v), 0.0), f0);
+  float ndf = distribution_ggx(n, h, roughness);
+  float g = geometry_smith(n, v, l, roughness);
 
-    float NDF = DistributionGGX(N, H, roughness);
-    float G = GeometrySmith(N, V, L, roughness);
-    vec3 F = fresnelSchlick(max(dot(H, V), 0.0), F0);
+  float ndotl = max(dot(n, l), 0.0);
+  float ndotv = max(dot(n, v), 0.0);
+  float denominator = 4.0 * ndotv * ndotl + 0.001;
 
-    vec3 kS = F;
-    vec3 kD = (1.0 - kS) * (1.0 - metallic);
-    float NdotL = max(dot(N, L), 0.0);
+  vec3 specular = (ndf * g * f) / denominator;
+  vec3 kd = (1.0 - f) * (1.0 - metallic);
 
-    vec3 numerator = NDF * G * F;
-    float denominator = 4.0 * max(dot(N, V), 0.0) * NdotL + 0.001;
-    vec3 specular = numerator / denominator;
+  vec3 diffuse = kd * albedo / PI;
+  vec3 lighting = (diffuse + specular) * radiance * ndotl;
 
-    Lo += (kD * albedo / PI + specular) * radiance * NdotL;
+  float shadow = calculate_shadow(v_light_space_pos);
+  vec3 ambient = AMBIENT_LIGHT * albedo * ao;
 
-    float shadow_factor = calculate_shadow(v_light_space_pos);
-    vec3 ambient = AMBIENT_LIGHT * albedo * ao * vec3(shadow_ubo.light_color);
-    vec3 color = ambient + shadow_factor * Lo;
+  vec3 color = ambient + shadow * lighting;
 
-    if (is_emissive())
-    {
-        vec3 emissive_tex = has_emissive_map()
-                                ? texture(emissive_map, v_uv).rgb
-                                : vec3(1.0);
-        color += material.emissive_color * material.emissive_strength * emissive_tex;
-    }
+  if (is_emissive()) {
+    vec3 emissive_tex =
+        has_emissive_map() ? texture(emissive_map, v_uv).rgb : vec3(1.0);
+    color +=
+        material.emissive_color * material.emissive_strength * emissive_tex;
+  }
 
-    float alpha = material.albedo.a;
-    if (has_albedo_texture())
-    {
-        alpha *= albedo_tex.a;
-    }
+  float alpha = material.albedo.a;
+  if (has_albedo_texture())
+    alpha *= albedo_tex.a;
 
-    if (is_alpha_testing() && alpha < material.alpha_cutoff)
-    {
-        discard;
-    }
+  if (is_alpha_testing() && alpha < material.alpha_cutoff)
+    discard;
 
-    frag_colour = vec4(color, alpha);
+  frag_colour = vec4(color, alpha);
 }

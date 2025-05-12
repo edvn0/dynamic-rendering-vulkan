@@ -366,7 +366,7 @@ Image::load_from_file(const Device& device,
 
   const auto img_config = ImageConfiguration{
     .extent = { static_cast<uint32_t>(width), static_cast<uint32_t>(height) },
-    .format = VK_FORMAT_R8G8B8A8_UNORM,
+    .format = VK_FORMAT_R8G8B8A8_SRGB,
     .mip_levels = mip_levels,
     .array_layers = 1,
     .usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT |
@@ -446,12 +446,13 @@ Image::load_cubemap(const Device& device, const std::string& path)
   for (uint32_t level = 0; level < mip_levels; ++level) {
     for (uint32_t face = 0; face < 6; ++face) {
       ktx_size_t offset;
-      auto ret =
+      auto r =
         ktxTexture_GetImageOffset(ktxTexture(texture), level, 0, face, &offset);
-      assert(ret == KTX_SUCCESS);
-      std::size_t face_size =
-        ktxTexture_GetImageSize(ktxTexture(texture), level);
-      total_size = std::max(total_size, offset + face_size);
+      if (r == KTX_SUCCESS) {
+        std::size_t face_size =
+          ktxTexture_GetImageSize(ktxTexture(texture), level);
+        total_size = std::max(total_size, offset + face_size);
+      }
     }
   }
 
@@ -465,24 +466,25 @@ Image::load_cubemap(const Device& device, const std::string& path)
       ktx_size_t offset;
       auto ret =
         ktxTexture_GetImageOffset(ktxTexture(texture), level, 0, face, &offset);
-      assert(ret == KTX_SUCCESS);
-      regions.push_back({
-        .bufferOffset = offset,
-        .bufferRowLength = 0,
-        .bufferImageHeight = 0,
-        .imageSubresource = {
-          .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-          .mipLevel = level,
-          .baseArrayLayer = face,
-          .layerCount = 1,
-        },
-        .imageOffset = { 0, 0, 0 },
-        .imageExtent = {
-          std::max(1u, width >> level),
-          std::max(1u, height >> level),
-          1,
-        },
-      });
+      if (ret == KTX_SUCCESS) {
+        regions.push_back({
+          .bufferOffset = offset,
+          .bufferRowLength = 0,
+          .bufferImageHeight = 0,
+          .imageSubresource = {
+            .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+            .mipLevel = level,
+            .baseArrayLayer = face,
+            .layerCount = 1,
+          },
+          .imageOffset = { 0, 0, 0 },
+          .imageExtent = {
+            std::max(1u, width >> level),
+            std::max(1u, height >> level),
+            1,
+          },
+        });
+      }
     }
   }
 

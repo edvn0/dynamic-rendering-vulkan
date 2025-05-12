@@ -51,7 +51,7 @@ struct ShadowBuffer
 };
 ASSERT_VULKAN_UBO_COMPATIBLE(ShadowBuffer);
 
-template<typename T, std::size_t N = image_count>
+template<typename T, std::size_t N = frames_in_flight>
 static constexpr auto
 create_sized_array(const T& value) -> std::array<T, N>
 {
@@ -90,6 +90,35 @@ static constexpr std::array renderer_bindings_metadata{
     .name = "shadow_depth",
   },
 };
+
+auto
+to_renderpass(const std::string_view name) -> RenderPass
+{
+  if (name == "main_geometry") {
+    return RenderPass::MainGeometry;
+  }
+  if (name == "shadow") {
+    return RenderPass::Shadow;
+  }
+  if (name == "line") {
+    return RenderPass::Line;
+  }
+  if (name == "z_prepass") {
+    return RenderPass::ZPrepass;
+  }
+  if (name == "colour_correction") {
+    return RenderPass::ColourCorrection;
+  }
+  if (name == "compute_culling") {
+    return RenderPass::ComputeCulling;
+  }
+  if (name == "skybox") {
+    return RenderPass::Skybox;
+  }
+
+  assert(false && "Unknown render pass name");
+  return RenderPass::MainGeometry;
+}
 
 Renderer::Renderer(const Device& dev,
                    const BlueprintRegistry& registry,
@@ -158,20 +187,51 @@ Renderer::Renderer(const Device& dev,
 
   {
     // Environment map
-    environment_cubemap_image = Image::load_cubemap(*device, "new.ktx2");
-    if (!environment_cubemap_image) {
+    skybox_image = Image::load_cubemap(*device, "sf.ktx2");
+    if (!skybox_image) {
       assert(false && "Failed to load environment map.");
     }
 
-    auto result =
-      Material::create(*device, blueprint_registry->get("environment_map"));
+    auto result = Material::create(*device, blueprint_registry->get("skybox"));
     if (!result.has_value()) {
       assert(false && "Failed to create environment map material.");
     }
 
-    environment_cubemap_material = std::move(result.value());
-    environment_cubemap_material->upload("environment_map_sampler",
-                                         environment_cubemap_image.get());
+    skybox_material = std::move(result.value());
+    skybox_material->upload("skybox_sampler", skybox_image.get());
+
+    skybox_attachment_texture =
+      Image::create(*device,
+                    ImageConfiguration{
+                      .extent = win.framebuffer_size(),
+                      .format = VK_FORMAT_R32G32B32A32_SFLOAT,
+                      .usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
+                               VK_IMAGE_USAGE_SAMPLED_BIT,
+                      .debug_name = "skybox_attachment_texture",
+                    });
+  }
+
+  {
+    composite_attachment_texture = Image::create(
+      *device,
+      ImageConfiguration{ .extent = win.framebuffer_size(),
+                          .format = VK_FORMAT_R32G32B32A32_SFLOAT,
+                          .usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
+                                   VK_IMAGE_USAGE_SAMPLED_BIT,
+                          .debug_name = "composite_attachment_texture" });
+
+    auto result =
+      Material::create(*device, blueprint_registry->get("composite"));
+    if (result.has_value()) {
+      composite_attachment_material = std::move(result.value());
+    } else {
+      assert(false && "Failed to create composite material.");
+    }
+
+    composite_attachment_material->upload("skybox_input",
+                                          skybox_attachment_texture.get());
+    composite_attachment_material->upload("geometry_input",
+                                          geometry_image.get());
   }
 
   {
@@ -192,7 +252,8 @@ Renderer::Renderer(const Device& dev,
       assert(false && "Failed to create main geometry material.");
     }
 
-    colour_corrected_material->upload("input_image", geometry_image.get());
+    colour_corrected_material->upload("input_image",
+                                      composite_attachment_texture.get());
   }
 
   {
@@ -314,19 +375,19 @@ Renderer::Renderer(const Device& dev,
 
   camera_uniform_buffer =
     GPUBuffer::zero_initialise(*device,
-                               sizeof(CameraBuffer) * image_count,
+                               sizeof(CameraBuffer) * frames_in_flight,
                                VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
                                true,
                                "camera_ubo");
   shadow_camera_buffer =
     GPUBuffer::zero_initialise(*device,
-                               sizeof(ShadowBuffer) * image_count,
+                               sizeof(ShadowBuffer) * frames_in_flight,
                                VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
                                true,
                                "shadow_camera_ubo");
   frustum_buffer =
     GPUBuffer::zero_initialise(*device,
-                               sizeof(FrustumBuffer) * image_count,
+                               sizeof(FrustumBuffer) * frames_in_flight,
                                VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
                                true,
                                "frustum_ubo");
@@ -652,18 +713,18 @@ Renderer::end_frame(std::uint32_t frame_index) -> void
 
   uploads_remaining.wait();
 
+  command_buffer->begin_frame(frame_index);
   if (total_instance_count >= culling_threshold) {
     run_culling_compute_pass(frame_index);
   }
 
-  command_buffer->begin_frame(frame_index);
-
-  run_environment_cubemap_pass(frame_index);
+  run_skybox_pass(frame_index);
   run_shadow_pass(frame_index, flat_shadow_draw_commands);
   run_z_prepass(frame_index, flat_draw_commands);
   run_geometry_pass(frame_index, flat_draw_commands);
   run_line_pass(frame_index);
 
+  run_composite_pass(frame_index);
   run_postprocess_passes(frame_index);
 
   const auto semaphore = total_instance_count >= culling_threshold
@@ -680,9 +741,14 @@ Renderer::resize(std::uint32_t width, std::uint32_t height) -> void
   geometry_image->resize(width, height);
   geometry_msaa_image->resize(width, height);
   geometry_depth_image->resize(width, height);
+  skybox_attachment_texture->resize(width, height);
+  composite_attachment_texture->resize(width, height);
   colour_corrected_image->resize(width, height);
 
-  colour_corrected_material->invalidate(geometry_image.get());
+  skybox_material->invalidate(skybox_attachment_texture.get());
+  composite_attachment_material->invalidate(skybox_attachment_texture.get());
+  composite_attachment_material->invalidate(geometry_image.get());
+  colour_corrected_material->invalidate(composite_attachment_texture.get());
 }
 
 auto
@@ -694,88 +760,86 @@ Renderer::get_output_image() const -> const Image&
 #pragma region RenderPasses
 
 auto
-Renderer::run_environment_cubemap_pass(std::uint32_t frame_index) -> void
+Renderer::run_skybox_pass(std::uint32_t frame_index) -> void
 {
-  ZoneScopedN("Environment Cubemap");
+  ZoneScopedN("Skybox pass");
 
-  command_buffer->begin_timer(frame_index, "environment_cubemap_pass");
+  command_buffer->begin_timer(frame_index, "skybox_pass");
 
   const VkCommandBuffer cmd = command_buffer->get(frame_index);
-  CoreUtils::cmd_transition_to_color_attachment(cmd,
-                                                geometry_image->get_image());
+
+  CoreUtils::cmd_transition_image(
+    cmd,
+    {
+      .image = skybox_attachment_texture->get_image(),
+      .old_layout = VK_IMAGE_LAYOUT_UNDEFINED,
+      .new_layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+      .src_access_mask = 0,
+      .dst_access_mask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+      .src_stage_mask = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+      .dst_stage_mask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+    });
 
   const VkClearValue clear_value = { .color = { { 0.f, 0.f, 0.f, 0.f } } };
-  const VkRenderingAttachmentInfo color_attachment = {
+  VkRenderingAttachmentInfo color_attachment = {
     .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
-    .pNext = nullptr,
-    .imageView = geometry_image->get_view(),
+    .imageView = skybox_attachment_texture->get_view(),
     .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
     .resolveMode = VK_RESOLVE_MODE_NONE,
-    .resolveImageView = VK_NULL_HANDLE,
-    .resolveImageLayout = VK_IMAGE_LAYOUT_UNDEFINED,
     .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
     .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
-    .clearValue = clear_value
+    .clearValue = clear_value,
   };
 
   const VkRenderingInfo rendering_info = {
     .sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
-    .pNext = nullptr,
-    .flags = 0,
-    .renderArea = { .offset = { 0, 0 },
-                    .extent = { geometry_image->width(),
-                                geometry_image->height() }, },
-    .layerCount = 6,
-    .viewMask = 0,
+    .renderArea = { { 0, 0 },
+                    { skybox_attachment_texture->width(),
+                      skybox_attachment_texture->height() } },
+    .layerCount = 1,
     .colorAttachmentCount = 1,
     .pColorAttachments = &color_attachment,
-    .pDepthAttachment = nullptr,
-    .pStencilAttachment = nullptr,
   };
 
   vkCmdBeginRendering(cmd, &rendering_info);
 
   const VkViewport viewport = {
     .x = 0.f,
-    .y = static_cast<float>(geometry_image->height()),
-    .width = static_cast<float>(geometry_image->width()),
-    .height = -static_cast<float>(geometry_image->height()),
-    .minDepth = 1.f,
-    .maxDepth = 0.f,
+    .y = static_cast<float>(skybox_attachment_texture->height()),
+    .width = static_cast<float>(skybox_attachment_texture->width()),
+    .height = -static_cast<float>(skybox_attachment_texture->height()),
+    .minDepth = 0.f,
+    .maxDepth = 1.f,
   };
-
   vkCmdSetViewport(cmd, 0, 1, &viewport);
   vkCmdSetScissor(cmd, 0, 1, &rendering_info.renderArea);
-  auto& environment_cubemap_pipeline =
-    environment_cubemap_material->get_pipeline();
-  vkCmdBindPipeline(cmd,
-                    VK_PIPELINE_BIND_POINT_GRAPHICS,
-                    environment_cubemap_pipeline.pipeline);
+
+  auto& pipeline = skybox_material->get_pipeline();
+  vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.pipeline);
 
   const std::array descriptor_sets = {
     descriptor_set_manager->get_set(frame_index),
-    environment_cubemap_material->prepare_for_rendering(frame_index),
+    skybox_material->prepare_for_rendering(frame_index),
   };
   vkCmdBindDescriptorSets(cmd,
                           VK_PIPELINE_BIND_POINT_GRAPHICS,
-                          environment_cubemap_pipeline.layout,
+                          pipeline.layout,
                           0,
                           static_cast<std::uint32_t>(descriptor_sets.size()),
                           descriptor_sets.data(),
                           0,
                           nullptr);
 
-  auto cube_mesh_expected = MeshCache::the().get_mesh<MeshType::Cube>();
-  if (cube_mesh_expected.has_value()) {
-    auto cube_mesh = cube_mesh_expected.value();
-    const auto& vertex_buffer = cube_mesh->get_vertex_buffer();
-    const auto& index_buffer = cube_mesh->get_index_buffer();
+  auto mesh_expected = MeshCache::the().get_mesh<MeshType::CubeOnlyPosition>();
+  if (mesh_expected.has_value()) {
+    auto& mesh = mesh_expected.value();
+    const auto& vertex_buffer = mesh->get_vertex_buffer();
+    const auto& index_buffer = mesh->get_index_buffer();
 
     const std::array vertex_buffers = {
       vertex_buffer->get(),
-      instance_vertex_buffer->get(),
     };
-    constexpr std::array<VkDeviceSize, 2> offsets = { 0ULL, 0ULL };
+    constexpr std::array<VkDeviceSize, 1> offsets = { 0 };
     vkCmdBindVertexBuffers(cmd,
                            0,
                            static_cast<std::uint32_t>(vertex_buffers.size()),
@@ -789,7 +853,11 @@ Renderer::run_environment_cubemap_pass(std::uint32_t frame_index) -> void
   }
 
   vkCmdEndRendering(cmd);
-  command_buffer->end_timer(frame_index, "environment_cubemap_pass");
+
+  CoreUtils::cmd_transition_to_shader_read(
+    cmd, skybox_attachment_texture->get_image());
+
+  command_buffer->end_timer(frame_index, "skybox_pass");
 }
 
 auto
@@ -899,10 +967,17 @@ Renderer::run_geometry_pass(std::uint32_t frame_index,
   command_buffer->begin_timer(frame_index, "geometry_pass");
 
   const VkCommandBuffer cmd = command_buffer->get(frame_index);
-  CoreUtils::cmd_transition_to_color_attachment(cmd,
-                                                geometry_image->get_image());
-  CoreUtils::cmd_transition_to_color_attachment(
-    cmd, geometry_msaa_image->get_image());
+  CoreUtils::cmd_transition_image(
+    cmd,
+    {
+      .image = geometry_image->get_image(),
+      .old_layout = VK_IMAGE_LAYOUT_UNDEFINED,
+      .new_layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+      .src_access_mask = VK_ACCESS_SHADER_READ_BIT,
+      .dst_access_mask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+      .src_stage_mask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+      .dst_stage_mask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+    });
 
   constexpr VkClearValue clear_value = { .color = { { 0.f, 0.f, 0.f, 0.f } } };
   const VkRenderingAttachmentInfo color_attachment = {
@@ -1322,7 +1397,7 @@ Renderer::run_colour_correction_pass(std::uint32_t frame_index) -> void
   vkCmdSetViewport(cmd, 0, 1, &viewport);
   vkCmdSetScissor(cmd, 0, 1, &rendering_info.renderArea);
 
-  auto* material = get_material_by_name("colour_correction");
+  auto* material = colour_corrected_material.get();
   const auto& pipeline = material->get_pipeline();
   vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.pipeline);
 
@@ -1347,6 +1422,79 @@ Renderer::run_colour_correction_pass(std::uint32_t frame_index) -> void
   CoreUtils::cmd_transition_to_shader_read(cmd,
                                            colour_corrected_image->get_image());
   command_buffer->end_timer(frame_index, "colour_correction_pass");
+}
+
+auto
+Renderer::run_composite_pass(std::uint32_t frame_index) -> void
+{
+  ZoneScopedN("Composite pass");
+
+  command_buffer->begin_timer(frame_index, "composite_pass");
+
+  const VkCommandBuffer cmd = command_buffer->get(frame_index);
+
+  CoreUtils::cmd_transition_to_color_attachment(
+    cmd, composite_attachment_texture->get_image());
+
+  const VkClearValue clear_value = { .color = { { 0.F, 0.F, 0.F, 0.F } } };
+  VkRenderingAttachmentInfo color_attachment = {
+    .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+    .imageView = composite_attachment_texture->get_view(),
+    .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+    .resolveMode = VK_RESOLVE_MODE_NONE,
+    .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+    .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+    .clearValue = clear_value,
+  };
+
+  const VkRenderingInfo rendering_info = {
+    .sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
+    .renderArea = { { 0, 0 },
+                    { composite_attachment_texture->width(),
+                      composite_attachment_texture->height() } },
+    .layerCount = 1,
+    .colorAttachmentCount = 1,
+    .pColorAttachments = &color_attachment,
+  };
+
+  vkCmdBeginRendering(cmd, &rendering_info);
+
+  const VkViewport viewport = {
+    .x = 0.f,
+    .y = static_cast<float>(composite_attachment_texture->height()),
+    .width = static_cast<float>(composite_attachment_texture->width()),
+    .height = -static_cast<float>(composite_attachment_texture->height()),
+    .minDepth = 0.f,
+    .maxDepth = 1.f,
+  };
+  vkCmdSetViewport(cmd, 0, 1, &viewport);
+  vkCmdSetScissor(cmd, 0, 1, &rendering_info.renderArea);
+
+  auto* material = composite_attachment_material.get();
+  const auto& pipeline = material->get_pipeline();
+  vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.pipeline);
+
+  const auto descriptor_set = material->prepare_for_rendering(frame_index);
+  const std::array descriptor_sets{
+    descriptor_set_manager->get_set(frame_index),
+    descriptor_set,
+  };
+  vkCmdBindDescriptorSets(cmd,
+                          VK_PIPELINE_BIND_POINT_GRAPHICS,
+                          pipeline.layout,
+                          0,
+                          static_cast<std::uint32_t>(descriptor_sets.size()),
+                          descriptor_sets.data(),
+                          0,
+                          nullptr);
+
+  vkCmdDraw(cmd, 3, 1, 0, 0);
+  vkCmdEndRendering(cmd);
+
+  CoreUtils::cmd_transition_to_shader_read(
+    cmd, composite_attachment_texture->get_image());
+
+  command_buffer->end_timer(frame_index, "composite_pass");
 }
 
 #pragma endregion RenderPasses
