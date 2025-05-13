@@ -30,6 +30,7 @@ public:
   auto set_resize_flag(bool flag) -> void;
   auto should_close() const -> bool;
   auto is_iconified() const -> bool;
+  auto is_minimized() const -> bool;
   auto wait_for_events() const -> void;
 
   auto destroy_surface(Badge<DynamicRendering::App>, const Core::Instance&)

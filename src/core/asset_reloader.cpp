@@ -67,7 +67,9 @@ AssetReloader::reload_blueprint_and_material(
   const auto abs_path = blueprint_path.lexically_normal();
 
   if (auto result = blueprint_registry.update(abs_path); !result.has_value()) {
-    std::cerr << "Failed to reload blueprint: " << blueprint_path << std::endl;
+    Logger::log_error("Failed to reload blueprint: {}. Error: {}",
+                      abs_path.string(),
+                      result.error().message);
     return;
   }
 
@@ -75,7 +77,7 @@ AssetReloader::reload_blueprint_and_material(
 
   auto it = filename_to_material.find(abs_str);
   if (it == filename_to_material.end()) {
-    std::cerr << "No tracked material for: " << abs_str << std::endl;
+    Logger::log_error("Failed to find material for blueprint: {}", abs_str);
     return;
   }
 
@@ -83,12 +85,14 @@ AssetReloader::reload_blueprint_and_material(
   auto* mat = renderer.get_material_by_name(blueprint.name);
 
   if (!mat) {
-    std::cerr << "Failed to find material for: " << blueprint.name << std::endl;
+    Logger::log_error(
+      "Failed to find material for blueprint: {}. Material not found.",
+      blueprint.name);
     return;
   }
 
   mat->reload(blueprint);
-  std::cout << "Reloaded material: " << blueprint.name << std::endl;
+  Logger::log_info("Reloaded material: {}", blueprint.name);
 }
 
 auto
@@ -99,7 +103,7 @@ AssetReloader::reload_blueprints_for_shader(
 
   const auto it = shader_to_pipeline.find(shader_key);
   if (it == shader_to_pipeline.end()) {
-    std::cerr << "No pipelines mapped to shader: " << shader_key << std::endl;
+    Logger::log_error("Failed to find pipeline for shader: {}", shader_key);
     return;
   }
 

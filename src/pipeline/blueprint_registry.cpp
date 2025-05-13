@@ -42,7 +42,8 @@ BlueprintRegistry::load_from_directory(const std::filesystem::path& path)
 
     PipelineBlueprint blueprint;
     if (!load_one(entry.path(), blueprint)) {
-      std::cerr << "Failed to load blueprint: " << entry.path() << std::endl;
+      Logger::log_error("Failed to load blueprint from file: {}",
+                        entry.path().string());
       continue;
     }
 

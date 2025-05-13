@@ -20,6 +20,7 @@
 
 #include "core/vulkan_util.hpp"
 #include "renderer/mesh.hpp"
+#include "window/window.hpp"
 
 #include <glm/gtx/quaternion.hpp>
 
@@ -605,10 +606,10 @@ Renderer::update_uniform_buffers(const std::uint32_t frame_index,
 }
 
 auto
-Renderer::begin_frame(std::uint32_t frame_index, const VP& matrices) -> void
+Renderer::begin_frame(const std::uint32_t frame_index, const VP& matrices)
+  -> void
 {
   const auto vp = matrices.projection * matrices.view;
-  const auto inverse_vp = matrices.inverse_projection * matrices.view;
   const auto position = matrices.view[3];
   update_uniform_buffers(frame_index,
                          matrices.view,

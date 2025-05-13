@@ -15,6 +15,7 @@
 #include <assimp/Importer.hpp>
 #include <assimp/postprocess.h>
 #include <assimp/scene.h>
+#include <glm/gtc/type_ptr.hpp>
 
 namespace {
 
@@ -91,46 +92,34 @@ Mesh::load_from_file(const Device& device,
 
   const auto directory = resolved_path.parent_path().string();
 
-  auto material_span = std::span(scene->mMaterials, scene->mNumMaterials);
-
-  for (unsigned int i = 0; i < material_span.size(); ++i) {
-    aiMaterial* ai_mat = material_span[i];
-    string_hash_map<std::tuple<std::uint32_t, std::uint32_t>> binding_info;
-
+  for (auto* ai_mat : std::span(scene->mMaterials, scene->mNumMaterials)) {
     auto maybe_mat = Material::create(device, registry.get("main_geometry"));
-
     if (!maybe_mat.has_value())
       continue;
 
     auto mat = std::move(maybe_mat.value());
-
     texture_context ctx{ ai_mat, directory, device, loaded_textures, *mat };
 
     try_upload_texture(ctx,
                        aiTextureType_DIFFUSE,
                        "albedo_map",
                        [](Material& m) { m.use_albedo_map(); });
-
     try_upload_texture(ctx,
                        aiTextureType_NORMALS,
                        "normal_map",
                        [](Material& m) { m.use_normal_map(); });
-
     try_upload_texture(ctx,
                        aiTextureType_METALNESS,
                        "metallic_map",
                        [](Material& m) { m.use_metallic_map(); });
-
     try_upload_texture(ctx,
                        aiTextureType_DIFFUSE_ROUGHNESS,
                        "roughness_map",
                        [](Material& m) { m.use_roughness_map(); });
-
     try_upload_texture(ctx,
                        aiTextureType_AMBIENT_OCCLUSION,
                        "ao_map",
                        [](Material& m) { m.use_ao_map(); });
-
     try_upload_texture(ctx,
                        aiTextureType_EMISSIVE,
                        "emissive_map",
@@ -139,42 +128,66 @@ Mesh::load_from_file(const Device& device,
     materials.push_back(std::move(mat));
   }
 
-  std::uint32_t vertex_offset = 0;
-  std::uint32_t index_offset = 0;
+  std::function<void(aiNode*, int)> process_node;
+  process_node = [&](aiNode* node, int parent_index) {
+    const auto t = node->mTransformation;
+    const auto node_transform = glm::transpose(glm::make_mat4(&t.a1));
 
-  for (unsigned int i = 0; i < scene->mNumMeshes; ++i) {
-    aiMesh* mesh = scene->mMeshes[i];
-    for (unsigned int v = 0; v < mesh->mNumVertices; ++v) {
-      Vertex vertex;
-      vertex.position = { mesh->mVertices[v].x,
-                          mesh->mVertices[v].y,
-                          mesh->mVertices[v].z };
-      vertex.normal = mesh->HasNormals() ? glm::vec3{ mesh->mNormals[v].x,
-                                                      mesh->mNormals[v].y,
-                                                      mesh->mNormals[v].z }
-                                         : glm::vec3{ 0.0f };
-      vertex.texcoord = mesh->HasTextureCoords(0)
-                          ? glm::vec2{ mesh->mTextureCoords[0][v].x,
-                                       mesh->mTextureCoords[0][v].y }
-                          : glm::vec2{ 0.0f };
-      vertices.push_back(vertex);
+    std::vector<std::int32_t> current_node_submesh_indices;
+
+    for (const auto mesh_index : std::span(node->mMeshes, node->mNumMeshes)) {
+      const aiMesh* mesh = scene->mMeshes[mesh_index];
+      const auto vertex_offset = static_cast<std::uint32_t>(vertices.size());
+
+      auto positions = std::span(mesh->mVertices, mesh->mNumVertices);
+      auto normals = mesh->HasNormals()
+                       ? std::span(mesh->mNormals, mesh->mNumVertices)
+                       : std::span<aiVector3D>{};
+      auto texcoords =
+        mesh->HasTextureCoords(0)
+          ? std::span(mesh->mTextureCoords[0], mesh->mNumVertices)
+          : std::span<aiVector3D>{};
+
+      for (std::size_t v = 0; v < positions.size(); ++v) {
+        Vertex vertex{};
+        vertex.position = { positions[v].x, positions[v].y, positions[v].z };
+        vertex.normal =
+          normals.empty()
+            ? glm::vec3{ 0.0f }
+            : glm::vec3{ normals[v].x, normals[v].y, normals[v].z };
+        vertex.texcoord = texcoords.empty()
+                            ? glm::vec2{ 0.0f }
+                            : glm::vec2{ texcoords[v].x, texcoords[v].y };
+        vertices.push_back(vertex);
+      }
+
+      const auto index_offset = static_cast<std::uint32_t>(indices.size());
+      for (const auto& f : std::span(mesh->mFaces, mesh->mNumFaces)) {
+        for (const auto& j : std::span(f.mIndices, f.mNumIndices))
+          indices.push_back(j + vertex_offset);
+      }
+
+      const auto submesh_index = static_cast<std::int32_t>(submeshes.size());
+      submeshes.push_back({ .index_offset = index_offset,
+                            .index_count = mesh->mNumFaces * 3,
+                            .material_index = mesh->mMaterialIndex,
+                            .child_transform = node_transform,
+                            .parent_index = parent_index });
+
+      if (parent_index >= 0)
+        submeshes[parent_index].children.insert(submesh_index);
+
+      current_node_submesh_indices.push_back(submesh_index);
     }
 
-    for (unsigned int f = 0; f < mesh->mNumFaces; ++f) {
-      const aiFace& face = mesh->mFaces[f];
-      for (unsigned int j = 0; j < face.mNumIndices; ++j)
-        indices.push_back(face.mIndices[j] + vertex_offset);
-    }
+    const int next_parent = current_node_submesh_indices.empty()
+                              ? parent_index
+                              : current_node_submesh_indices.front();
+    for (const auto& child : std::span(node->mChildren, node->mNumChildren))
+      process_node(child, next_parent);
+  };
 
-    submeshes.push_back({
-      .index_offset = index_offset,
-      .index_count = mesh->mNumFaces * 3,
-      .material_index = mesh->mMaterialIndex,
-    });
-
-    vertex_offset += mesh->mNumVertices;
-    index_offset += mesh->mNumFaces * 3;
-  }
+  process_node(scene->mRootNode, -1);
 
   const auto name = resolved_path.filename().string();
   vertex_buffer =

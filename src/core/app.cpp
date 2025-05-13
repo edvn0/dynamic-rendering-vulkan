@@ -195,8 +195,8 @@ App::run() -> std::error_code
     }
 
     glfwPollEvents();
-    if (window->is_iconified()) {
-      std::this_thread::sleep_for(std::chrono::seconds(1));
+    if (window->is_iconified() || window->is_minimized()) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(100));
       continue;
     }
 
@@ -359,6 +359,7 @@ App::process_events(Event& event)
 void
 App::update(double dt)
 {
+  ZoneScopedN("Update");
   camera->on_update(dt);
   for (const auto& layer : layers)
     layer->on_update(dt);
@@ -367,6 +368,7 @@ App::update(double dt)
 void
 App::render()
 {
+  ZoneScopedN("Render");
   const auto frame_index = swapchain->get_frame_index();
 
   renderer->begin_frame(

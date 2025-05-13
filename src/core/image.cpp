@@ -357,7 +357,8 @@ Image::load_from_file(const Device& device,
     stbi_load(path.c_str(), &width, &height, &channels, STBI_rgb_alpha);
 
   if (!pixels) {
-    std::cerr << "Failed to load image: " << path << "\n";
+    Logger::log_error(
+      "Failed to load image: {}. Reason: {}", path, stbi_failure_reason());
     return nullptr;
   }
 
