@@ -61,15 +61,14 @@ save_window_config(const std::filesystem::path& path,
   int h{};
 
   if (!window) {
-    std::cerr << "Window handle is null, cannot save configuration."
-              << std::endl;
+    Logger::log_warning("Window handle is null, cannot save configuration.");
     return;
   }
 
   auto* glfw_window = static_cast<GLFWwindow*>(window);
   if (!glfw_window) {
-    std::cerr << "Invalid window handle, cannot save configuration."
-              << std::endl;
+    Logger::log_warning(
+      "GLFW window handle is null, cannot save configuration.");
     return;
   }
 

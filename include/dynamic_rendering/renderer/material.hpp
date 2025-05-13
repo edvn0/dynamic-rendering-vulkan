@@ -80,7 +80,11 @@ public:
                                                : VK_NULL_HANDLE;
   }
 
-  auto invalidate(const Image* image) -> void;
+  auto invalidate(const Image* image) -> void
+  {
+    invalidate(std::span<const Image*>{ &image, 1 });
+  }
+  auto invalidate(std::span<const Image*> images) -> void;
   auto reload(const PipelineBlueprint&) -> void;
   auto prepare_for_rendering(std::uint32_t frame_index)
     -> const VkDescriptorSet&;

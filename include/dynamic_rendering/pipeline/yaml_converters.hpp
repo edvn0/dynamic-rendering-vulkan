@@ -229,13 +229,13 @@ std::expected<ShaderStage, ConversionError> inline string_to_shader_stage(
 inline void
 log_error(const std::string& msg)
 {
-  std::cerr << "[Pipeline YAML Error] " << msg << std::endl;
+  Logger::log_error("[Pipeline YAML Error] {}", msg);
 }
 
 inline void
 log_warning(const std::string& msg)
 {
-  std::cerr << "[Pipeline YAML Warning] " << msg << std::endl;
+  Logger::log_warning("[Pipeline YAML Warning] {}", msg);
 }
 
 template<>

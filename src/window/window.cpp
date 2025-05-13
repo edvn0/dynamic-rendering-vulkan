@@ -198,6 +198,12 @@ Window::is_iconified() const -> bool
 }
 
 auto
+Window::is_minimized() const -> bool
+{
+  return glfwGetWindowAttrib(glfw_window, GLFW_VISIBLE) == 0;
+}
+
+auto
 Window::set_event_callback(std::function<void(Event&)> callback) -> void
 {
   user_data->event_callback = std::move(callback);

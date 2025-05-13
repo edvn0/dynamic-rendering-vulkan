@@ -110,12 +110,6 @@ GUISystem::init_for_vulkan(const Core::Instance& instance,
   info.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
   info.DescriptorPoolSize = 100;
   info.Allocator = nullptr;
-  info.CheckVkResultFn = +[](VkResult err) {
-    if (err == 0)
-      return;
-    std::cerr << "Vulkan Error: " << err << std::endl;
-    assert(false && "Vulkan error");
-  };
   info.UseDynamicRendering = true;
 
   const std::array formats = {

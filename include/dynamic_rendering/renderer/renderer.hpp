@@ -14,12 +14,9 @@
 #include "core/gpu_buffer.hpp"
 #include "core/image.hpp"
 #include "pipeline/blueprint_registry.hpp"
-#include "pipeline/compute_pipeline_factory.hpp"
-#include "pipeline/pipeline_factory.hpp"
 #include "renderer/draw_command.hpp"
 #include "renderer/frustum.hpp"
 #include "renderer/material.hpp"
-#include "window/window.hpp"
 
 #include <BS_thread_pool.hpp>
 
@@ -161,9 +158,6 @@ private:
   std::unique_ptr<Image> shadow_depth_image;
   std::unique_ptr<Material> shadow_material;
 
-  std::unique_ptr<GPUBuffer> gizmo_vertex_buffer;
-  std::unique_ptr<Material> gizmo_material;
-
   std::unique_ptr<Material> line_material;
 
   std::uint32_t instance_count_this_frame{ 0 };
@@ -203,5 +197,4 @@ private:
   }
 
   auto destroy() -> void;
-  auto finalize_renderer_descriptor_sets() -> void;
 };

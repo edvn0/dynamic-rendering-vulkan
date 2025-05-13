@@ -24,3 +24,7 @@ CMakeUserPresets.json
 *.spv
 
 .idea
+
+assets/environment/*.ktx2
+assets/environment/*.ktx
+

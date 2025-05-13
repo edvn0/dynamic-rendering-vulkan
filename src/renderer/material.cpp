@@ -101,13 +101,13 @@ reflect_shader_using_spirv_reflect(
 {
   std::vector<std::uint8_t> shader_code;
   if (!Shader::load_binary(file_path, shader_code)) {
-    std::cerr << "Failed to load shader: " << file_path << "\n";
+    Logger::log_error("Failed to load shader: {}", file_path);
     return;
   }
   const spv_reflect::ShaderModule shader_module(shader_code.size(),
                                                 shader_code.data());
   if (shader_module.GetResult() != SPV_REFLECT_RESULT_SUCCESS) {
-    std::cerr << "Failed to reflect shader: " << file_path << "\n";
+    Logger::log_error("Failed to reflect shader: {}", file_path);
     return;
   }
 
@@ -123,7 +123,7 @@ reflect_shader_using_spirv_reflect(
       vk_stage = VK_SHADER_STAGE_COMPUTE_BIT;
       break;
     default:
-      std::cerr << "Unknown SPIR-V stage: " << file_path << "\n";
+      Logger::log_error("Unsupported shader stage in shader: {}", file_path);
       return;
   }
 
@@ -308,11 +308,18 @@ Material::create(const Device& device, const PipelineBlueprint& blueprint)
 }
 
 auto
-Material::invalidate(const Image* image) -> void
+Material::invalidate(const std::span<const Image*> image_span) -> void
 {
-  for (const auto& [key, binding] : bindings) {
-    const auto* img_binding = dynamic_cast<ImageBinding*>(binding.get());
-    if (img_binding && img_binding->get_underlying_image() == image) {
+  for (auto* img : image_span) {
+    for (const auto& [key, binding] : bindings) {
+      const auto* img_binding = dynamic_cast<ImageBinding*>(binding.get());
+      if (!img_binding) {
+        continue;
+      }
+      if (img_binding->get_underlying_image() != img) {
+        continue;
+      }
+
       for (auto& dirty_set : per_frame_dirty_flags) {
         dirty_set.insert(key);
       }
@@ -331,12 +338,12 @@ Material::reload(const PipelineBlueprint& blueprint) -> void
 
   auto rebuilt_result = rebuild_pipeline(blueprint);
   if (!rebuilt_result) {
-    std::cerr << "Failed to rebuild pipeline: "
-              << rebuilt_result.error().message << "\n";
+    Logger::log_error("Failed to rebuild pipeline: {}",
+                      rebuilt_result.error().message);
     return;
   }
 
-  std::cout << "Rebuilt pipeline for material\n";
+  Logger::log_info("Rebuilt pipeline: {}", blueprint.name);
   pipeline = std::move(*rebuilt_result);
   pipeline_hash = new_hash;
 }

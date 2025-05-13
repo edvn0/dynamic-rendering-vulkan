@@ -43,7 +43,8 @@ AssetFileWatcher::start_monitoring(
   for (const auto& dir : directories) {
     auto path = root / dir;
     if (!std::filesystem::exists(path)) {
-      std::cerr << "Directory does not exist: " << path.string() << std::endl;
+      Logger::log_warning("Asset file watcher: {} does not exist, skipping",
+                          path.string());
       continue;
     }
     auto computed_watch =

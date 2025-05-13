@@ -8,6 +8,7 @@
 
 #include <imgui.h>
 #include <iostream>
+#include <tracy/Tracy.hpp>
 
 Swapchain::Swapchain(const Device& device_ref, const Window& window_ref)
   : device(device_ref.get_device())
@@ -26,23 +27,26 @@ Swapchain::Swapchain(const Device& device_ref, const Window& window_ref)
 auto
 Swapchain::draw_frame(const GUISystem& gui_system) -> void
 {
-  // Wait for the current frame to be finished
+  ZoneScopedN("Swapchain::draw_frame");
   vkWaitForFences(
     device, 1, &in_flight_fences[frame_index], VK_TRUE, UINT64_MAX);
   vkResetFences(device, 1, &in_flight_fences[frame_index]);
 
   // Acquire an image from the swapchain
-  std::uint32_t image_index;
-  auto result = vkAcquireNextImageKHR(device,
-                                      swapchain,
-                                      UINT64_MAX,
-                                      image_available_semaphores[frame_index],
-                                      VK_NULL_HANDLE,
-                                      &image_index);
+  std::uint32_t image_index{};
+  {
+    ZoneScopedN("Acquire image");
+    auto result = vkAcquireNextImageKHR(device,
+                                        swapchain,
+                                        UINT64_MAX,
+                                        image_available_semaphores[frame_index],
+                                        VK_NULL_HANDLE,
+                                        &image_index);
 
-  if (result == VK_ERROR_OUT_OF_DATE_KHR) {
-    recreate_swapchain();
-    return;
+    if (result == VK_ERROR_OUT_OF_DATE_KHR) {
+      recreate_swapchain();
+      return;
+    }
   }
 
   // Reset and begin recording command buffer
@@ -105,8 +109,10 @@ Swapchain::draw_frame(const GUISystem& gui_system) -> void
 
   vkCmdBeginRendering(cmd, &render_info);
 
-  gui_system.end_frame(cmd);
-
+  {
+    ZoneScopedN("Render GUI (From Swapchain)");
+    gui_system.end_frame(cmd);
+  }
   vkCmdEndRendering(cmd);
 
 #ifdef MEMORY_BARRIER
@@ -138,8 +144,10 @@ Swapchain::draw_frame(const GUISystem& gui_system) -> void
     static_cast<std::uint32_t>(signal_semaphores.size());
   submit_info.pSignalSemaphores = signal_semaphores.data();
 
-  vkQueueSubmit(queue, 1, &submit_info, in_flight_fences[frame_index]);
-
+  {
+    ZoneScopedN("Submit");
+    vkQueueSubmit(queue, 1, &submit_info, in_flight_fences[frame_index]);
+  }
   VkPresentInfoKHR present_info{};
   present_info.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
   present_info.waitSemaphoreCount = 1;
@@ -148,9 +156,12 @@ Swapchain::draw_frame(const GUISystem& gui_system) -> void
   present_info.pSwapchains = &swapchain;
   present_info.pImageIndices = &image_index;
 
-  result = vkQueuePresentKHR(queue, &present_info);
-  if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR) {
-    recreate_swapchain();
+  {
+    ZoneScopedN("Present");
+    auto result = vkQueuePresentKHR(queue, &present_info);
+    if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR) {
+      recreate_swapchain();
+    }
   }
 
   frame_index = (frame_index + 1) % frames_in_flight;

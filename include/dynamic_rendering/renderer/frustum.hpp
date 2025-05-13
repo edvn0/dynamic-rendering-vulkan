@@ -28,14 +28,16 @@ struct Frustum
       plane /= glm::length(glm::vec3(plane));
   }
 
-  auto intersects(const glm::vec3& center, float radius) const -> bool
+  [[nodiscard]] auto intersects(const glm::vec3& center, float radius) const
+    -> bool
   {
     return std::ranges::none_of(
       planes, [&c = center, &r = radius](const auto& p) {
         return glm::dot(glm::vec3(p), c) + p.w + r < 0.0f;
       });
   }
-  auto intersects_aabb(const glm::vec3& min, const glm::vec3& max) const -> bool
+  [[nodiscard]] auto intersects_aabb(const glm::vec3& min,
+                                     const glm::vec3& max) const -> bool
   {
     return std::ranges::none_of(planes, [&min, &max](const auto& p) {
       const auto normal = glm::vec3(p);
