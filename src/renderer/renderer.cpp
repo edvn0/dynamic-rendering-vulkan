@@ -140,15 +140,6 @@ Renderer::Renderer(const Device& dev,
     dev.compute_queue(),
     CommandBufferType::Compute,
     VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT);
-  VkSemaphoreCreateInfo sem_info{
-    .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
-    .pNext = nullptr,
-    .flags = 0,
-  };
-  for (auto& semaphore : compute_finished_semaphore) {
-    vkCreateSemaphore(dev.get_device(), &sem_info, nullptr, &semaphore);
-  }
-
   {
     geometry_image = Image::create(dev,
                                    ImageConfiguration{
@@ -410,9 +401,6 @@ Renderer::get_renderer_descriptor_set_layout(Badge<AssetReloader>) const
 auto
 Renderer::destroy() -> void
 {
-  for (const auto& semaphore : compute_finished_semaphore) {
-    vkDestroySemaphore(device->get_device(), semaphore, nullptr);
-  }
 }
 
 Renderer::~Renderer()
@@ -453,84 +441,78 @@ Renderer::submit_lines(const glm::vec3& start,
 }
 
 static auto
-upload_instance_vertex_data(auto& pool,
-                            GPUBuffer& buffer,
-                            const auto& draw_commands,
-                            const auto& frustum,
-                            std::integral auto& instance_count_this_frame)
+cpu_mt_cull_and_upload_to_gpu(BS::priority_thread_pool& pool,
+                              GPUBuffer& buffer,
+                              const DrawCommandMap& draw_commands,
+                              const auto& frustum,
+                              std::integral auto& instance_count_this_frame)
   -> DrawList
 {
-  std::size_t total_estimated_instances = 0;
+  using Submit = DrawInstanceSubmit;
+  using WorkItem = std::pair<const DrawCommand*, InstanceData>;
+
+  constexpr std::size_t bucket_count = 8;
+  std::array<std::vector<Submit>, bucket_count> buckets;
+  std::array<std::mutex, bucket_count> locks;
+
+  std::vector<WorkItem> all_instances;
   for (const auto& [cmd, instances] : draw_commands)
-    total_estimated_instances += instances.size();
+    for (const auto& instance : instances)
+      all_instances.emplace_back(&cmd, instance);
 
-  // Preallocate the maximum possible number of instances
-  std::vector<DrawInstanceSubmit> filtered_instances(total_estimated_instances);
-  std::atomic<std::size_t> filtered_count{ 0 };
-
-  {
-    std::vector<std::pair<const DrawCommand*, const std::vector<InstanceData>*>>
-      jobs;
-    jobs.reserve(draw_commands.size());
-    for (const auto& [cmd, instances] : draw_commands)
-      jobs.emplace_back(&cmd, &instances);
-
-    // Parallel frustum culling
-    auto fut = pool.submit_loop(0, jobs.size(), [&](std::size_t i) {
-      const auto& [cmd, instances] = jobs[i];
-      for (const auto& instance : *instances) {
-        const auto center_ws = glm::vec3(instance.transform[3]);
-        const float radius_ws =
-          1.0f * glm::length(glm::vec3(instance.transform[0]));
-
-        if (frustum.intersects(center_ws, radius_ws)) {
-          const std::size_t index =
-            filtered_count.fetch_add(1, std::memory_order_relaxed);
-          filtered_instances[index] = { cmd, instance };
-        }
-      }
-    });
-
-    fut.wait();
+  if (all_instances.empty()) {
+    instance_count_this_frame = 0;
+    return {};
   }
 
-  filtered_instances.resize(filtered_count);
-  instance_count_this_frame =
-    static_cast<std::uint32_t>(filtered_instances.size());
+  auto fut = pool.submit_loop(0, all_instances.size(), [&](std::size_t i) {
+    const auto& [cmd, instance] = all_instances[i];
+    const glm::vec3 center_ws = glm::vec3(instance.transform[3]);
+    const float radius_ws = glm::length(glm::vec3(instance.transform[0]));
 
-  if (filtered_instances.empty())
+    if (frustum.intersects(center_ws, radius_ws)) {
+      const std::size_t bucket_index =
+        reinterpret_cast<std::uintptr_t>(cmd) % bucket_count;
+      std::scoped_lock lock(locks[bucket_index]);
+      buckets[bucket_index].emplace_back(Submit{ cmd, instance });
+    }
+  });
+
+  fut.wait();
+
+  std::vector<Submit> merged;
+  for (auto& bucket : buckets)
+    merged.insert(merged.end(), bucket.begin(), bucket.end());
+
+  instance_count_this_frame = static_cast<std::uint32_t>(merged.size());
+  if (merged.empty())
     return {};
 
-  // Flatten instance data to GPU uploadable buffer
-  std::vector<InstanceData> instance_data(filtered_instances.size());
-  std::transform(std::execution::par_unseq,
-                 filtered_instances.begin(),
-                 filtered_instances.end(),
-                 instance_data.begin(),
-                 [](const DrawInstanceSubmit& s) { return s.data; });
+  std::vector<InstanceData> instance_data(merged.size());
+  for (std::size_t i = 0; i < merged.size(); ++i)
+    instance_data[i] = merged[i].data;
 
   buffer.upload(std::span(instance_data));
 
-  // Map DrawCommand to ranges inside the instance buffer
   std::unordered_map<DrawCommand,
                      std::tuple<std::uint32_t, std::uint32_t>,
                      DrawCommandHasher>
     draw_map;
-  for (std::size_t i = 0; i < filtered_instances.size(); ++i) {
-    const auto* cmd = filtered_instances[i].cmd;
+
+  for (std::size_t i = 0; i < merged.size(); ++i) {
+    const auto* cmd = merged[i].cmd;
     auto& [start, count] = draw_map[*cmd];
     if (count == 0)
       start = static_cast<std::uint32_t>(i);
     ++count;
   }
 
-  // Flatten draw map into vector for submission
-  DrawList flat_draw_list;
-  flat_draw_list.reserve(draw_map.size());
+  DrawList flat;
+  flat.reserve(draw_map.size());
   for (const auto& [cmd, range] : draw_map)
-    flat_draw_list.emplace_back(cmd, std::get<0>(range), std::get<1>(range));
+    flat.emplace_back(cmd, std::get<0>(range), std::get<1>(range));
 
-  return flat_draw_list;
+  return flat;
 }
 
 auto
@@ -636,7 +618,7 @@ Renderer::end_frame(std::uint32_t frame_index) -> void
 
   std::latch uploads_remaining(3);
 
-  constexpr std::size_t culling_threshold = 500;
+  constexpr std::size_t culling_threshold = 5000;
   std::size_t total_instance_count = 0;
   {
     ZoneScopedN("Count Instances");
@@ -663,11 +645,11 @@ Renderer::end_frame(std::uint32_t frame_index) -> void
     thread_pool->detach_task([this, &flat_draw_commands, &uploads_remaining] {
       ZoneScopedN("Instance Upload");
       flat_draw_commands =
-        upload_instance_vertex_data(*thread_pool,
-                                    *instance_vertex_buffer,
-                                    draw_commands,
-                                    camera_frustum,
-                                    instance_count_this_frame);
+        cpu_mt_cull_and_upload_to_gpu(*thread_pool,
+                                      *instance_vertex_buffer,
+                                      draw_commands,
+                                      camera_frustum,
+                                      instance_count_this_frame);
       uploads_remaining.count_down();
     });
   } else {
@@ -684,11 +666,11 @@ Renderer::end_frame(std::uint32_t frame_index) -> void
       [this, &flat_shadow_draw_commands, &shadow_count, &uploads_remaining] {
         ZoneScopedN("Shadow Upload");
         flat_shadow_draw_commands =
-          upload_instance_vertex_data(*thread_pool,
-                                      *instance_shadow_vertex_buffer,
-                                      shadow_draw_commands,
-                                      light_frustum,
-                                      shadow_count);
+          cpu_mt_cull_and_upload_to_gpu(*thread_pool,
+                                        *instance_shadow_vertex_buffer,
+                                        shadow_draw_commands,
+                                        light_frustum,
+                                        shadow_count);
         uploads_remaining.count_down();
       });
   } else {
@@ -715,9 +697,7 @@ Renderer::end_frame(std::uint32_t frame_index) -> void
   uploads_remaining.wait();
 
   command_buffer->begin_frame(frame_index);
-  if (total_instance_count >= culling_threshold) {
-    run_culling_compute_pass(frame_index);
-  }
+  run_culling_compute_pass(frame_index);
 
   run_skybox_pass(frame_index);
   run_shadow_pass(frame_index, flat_shadow_draw_commands);
@@ -728,12 +708,7 @@ Renderer::end_frame(std::uint32_t frame_index) -> void
   run_composite_pass(frame_index);
   run_postprocess_passes(frame_index);
 
-  const auto semaphore = total_instance_count >= culling_threshold
-                           ? compute_finished_semaphore.at(frame_index)
-                           : VK_NULL_HANDLE;
-  command_buffer->submit_and_end(frame_index, semaphore);
-
-  draw_commands.clear();
+  command_buffer->submit_and_end(frame_index);
 }
 
 auto
@@ -1134,11 +1109,13 @@ Renderer::run_culling_compute_pass(std::uint32_t frame_index) -> void
 
   compute_command_buffer->end_timer(frame_index, "cull_instances");
 
-  compute_command_buffer->submit_and_end(
-    frame_index,
-    VK_NULL_HANDLE,
-    compute_finished_semaphore.at(frame_index),
-    VK_NULL_HANDLE);
+  compute_command_buffer->submit_and_end(frame_index);
+  compute_command_buffer->wait_for_fence(frame_index);
+
+  std::uint32_t cull_count = 0;
+  if (!culled_instance_count_buffer->read_into_with_offset(cull_count, 0)) {
+    Logger::log_error("Failed to read cull count from buffer");
+  }
 }
 
 auto

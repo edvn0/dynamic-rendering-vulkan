@@ -43,6 +43,7 @@ find_package(spdlog REQUIRED CONFIG)
 find_package(bshoshany-thread-pool REQUIRED CONFIG)
 find_package(assimp REQUIRED CONFIG)
 find_package(Ktx REQUIRED CONFIG)
+find_package(meshoptimizer REQUIRED CONFIG)
 
 add_subdirectory(third_party)
 add_subdirectory(client)
@@ -138,6 +139,7 @@ target_link_libraries(DynamicRendering_Renderer PUBLIC
         VulkanMemoryAllocator
         spirv-reflect-static
         assimp::assimp
+        meshoptimizer::meshoptimizer
 )
 
 target_precompile_headers(DynamicRendering_Renderer REUSE_FROM DynamicRendering_Core)

@@ -18,24 +18,102 @@
 #include <vector>
 #include <vulkan/vulkan.h>
 
+struct AABB
+{
+private:
+  glm::vec3 minimum;
+  glm::vec3 maximum;
+
+public:
+  AABB()
+    : minimum{ std::numeric_limits<float>::max() }
+    , maximum{ std::numeric_limits<float>::lowest() }
+  {
+  }
+
+  explicit AABB(const glm::vec3& initial_point)
+    : minimum{ initial_point }
+    , maximum{ initial_point }
+  {
+  }
+
+  [[nodiscard]] auto min() const noexcept -> const glm::vec3&
+  {
+    return minimum;
+  }
+  [[nodiscard]] auto max() const noexcept -> const glm::vec3&
+  {
+    return maximum;
+  }
+
+  auto grow(const glm::vec3& point) noexcept
+  {
+    if (point.x < minimum.x)
+      minimum.x = point.x;
+    if (point.y < minimum.y)
+      minimum.y = point.y;
+    if (point.z < minimum.z)
+      minimum.z = point.z;
+
+    if (point.x > maximum.x)
+      maximum.x = point.x;
+    if (point.y > maximum.y)
+      maximum.y = point.y;
+    if (point.z > maximum.z)
+      maximum.z = point.z;
+  }
+
+  [[nodiscard]] auto center() const noexcept -> glm::vec3
+  {
+    return 0.5f * (minimum + maximum);
+  }
+
+  [[nodiscard]] auto extent() const noexcept -> glm::vec3
+  {
+    return maximum - minimum;
+  }
+
+  [[nodiscard]] auto transformed(const glm::mat4& m) const noexcept -> AABB
+  {
+    const std::array<glm::vec3, 8> corners = {
+      glm::vec3{ minimum.x, minimum.y, minimum.z },
+      { maximum.x, minimum.y, minimum.z },
+      { minimum.x, maximum.y, minimum.z },
+      { maximum.x, maximum.y, minimum.z },
+      { minimum.x, minimum.y, maximum.z },
+      { maximum.x, minimum.y, maximum.z },
+      { minimum.x, maximum.y, maximum.z },
+      { maximum.x, maximum.y, maximum.z }
+    };
+
+    AABB result;
+    for (const auto& c : corners)
+      result.grow(glm::vec3(m * glm::vec4(c, 1.0f)));
+    return result;
+  }
+};
+
 struct Vertex
 {
   glm::vec3 position;
   glm::vec3 normal;
   glm::vec2 texcoord;
 };
+static_assert(std::is_trivially_copyable_v<Vertex>);
 
 struct Submesh
 {
+  std::uint32_t vertex_offset;
+  std::uint32_t vertex_count;
   std::uint32_t index_offset;
   std::uint32_t index_count;
   std::uint32_t material_index;
 
   glm::mat4 child_transform{ 1.0F };
 
-  ///
   std::int32_t parent_index{ -1 };
   std::unordered_set<uint32_t> children{};
+  AABB local_aabb;
 };
 
 class Mesh
@@ -91,6 +169,11 @@ public:
       return submesh.child_transform;
 
     return get_world_transform(submesh.parent_index) * submesh.child_transform;
+  }
+  [[nodiscard]] auto get_world_aabb(std::size_t submesh_index) const -> AABB
+  {
+    return submeshes.at(submesh_index)
+      .local_aabb.transformed(get_world_transform(submesh_index));
   }
 
 private:
