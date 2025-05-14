@@ -34,8 +34,8 @@ DrawListManager::flatten_draw_commands(const DrawCommandMap& draw_map,
     const auto offset = static_cast<std::uint32_t>(all_instances.size());
     all_instances.insert(
       all_instances.end(), instances.begin(), instances.end());
-    flat_list.push_back(
-      { cmd, offset, static_cast<std::uint32_t>(instances.size()) });
+    flat_list.emplace_back(
+      cmd, offset, static_cast<std::uint32_t>(instances.size()));
   }
 
   instance_count = static_cast<std::uint32_t>(all_instances.size());

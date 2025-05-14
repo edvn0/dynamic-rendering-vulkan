@@ -136,7 +136,6 @@ private:
   std::unique_ptr<GPUBuffer> instance_vertex_buffer;
   std::unique_ptr<GPUBuffer> instance_shadow_vertex_buffer;
 
-  frame_array<VkSemaphore> compute_finished_semaphore{};
   std::unique_ptr<CommandBuffer> compute_command_buffer;
 
   std::unique_ptr<Image> geometry_image;

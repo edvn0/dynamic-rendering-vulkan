@@ -6,16 +6,8 @@
 #include <assimp/Importer.hpp>
 #include <assimp/postprocess.h>
 #include <assimp/scene.h>
-
-#include "renderer/mesh.hpp"
-
-#include "core/fs.hpp"
-#include "pipeline/blueprint_registry.hpp"
-
-#include <assimp/Importer.hpp>
-#include <assimp/postprocess.h>
-#include <assimp/scene.h>
 #include <glm/gtc/type_ptr.hpp>
+#include <meshoptimizer.h>
 
 namespace {
 
@@ -130,14 +122,16 @@ Mesh::load_from_file(const Device& device,
 
   std::function<void(aiNode*, int)> process_node;
   process_node = [&](aiNode* node, int parent_index) {
-    const auto t = node->mTransformation;
+    const auto& t = node->mTransformation;
     const auto node_transform = glm::transpose(glm::make_mat4(&t.a1));
 
     std::vector<std::int32_t> current_node_submesh_indices;
 
     for (const auto mesh_index : std::span(node->mMeshes, node->mNumMeshes)) {
       const aiMesh* mesh = scene->mMeshes[mesh_index];
-      const auto vertex_offset = static_cast<std::uint32_t>(vertices.size());
+
+      std::vector<Vertex> raw_vertices;
+      std::vector<uint32_t> raw_indices;
 
       auto positions = std::span(mesh->mVertices, mesh->mNumVertices);
       auto normals = mesh->HasNormals()
@@ -158,21 +152,127 @@ Mesh::load_from_file(const Device& device,
         vertex.texcoord = texcoords.empty()
                             ? glm::vec2{ 0.0f }
                             : glm::vec2{ texcoords[v].x, texcoords[v].y };
-        vertices.push_back(vertex);
+        raw_vertices.push_back(vertex);
       }
 
-      const auto index_offset = static_cast<std::uint32_t>(indices.size());
       for (const auto& f : std::span(mesh->mFaces, mesh->mNumFaces)) {
         for (const auto& j : std::span(f.mIndices, f.mNumIndices))
-          indices.push_back(j + vertex_offset);
+          raw_indices.push_back(j);
       }
 
+      std::vector<uint32_t> remap(raw_indices.size());
+      size_t unique_vertex_count =
+        meshopt_generateVertexRemap(remap.data(),
+                                    raw_indices.data(),
+                                    raw_indices.size(),
+                                    raw_vertices.data(),
+                                    raw_vertices.size(),
+                                    sizeof(Vertex));
+
+      std::vector<Vertex> optimized_vertices(unique_vertex_count);
+      meshopt_remapVertexBuffer(optimized_vertices.data(),
+                                raw_vertices.data(),
+                                raw_vertices.size(),
+                                sizeof(Vertex),
+                                remap.data());
+
+      std::vector<uint32_t> optimized_indices(raw_indices.size());
+      meshopt_remapIndexBuffer(optimized_indices.data(),
+                               raw_indices.data(),
+                               raw_indices.size(),
+                               remap.data());
+
+      meshopt_optimizeVertexCache(optimized_indices.data(),
+                                  optimized_indices.data(),
+                                  optimized_indices.size(),
+                                  unique_vertex_count);
+
+      std::vector<float> positions_flat;
+      positions_flat.reserve(unique_vertex_count * 3);
+      for (const auto& v : optimized_vertices) {
+        positions_flat.push_back(v.position.x);
+        positions_flat.push_back(v.position.y);
+        positions_flat.push_back(v.position.z);
+      }
+
+      meshopt_optimizeOverdraw(optimized_indices.data(),
+                               optimized_indices.data(),
+                               optimized_indices.size(),
+                               positions_flat.data(),
+                               unique_vertex_count,
+                               sizeof(float) * 3,
+                               1.05f);
+
+      meshopt_optimizeVertexFetch(optimized_vertices.data(),
+                                  optimized_indices.data(),
+                                  optimized_indices.size(),
+                                  optimized_vertices.data(),
+                                  unique_vertex_count,
+                                  sizeof(Vertex));
+      AABB aabb;
+      for (const auto& v : optimized_vertices)
+        aabb.grow(v.position);
+
+      const unsigned int cache_size = 32;
+      const unsigned int warp_size = 0;
+      const unsigned int primgroup_size = 0;
+
+      auto stats_before = meshopt_analyzeVertexCache(raw_indices.data(),
+                                                     raw_indices.size(),
+                                                     raw_vertices.size(),
+                                                     cache_size,
+                                                     warp_size,
+                                                     primgroup_size);
+
+      auto stats_after = meshopt_analyzeVertexCache(optimized_indices.data(),
+                                                    optimized_indices.size(),
+                                                    optimized_vertices.size(),
+                                                    cache_size,
+                                                    warp_size,
+                                                    primgroup_size);
+
+      const auto fetch_before = meshopt_analyzeVertexFetch(raw_indices.data(),
+                                                           raw_indices.size(),
+                                                           raw_vertices.size(),
+                                                           sizeof(Vertex))
+                                  .bytes_fetched;
+
+      const auto fetch_after =
+        meshopt_analyzeVertexFetch(optimized_indices.data(),
+                                   optimized_indices.size(),
+                                   optimized_vertices.size(),
+                                   sizeof(Vertex))
+          .bytes_fetched;
+
+      Logger::log_info(
+        "Optimized submesh: triangles={}, verts_in={}, verts_out={}, "
+        "ACMR={:.2f} → {:.2f}, fetch={} → {} bytes",
+        optimized_indices.size() / 3,
+        raw_vertices.size(),
+        optimized_vertices.size(),
+        stats_before.acmr,
+        stats_after.acmr,
+        fetch_before,
+        fetch_after);
+
+      const auto vertex_offset = static_cast<std::uint32_t>(vertices.size());
+      const auto index_offset = static_cast<std::uint32_t>(indices.size());
+
+      vertices.insert(
+        vertices.end(), optimized_vertices.begin(), optimized_vertices.end());
+      indices.insert(
+        indices.end(), optimized_indices.begin(), optimized_indices.end());
+
       const auto submesh_index = static_cast<std::int32_t>(submeshes.size());
-      submeshes.push_back({ .index_offset = index_offset,
-                            .index_count = mesh->mNumFaces * 3,
-                            .material_index = mesh->mMaterialIndex,
-                            .child_transform = node_transform,
-                            .parent_index = parent_index });
+      submeshes.push_back(
+        { .vertex_offset = vertex_offset,
+          .vertex_count = static_cast<uint32_t>(optimized_vertices.size()),
+          .index_offset = index_offset,
+          .index_count = static_cast<uint32_t>(optimized_indices.size()),
+          .material_index = mesh->mMaterialIndex,
+          .child_transform = node_transform,
+          .parent_index = parent_index,
+          .local_aabb = aabb });
 
       if (parent_index >= 0)
         submeshes[parent_index].children.insert(submesh_index);

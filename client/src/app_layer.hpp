@@ -32,5 +32,6 @@ private:
   glm::vec4 light_color{ 1.F, 0.5F, 0.F, 1.F };
 
   std::vector<glm::mat4> transforms;
+  std::vector<glm::mat4> cerberus_transforms;
   std::vector<Material> materials;
 };

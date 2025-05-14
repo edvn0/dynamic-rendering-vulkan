@@ -144,7 +144,8 @@ public:
     if (!mapped)
       return false;
 
-    if (offset_bytes + sizeof(T) > current_size)
+    const auto size = sizeof(T);
+    if (offset_bytes + size > current_size)
       return false;
 
     std::memcpy(&user_allocated,

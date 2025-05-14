@@ -25,6 +25,7 @@ class VulkanAppConan(ConanFile):
         self.requires("ktx/4.3.2")
         self.requires("efsw/1.4.1")
         self.requires("lyra/1.6.1")
+        self.requires("meshoptimizer/0.23")
         self.requires("tracy/0.11.1")
         self.requires("bshoshany-thread-pool/5.0.0")
         self.requires("assimp/5.4.3", options={"shared": False,
