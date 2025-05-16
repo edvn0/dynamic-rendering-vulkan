@@ -171,6 +171,13 @@ public:
       return -1;
     return static_cast<std::int32_t>(std::distance(submeshes.begin(), it));
   }
+  auto get_submesh(const std::uint32_t index) const -> const Submesh*
+  {
+    if (index >= submeshes.size())
+      return nullptr;
+
+    return &submeshes.at(index);
+  }
   [[nodiscard]] auto get_materials() const -> const auto& { return materials; }
   [[nodiscard]] auto get_material_by_submesh_index(
     const std::int32_t index) const -> Material*
