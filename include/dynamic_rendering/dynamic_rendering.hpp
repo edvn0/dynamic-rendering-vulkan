@@ -39,6 +39,11 @@
 #include <dynamic_rendering/renderer/mesh_cache.hpp>
 #include <dynamic_rendering/renderer/renderer.hpp>
 
+// Scene
+#include <dynamic_rendering/scene/components.hpp>
+#include <dynamic_rendering/scene/entity.hpp>
+#include <dynamic_rendering/scene/scene.hpp>
+
 // Window
 #include <dynamic_rendering/window/gui_system.hpp>
 #include <dynamic_rendering/window/swapchain.hpp>

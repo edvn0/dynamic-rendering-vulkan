@@ -20,6 +20,7 @@ target_link_libraries(Client PRIVATE
   DynamicRendering::Pipeline
   DynamicRendering::Renderer
   DynamicRendering::Window
+  DynamicRendering::Scene
   glfw
   imgui
   implot

@@ -1,9 +1,5 @@
 #include "app_layer.hpp"
 
-#include "dynamic_rendering/renderer/mesh.hpp"
-
-#include <dynamic_rendering/renderer/renderer.hpp>
-
 #include <array>
 #include <execution>
 #include <glm/gtc/matrix_transform.hpp>
@@ -22,16 +18,20 @@ AppLayer::AppLayer(const Device& dev,
   : thread_pool(pool)
   , blueprint_registry(registry)
 {
-  Logger::log_info("Here!");
+  active_scene = std::make_shared<Scene>("Basic");
+
+  auto tokyo_entity = active_scene->create_entity("Tokyo");
+  tokyo_entity.add_component<Component::Mesh>();
 
   // assert(mesh->load_from_file(dev, *blueprint_registry,
   // "cerberus/scene.gltf"));
-  assert(tokyo_mesh->load_from_file(
-    dev, *blueprint_registry, pool, "little_tokyo/scene.gltf"));
-  assert(armour_mesh->load_from_file(
-    dev, *blueprint_registry, "battle_armour/scene.gltf"));
-  assert(hunter_mesh->load_from_file(
-    dev, *blueprint_registry, "astro_hunter_special/scene.gltf"));
+
+  tokyo_mesh->load_from_file(
+    dev, *blueprint_registry, pool, "little_tokyo/scene.gltf");
+  armour_mesh->load_from_file(
+    dev, *blueprint_registry, "battle_armour/scene.gltf");
+  hunter_mesh->load_from_file(
+    dev, *blueprint_registry, "astro_hunter_special/scene.gltf");
 
   generate_scene();
 }
@@ -127,7 +127,7 @@ AppLayer::on_render(Renderer& renderer) -> void
       glm::rotate(
         glm::mat4{ 1.f }, glm::radians(90.F), glm::vec3(0.0F, 1.0F, 0.0F)));
 
-  /*static constexpr float line_width = 1.2f;
+  static constexpr float line_width = 1.2f;
   static constexpr float line_length = 50.f;
 
   renderer.submit_lines({ 0.f, 0.f, 0.f },
@@ -158,7 +158,7 @@ AppLayer::on_render(Renderer& renderer) -> void
         .casts_shadows = true,
       },
       transform);
-  }*/
+  }
 }
 
 auto

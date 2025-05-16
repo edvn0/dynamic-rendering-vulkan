@@ -15,11 +15,11 @@ depth_stencil:
   compare_op: equal
 
 blend:
-  enable: false
+  enable: true
 
 attachments:
   - format: r32g32b32a32_sfloat
-    blend_enable: true
-    write_mask_rgba: true
+    blend_enable: false
+    write_mask_rgba: false
 
 msaa_samples: 16

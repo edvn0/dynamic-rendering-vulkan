@@ -17,13 +17,15 @@ class VulkanAppConan(ConanFile):
         cmake_layout(self)
 
     def requirements(self):
-        self.requires("spdlog/1.15.1", options={"use_std_fmt": True, "no_exceptions": True, "shared":False})
+        self.requires(
+            "spdlog/1.15.1", options={"use_std_fmt": True, "no_exceptions": True, "shared": False})
         self.requires("glfw/3.4")
         self.requires("imguizmo/1.83")
         self.requires("yaml-cpp/0.8.0")
         self.requires("glm/1.0.1")
         self.requires("ktx/4.3.2")
         self.requires("efsw/1.4.1")
+        self.requires("entt/3.14.0")
         self.requires("lyra/1.6.1")
         self.requires("meshoptimizer/0.23")
         self.requires("tracy/0.11.1")

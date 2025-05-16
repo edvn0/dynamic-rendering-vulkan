@@ -8,5 +8,5 @@ layout(location = 0) out vec4 outFragColor;
 
 void main()
 {
-    outFragColor = texture(skybox_sampler, inUVW);
+    outFragColor = texture(skybox_sampler, vec3(inUVW.x, -inUVW.y, inUVW.z));
 }

@@ -25,11 +25,13 @@ const int PCF_SAMPLES = 1;
 const int PCF_TOTAL = (PCF_SAMPLES * 2 + 1) * (PCF_SAMPLES * 2 + 1);
 const float INVERSE_SHADOW_MAP_SIZE = 1.0 / 2048.0;
 
-vec3 fresnel_schlick(float cos_theta, vec3 f0) {
+vec3 fresnel_schlick(float cos_theta, vec3 f0)
+{
   return f0 + (1.0 - f0) * pow(clamp(1.0 - cos_theta, 0.0, 1.0), 5.0);
 }
 
-float distribution_ggx(vec3 n, vec3 h, float roughness) {
+float distribution_ggx(vec3 n, vec3 h, float roughness)
+{
   float a = roughness * roughness;
   float a2 = a * a;
   float ndoth = max(dot(n, h), 0.0);
@@ -39,13 +41,15 @@ float distribution_ggx(vec3 n, vec3 h, float roughness) {
   return a2 / (PI * denom * denom);
 }
 
-float geometry_schlick_ggx(float ndotv, float roughness) {
+float geometry_schlick_ggx(float ndotv, float roughness)
+{
   float r = (roughness + 1.0);
   float k = (r * r) / 8.0;
   return ndotv / (ndotv * (1.0 - k) + k);
 }
 
-float geometry_smith(vec3 n, vec3 v, vec3 l, float roughness) {
+float geometry_smith(vec3 n, vec3 v, vec3 l, float roughness)
+{
   float ndotv = max(dot(n, v), 0.0);
   float ndotl = max(dot(n, l), 0.0);
   float ggx1 = geometry_schlick_ggx(ndotl, roughness);
@@ -53,15 +57,18 @@ float geometry_smith(vec3 n, vec3 v, vec3 l, float roughness) {
   return ggx1 * ggx2;
 }
 
-float calculate_shadow(vec4 light_space_pos) {
+float calculate_shadow(vec4 light_space_pos)
+{
   vec3 proj_coords = light_space_pos.xyz / light_space_pos.w;
   if (proj_coords.x < 0.0 || proj_coords.x > 1.0 || proj_coords.y < 0.0 ||
       proj_coords.y > 1.0 || proj_coords.z < 0.0 || proj_coords.z > 1.0)
     return 1.0;
 
   float shadow = 0.0;
-  for (int x = -PCF_SAMPLES; x <= PCF_SAMPLES; ++x) {
-    for (int y = -PCF_SAMPLES; y <= PCF_SAMPLES; ++y) {
+  for (int x = -PCF_SAMPLES; x <= PCF_SAMPLES; ++x)
+  {
+    for (int y = -PCF_SAMPLES; y <= PCF_SAMPLES; ++y)
+    {
       vec2 offset = vec2(x, y) * INVERSE_SHADOW_MAP_SIZE;
       shadow +=
           texture(shadow_image, vec3(proj_coords.xy + offset, proj_coords.z));
@@ -70,7 +77,8 @@ float calculate_shadow(vec4 light_space_pos) {
   return shadow / float(PCF_TOTAL);
 }
 
-vec3 calculate_normal_from_map(vec2 uv, vec3 normal, vec3 world_pos) {
+vec3 calculate_normal_from_map(vec2 uv, vec3 normal, vec3 world_pos)
+{
   vec3 tangent_normal = texture(normal_map, uv).xyz * 2.0 - 1.0;
 
   vec3 q1 = dFdx(world_pos);
@@ -86,7 +94,8 @@ vec3 calculate_normal_from_map(vec2 uv, vec3 normal, vec3 world_pos) {
   return normalize(tbn * tangent_normal);
 }
 
-void main() {
+void main()
+{
   vec4 albedo_tex = texture(albedo_map, v_uv);
   vec3 albedo = has_albedo_texture() ? material.albedo.rgb * albedo_tex.rgb
                                      : material.albedo.rgb;
@@ -134,7 +143,8 @@ void main() {
 
   vec3 color = ambient + shadow * lighting;
 
-  if (is_emissive()) {
+  if (is_emissive())
+  {
     vec3 emissive_tex =
         has_emissive_map() ? texture(emissive_map, v_uv).rgb : vec3(1.0);
     color +=
@@ -148,5 +158,5 @@ void main() {
   if (is_alpha_testing() && alpha < material.alpha_cutoff)
     discard;
 
-  frag_colour = vec4(color, alpha);
+  frag_colour = vec4(color, 1.0F);
 }

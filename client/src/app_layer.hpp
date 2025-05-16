@@ -26,6 +26,8 @@ private:
   float rotation_speed = 90.f;
   glm::vec2 bounds{};
 
+  std::shared_ptr<Scene> active_scene;
+
   std::unique_ptr<Mesh> mesh{ std::make_unique<Mesh>() };
   std::unique_ptr<Mesh> tokyo_mesh{ std::make_unique<Mesh>() };
   std::unique_ptr<Mesh> hunter_mesh{ std::make_unique<Mesh>() };

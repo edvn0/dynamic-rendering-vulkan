@@ -20,6 +20,41 @@
 #include <lyra/lyra.hpp>
 #include <tracy/Tracy.hpp>
 
+auto
+generate_world_ray(const glm::vec2& mouse_pos,
+                   const glm::vec2& viewport_pos,
+                   const glm::vec2& viewport_size,
+                   const glm::mat4& view,
+                   const glm::mat4& projection)
+  -> std::pair<glm::vec3, glm::vec3>
+{
+  glm::vec2 local_mouse = mouse_pos - viewport_pos;
+
+  Logger::log_info("Mouse screen: ({}, {})", mouse_pos.x, mouse_pos.y);
+  Logger::log_info("Viewport pos: ({}, {})", viewport_pos.x, viewport_pos.y);
+  Logger::log_info("Viewport size: ({}, {})", viewport_size.x, viewport_size.y);
+  Logger::log_info("Mouse local: ({}, {})", local_mouse.x, local_mouse.y);
+
+  float x_ndc = (2.0f * local_mouse.x) / viewport_size.x - 1.0f;
+  float y_ndc = 1.0f - (2.0f * local_mouse.y) / viewport_size.y;
+
+  Logger::log_info("Mouse NDC: ({}, {})", x_ndc, y_ndc);
+
+  glm::vec4 ray_clip = glm::vec4(x_ndc, y_ndc, -1.0f, 1.0f);
+  glm::vec4 ray_eye = glm::inverse(projection) * ray_clip;
+  ray_eye = glm::vec4(ray_eye.x, ray_eye.y, -1.0f, 0.0f);
+
+  glm::vec3 ray_world = glm::normalize(glm::vec3(glm::inverse(view) * ray_eye));
+  glm::vec3 ray_origin = glm::vec3(glm::inverse(view)[3]);
+
+  Logger::log_info(
+    "Ray Origin: ({}, {}, {})", ray_origin.x, ray_origin.y, ray_origin.z);
+  Logger::log_info(
+    "Ray Direction: ({}, {}, {})", ray_world.x, ray_world.y, ray_world.z);
+
+  return { ray_origin, ray_world };
+}
+
 namespace DynamicRendering {
 
 struct FrameTimePlotter
@@ -250,17 +285,40 @@ App::interface() -> void
     layer->on_interface();
 
   constexpr auto flags =
-    (ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
-     ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
-     ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoCollapse |
-     ImGuiWindowFlags_NoBackground) &
-    0;
+    ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+    ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
+    ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoCollapse |
+    ImGuiWindowFlags_NoBackground;
 
   if (ImGui::Begin("Renderer Output", nullptr, flags)) {
     ZoneScopedN("Renderer Output");
-    auto size = ImGui::GetWindowSize();
+
+    auto window_pos = ImGui::GetCursorScreenPos(); // Top-left of content
+    auto window_size = ImGui::GetWindowSize();
+
     ImGui::Image(renderer->get_output_image().get_texture_id<ImTextureID>(),
-                 size);
+                 window_size);
+
+    bool hovered = ImGui::IsItemHovered();
+    bool clicked = ImGui::IsItemClicked(ImGuiMouseButton_Left);
+
+    if (hovered && clicked) {
+      ImVec2 mouse = ImGui::GetMousePos();
+      glm::vec2 mouse_screen(mouse.x, mouse.y);
+      glm::vec2 viewport_pos(window_pos.x, window_pos.y);
+      glm::vec2 viewport_size(window_size.x, window_size.y);
+
+      [[maybe_unused]] auto&& [ray_origin, ray_dir] =
+        generate_world_ray(mouse_screen,
+                           viewport_pos,
+                           viewport_size,
+                           camera->get_view(),
+                           camera->get_projection());
+
+      // Now use ray_origin and ray_dir to do picking
+      // selected_entity = pick_entity(ray_origin, ray_dir);
+    }
+
     ImGui::End();
   }
 
