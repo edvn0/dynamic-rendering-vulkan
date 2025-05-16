@@ -15,7 +15,7 @@ depth_stencil:
   compare_op: equal
 
 blend:
-  enable: true
+  enable: false
 
 attachments:
   - format: r32g32b32a32_sfloat

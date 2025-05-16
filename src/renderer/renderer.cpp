@@ -1012,31 +1012,34 @@ Renderer::run_z_prepass(std::uint32_t frame_index, const DrawList& draw_list)
                           VK_PIPELINE_BIND_POINT_GRAPHICS,
                           z_prepass_pipeline.layout,
                           0,
-                          1,
-                          &descriptor_set_manager->get_set(frame_index),
+                          static_cast<std::uint32_t>(sets.size()),
+                          sets.data(),
                           0,
                           nullptr);
-  for (const auto& [cmd_info, offset, count] : draw_list) {
-    const auto& vertex_buffer = cmd_info.mesh->get_vertex_buffer();
-    const auto& index_buffer = cmd_info.mesh->get_index_buffer();
+  for (const auto& [cmd_info, offset, instance_count] : draw_list) {
+    const auto* submesh = cmd_info.mesh->get_submesh(cmd_info.submesh_index);
+    if (!submesh)
+      continue;
 
-    const std::array vertex_buffers = {
-      vertex_buffer->get(),
-      instance_vertex_buffer->get(),
-    };
-    constexpr std::array<VkDeviceSize, 2> offsets = { 0ULL, 0ULL };
+    const auto& vb = cmd_info.mesh->get_vertex_buffer();
+    const auto& ib = cmd_info.mesh->get_index_buffer();
+
+    const VkDeviceSize vb_offset = submesh->vertex_offset * sizeof(Vertex);
+    const std::array vertex_buffers = { vb->get(),
+                                        instance_vertex_buffer->get() };
+    const std::array offsets = { vb_offset, 0ULL };
+
     vkCmdBindVertexBuffers(cmd,
                            0,
                            static_cast<std::uint32_t>(vertex_buffers.size()),
                            vertex_buffers.data(),
                            offsets.data());
-    vkCmdBindIndexBuffer(
-      cmd, index_buffer->get(), 0, index_buffer->get_index_type());
+    vkCmdBindIndexBuffer(cmd, ib->get(), 0, ib->get_index_type());
 
     vkCmdDrawIndexed(cmd,
-                     static_cast<std::uint32_t>(index_buffer->get_count()),
-                     count,
-                     0,
+                     submesh->index_count,
+                     instance_count,
+                     submesh->index_offset,
                      0,
                      offset);
   }
@@ -1090,21 +1093,21 @@ Renderer::run_geometry_pass(std::uint32_t frame_index,
     .resolveImageLayout = VK_IMAGE_LAYOUT_UNDEFINED,
     .loadOp = VK_ATTACHMENT_LOAD_OP_LOAD,
     .storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
-    .clearValue = {}, // unused
+    .clearValue = {},
   };
 
-  const std::array colour_attachments = {
-    color_attachment,
-  };
+  const std::array colour_attachments = { color_attachment };
   const VkRenderingInfo render_info = {
     .sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
     .pNext = nullptr,
     .flags = 0,
     .renderArea = { .offset = { 0, 0 },
-                    .extent = { geometry_image->width(), geometry_image->height() }, },
+                    .extent = { geometry_image->width(),
+                                geometry_image->height() } },
     .layerCount = 1,
     .viewMask = 0,
-    .colorAttachmentCount = static_cast<std::uint32_t>(colour_attachments.size()),
+    .colorAttachmentCount =
+      static_cast<std::uint32_t>(colour_attachments.size()),
     .pColorAttachments = colour_attachments.data(),
     .pDepthAttachment = &depth_attachment,
     .pStencilAttachment = nullptr,
@@ -1124,6 +1127,10 @@ Renderer::run_geometry_pass(std::uint32_t frame_index,
   vkCmdSetScissor(cmd, 0, 1, &render_info.renderArea);
 
   for (const auto& [cmd_info, offset, instance_count] : draw_list) {
+    const auto* submesh = cmd_info.mesh->get_submesh(cmd_info.submesh_index);
+    if (!submesh)
+      continue;
+
     const auto& vertex_buffer = cmd_info.mesh->get_vertex_buffer();
     const auto& index_buffer = cmd_info.mesh->get_index_buffer();
     const auto& submesh_material =
@@ -1149,11 +1156,14 @@ Renderer::run_geometry_pass(std::uint32_t frame_index,
                             nullptr);
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.pipeline);
 
+    const VkDeviceSize vertex_offset_bytes =
+      submesh->vertex_offset * sizeof(Vertex);
     const std::array vertex_buffers = {
       vertex_buffer->get(),
       instance_vertex_buffer->get(),
     };
-    constexpr std::array offsets = { 0ULL, 0ULL };
+    const std::array offsets = { vertex_offset_bytes, 0ULL };
+
     vkCmdBindVertexBuffers(cmd,
                            0,
                            static_cast<std::uint32_t>(vertex_buffers.size()),
@@ -1166,31 +1176,36 @@ Renderer::run_geometry_pass(std::uint32_t frame_index,
       material.generate_push_constant_data();
     vkCmdPushConstants(
       cmd, pipeline.layout, pc_stage, pc_offset, pc_size, pc_pointer);
+
     vkCmdDrawIndexed(cmd,
-                     static_cast<std::uint32_t>(index_buffer->get_count()),
+                     submesh->index_count,
                      instance_count,
-                     0,
+                     submesh->index_offset,
                      0,
                      offset);
   }
 
-  auto& line_pipeline = line_material->get_pipeline();
-  vkCmdBindPipeline(
-    cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, line_pipeline.pipeline);
-  vkCmdBindDescriptorSets(cmd,
-                          VK_PIPELINE_BIND_POINT_GRAPHICS,
-                          line_pipeline.layout,
-                          0,
-                          1,
-                          &descriptor_set_manager->get_set(frame_index),
-                          0,
-                          nullptr);
+  if (line_instance_count_this_frame > 0) {
+    auto& line_pipeline = line_material->get_pipeline();
+    vkCmdBindPipeline(
+      cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, line_pipeline.pipeline);
+    vkCmdBindDescriptorSets(cmd,
+                            VK_PIPELINE_BIND_POINT_GRAPHICS,
+                            line_pipeline.layout,
+                            0,
+                            1,
+                            &descriptor_set_manager->get_set(frame_index),
+                            0,
+                            nullptr);
 
-  const std::array<VkDeviceSize, 1> offsets = { 0 };
-  const std::array<VkBuffer, 1> buffers = { line_instance_buffer->get() };
-  vkCmdBindVertexBuffers(cmd, 0, 1, buffers.data(), offsets.data());
+    const std::array<VkDeviceSize, 1> line_offsets = { 0 };
+    const std::array<VkBuffer, 1> line_buffers = {
+      line_instance_buffer->get()
+    };
+    vkCmdBindVertexBuffers(cmd, 0, 1, line_buffers.data(), line_offsets.data());
 
-  vkCmdDraw(cmd, 4, line_instance_count_this_frame, 0, 0);
+    vkCmdDraw(cmd, 4, line_instance_count_this_frame, 0, 0);
+  }
 
   vkCmdEndRendering(cmd);
   CoreUtils::cmd_transition_to_shader_read(cmd, geometry_image->get_image());
@@ -1363,27 +1378,42 @@ Renderer::run_shadow_pass(std::uint32_t frame_index, const DrawList& draw_list)
                           0,
                           nullptr);
 
-  for (const auto& [cmd_info, offset, count] : draw_list) {
-    const auto& vertex_buffer = cmd_info.mesh->get_vertex_buffer();
-    const auto& index_buffer = cmd_info.mesh->get_index_buffer();
+  for (const auto& [cmd_info, offset, instance_count] : draw_list) {
+    const auto* submesh = cmd_info.mesh->get_submesh(cmd_info.submesh_index);
+    if (!submesh)
+      continue;
 
-    const std::array vertex_buffers = {
-      vertex_buffer->get(),
-      instance_shadow_vertex_buffer->get(),
-    };
-    constexpr std::array offsets = { 0ULL, 0ULL };
+    const auto& vb = cmd_info.mesh->get_vertex_buffer();
+    const auto& ib = cmd_info.mesh->get_index_buffer();
+
+    const VkDeviceSize vb_offset = submesh->vertex_offset * sizeof(Vertex);
+    const std::array vertex_buffers = { vb->get(),
+                                        instance_vertex_buffer->get() };
+    const std::array offsets = { vb_offset, 0ULL };
+
     vkCmdBindVertexBuffers(cmd,
                            0,
                            static_cast<std::uint32_t>(vertex_buffers.size()),
                            vertex_buffers.data(),
                            offsets.data());
-    vkCmdBindIndexBuffer(
-      cmd, index_buffer->get(), 0, index_buffer->get_index_type());
+    vkCmdBindIndexBuffer(cmd, ib->get(), 0, ib->get_index_type());
+
+    vkCmdBindPipeline(
+      cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, shadow_pipeline.pipeline);
+
+    vkCmdBindDescriptorSets(cmd,
+                            VK_PIPELINE_BIND_POINT_GRAPHICS,
+                            shadow_pipeline.layout,
+                            0,
+                            1,
+                            &descriptor_set_manager->get_set(frame_index),
+                            0,
+                            nullptr);
 
     vkCmdDrawIndexed(cmd,
-                     static_cast<std::uint32_t>(index_buffer->get_count()),
-                     count,
-                     0,
+                     submesh->index_count,
+                     instance_count,
+                     submesh->index_offset,
                      0,
                      offset);
   }

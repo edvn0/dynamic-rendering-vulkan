@@ -24,14 +24,14 @@ AppLayer::AppLayer(const Device& dev,
 {
   Logger::log_info("Here!");
 
-  mesh = std::make_unique<Mesh>();
-  if (mesh->load_from_file(dev, *blueprint_registry, "cerberus/scene.gltf")) {
-  }
-
-  tokyo_mesh = std::make_unique<Mesh>();
-  if (tokyo_mesh->load_from_file(
-        dev, *blueprint_registry, pool, "little_tokyo/scene.gltf")) {
-  }
+  // assert(mesh->load_from_file(dev, *blueprint_registry,
+  // "cerberus/scene.gltf"));
+  assert(tokyo_mesh->load_from_file(
+    dev, *blueprint_registry, pool, "little_tokyo/scene.gltf"));
+  assert(armour_mesh->load_from_file(
+    dev, *blueprint_registry, "battle_armour/scene.gltf"));
+  assert(hunter_mesh->load_from_file(
+    dev, *blueprint_registry, "astro_hunter_special/scene.gltf"));
 
   generate_scene();
 }
@@ -109,7 +109,23 @@ AppLayer::on_render(Renderer& renderer) -> void
       .mesh = tokyo_mesh.get(),
     },
     glm::translate(glm::mat4(1.f), { 0.f, -1.f, 0.f }) *
-      glm::scale(glm::mat4(1.f), { 0.5f, 0.5f, 0.5f }));
+      glm::rotate(
+        glm::mat4{ 1.f }, glm::radians(90.F), glm::vec3(0.0F, 1.0F, 0.0F)) *
+      glm::scale(glm::mat4(1.f), { 0.01f, 0.01f, 0.01f }));
+  renderer.submit(
+    {
+      .mesh = armour_mesh.get(),
+    },
+    glm::translate(glm::mat4(1.f), { 0.f, -1.f, 0.f }) *
+      glm::rotate(
+        glm::mat4{ 1.f }, glm::radians(90.F), glm::vec3(0.0F, 1.0F, 0.0F)));
+  renderer.submit(
+    {
+      .mesh = hunter_mesh.get(),
+    },
+    glm::translate(glm::mat4(1.f), { 0.f, -1.f, 0.f }) *
+      glm::rotate(
+        glm::mat4{ 1.f }, glm::radians(90.F), glm::vec3(0.0F, 1.0F, 0.0F)));
 
   /*static constexpr float line_width = 1.2f;
   static constexpr float line_length = 50.f;

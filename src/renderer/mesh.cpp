@@ -75,6 +75,18 @@ process_mesh_impl(const aiMesh* mesh, glm::mat4 transform, int parent_index)
     raw_indices.insert(
       raw_indices.end(), face.mIndices, face.mIndices + face.mNumIndices);
 
+#ifndef OPTIMISE
+  AABB aabb;
+  for (const auto& v : raw_vertices)
+    aabb.grow(v.position);
+
+  return LoadedSubmesh{ std::move(raw_vertices),
+                        std::move(raw_indices),
+                        aabb,
+                        mesh->mMaterialIndex,
+                        transform,
+                        parent_index };
+#else
   std::vector<uint32_t> remap(raw_indices.size());
   const size_t unique_vertex_count =
     meshopt_generateVertexRemap(remap.data(),
@@ -128,46 +140,16 @@ process_mesh_impl(const aiMesh* mesh, glm::mat4 transform, int parent_index)
   for (const auto& v : optimized_vertices)
     aabb.grow(v.position);
 
-  const unsigned int cache_size = 32;
-  const unsigned int warp_size = 0;
-  const unsigned int primgroup_size = 0;
-
-  auto stats_before = meshopt_analyzeVertexCache(raw_indices.data(),
-                                                 raw_indices.size(),
-                                                 raw_vertices.size(),
-                                                 cache_size,
-                                                 warp_size,
-                                                 primgroup_size);
-
-  auto stats_after = meshopt_analyzeVertexCache(optimized_indices.data(),
-                                                optimized_indices.size(),
-                                                optimized_vertices.size(),
-                                                cache_size,
-                                                warp_size,
-                                                primgroup_size);
-
-  const auto fetch_before = meshopt_analyzeVertexFetch(raw_indices.data(),
-                                                       raw_indices.size(),
-                                                       raw_vertices.size(),
-                                                       sizeof(Vertex))
-                              .bytes_fetched;
-
-  const auto fetch_after = meshopt_analyzeVertexFetch(optimized_indices.data(),
-                                                      optimized_indices.size(),
-                                                      optimized_vertices.size(),
-                                                      sizeof(Vertex))
-                             .bytes_fetched;
-
   Logger::log_info(
-    "Optimized submesh: triangles={}, verts_in={}, verts_out={}, "
-    "ACMR={:.2f} → {:.2f}, fetch={} to {} bytes",
+    "Optimized submesh: triangles={}, verts_in={}, verts_out={}, fetch: {}",
     optimized_indices.size() / 3,
     raw_vertices.size(),
     optimized_vertices.size(),
-    stats_before.acmr,
-    stats_after.acmr,
-    fetch_before,
-    fetch_after);
+    meshopt_analyzeVertexFetch(optimized_indices.data(),
+                               optimized_indices.size(),
+                               optimized_vertices.size(),
+                               sizeof(Vertex))
+      .bytes_fetched);
 
   return LoadedSubmesh{ std::move(optimized_vertices),
                         std::move(optimized_indices),
@@ -175,6 +157,7 @@ process_mesh_impl(const aiMesh* mesh, glm::mat4 transform, int parent_index)
                         mesh->mMaterialIndex,
                         transform,
                         parent_index };
+#endif
 }
 
 void
@@ -688,26 +671,32 @@ Mesh::load_from_file(const Device& device,
 
   process_node(scene->mRootNode, -1);
 
-  std::unordered_map<int, std::vector<int32_t>> parent_to_children;
+  std::unordered_map<int, std::vector<std::int32_t>> parent_to_children;
   for (auto& future : futures) {
     auto result = future.get();
-    const auto vertex_offset = static_cast<uint32_t>(vertices.size());
-    const auto index_offset = static_cast<uint32_t>(indices.size());
+    const auto vertex_offset = static_cast<std::uint32_t>(vertices.size());
+    const auto index_offset = static_cast<std::uint32_t>(indices.size());
     vertices.insert(
       vertices.end(), result.vertices.begin(), result.vertices.end());
     indices.insert(indices.end(), result.indices.begin(), result.indices.end());
-    const int submesh_index = static_cast<int>(submeshes.size());
+    const auto submesh_index = static_cast<std::int32_t>(submeshes.size());
+
+    const auto vertex_count =
+      static_cast<std::uint32_t>(result.vertices.size());
+    const auto index_count = static_cast<std::uint32_t>(result.indices.size());
+
     submeshes.push_back(Submesh{
       .vertex_offset = vertex_offset,
-      .vertex_count = static_cast<std::uint32_t>(vertices.size()),
+      .vertex_count = vertex_count,
       .index_offset = index_offset,
-      .index_count = static_cast<std::uint32_t>(indices.size()),
+      .index_count = index_count,
       .material_index = result.material_index,
       .child_transform = result.transform,
       .parent_index = result.parent_index,
       .children = {},
       .local_aabb = result.aabb,
     });
+
     if (result.parent_index >= 0)
       parent_to_children[result.parent_index].push_back(submesh_index);
   }
