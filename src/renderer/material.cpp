@@ -5,6 +5,7 @@
 #include "core/device.hpp"
 #include "core/gpu_buffer.hpp"
 #include "core/image.hpp"
+#include "renderer/renderer.hpp"
 
 #include <algorithm>
 #include <cassert>
@@ -362,21 +363,6 @@ Material::Material(
   , descriptor_pool(pool)
   , pipeline(std::move(pipe))
 {
-  white_texture = Image::create(*device,
-                                {
-                                  .extent = { 1, 1 },
-                                  .format = VK_FORMAT_R8G8B8A8_UNORM,
-                                  .usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
-                                           VK_IMAGE_USAGE_SAMPLED_BIT |
-                                           VK_IMAGE_USAGE_TRANSFER_DST_BIT,
-                                  .sample_count = VK_SAMPLE_COUNT_1_BIT,
-                                  .allow_in_ui = false,
-                                  .debug_name = "white_texture",
-                                });
-  static constexpr std::array<unsigned char, 4> white_pixel = {
-    0xff, 0xff, 0xff, 0xff
-  };
-  white_texture->upload_rgba(white_pixel);
   upload_default_textures();
 }
 
@@ -475,7 +461,7 @@ Material::upload_default_textures() -> void
 
   for (const auto& name : names) {
     if (binding_info.contains(name)) {
-      upload(name, white_texture.get());
+      upload(name, Renderer::get_white_texture());
     }
   }
 }

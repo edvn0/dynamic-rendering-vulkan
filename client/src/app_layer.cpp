@@ -27,6 +27,12 @@ AppLayer::AppLayer(const Device& dev,
   mesh = std::make_unique<Mesh>();
   if (mesh->load_from_file(dev, *blueprint_registry, "cerberus/scene.gltf")) {
   }
+
+  tokyo_mesh = std::make_unique<Mesh>();
+  if (tokyo_mesh->load_from_file(
+        dev, *blueprint_registry, pool, "little_tokyo/scene.gltf")) {
+  }
+
   generate_scene();
 }
 
@@ -92,15 +98,20 @@ AppLayer::on_render(Renderer& renderer) -> void
   light_env.light_position = light_position;
   light_env.light_color = light_color;
 
-  for (const auto& transform : cerberus_transforms) {
-    renderer.submit(
-      {
-        .mesh = mesh.get(),
-      },
-      transform);
-  }
+  renderer.submit(
+    {
+      .mesh = mesh.get(),
+    },
+    glm::mat4(1.f));
 
-  static constexpr float line_width = 1.2f;
+  renderer.submit(
+    {
+      .mesh = tokyo_mesh.get(),
+    },
+    glm::translate(glm::mat4(1.f), { 0.f, -1.f, 0.f }) *
+      glm::scale(glm::mat4(1.f), { 0.5f, 0.5f, 0.5f }));
+
+  /*static constexpr float line_width = 1.2f;
   static constexpr float line_length = 50.f;
 
   renderer.submit_lines({ 0.f, 0.f, 0.f },
@@ -131,7 +142,7 @@ AppLayer::on_render(Renderer& renderer) -> void
         .casts_shadows = true,
       },
       transform);
-  }
+  }*/
 }
 
 auto
@@ -158,24 +169,4 @@ AppLayer::generate_scene() -> void
     glm::translate(glm::mat4(1.0f), glm::vec3(6.0f, -1.0f, 6.0f)) *
     glm::scale(glm::mat4(1.0f), glm::vec3(24.0f, 1.0f, 24.0f));
   transforms.insert(transforms.begin(), ground);
-
-  cerberus_transforms.clear();
-  std::mt19937 rng{ std::random_device{}() };
-  std::uniform_real_distribution<float> pos_dist(-20.f, 20.f);
-  std::uniform_real_distribution<float> height_dist(1.f, 10.f);
-  std::uniform_real_distribution<float> angle_dist(0.f, glm::two_pi<float>());
-
-  auto scale = glm::scale(glm::mat4(1.f), glm::vec3(0.05f, 0.05f, 0.05f));
-
-  for (int i = 0; i < 500; ++i) {
-    glm::vec3 position{ pos_dist(rng), height_dist(rng), pos_dist(rng) };
-    float angle = angle_dist(rng);
-    glm::vec3 axis =
-      glm::normalize(glm::vec3(pos_dist(rng), pos_dist(rng), pos_dist(rng)));
-
-    glm::mat4 transform = glm::translate(glm::mat4(1.f), position) *
-                          glm::rotate(glm::mat4(1.f), angle, axis) * scale;
-
-    cerberus_transforms.push_back(transform);
-  }
 }

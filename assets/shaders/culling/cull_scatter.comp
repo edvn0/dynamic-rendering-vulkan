@@ -1,0 +1,42 @@
+#version 450
+#include "set0.glsl"
+
+layout(local_size_x = 64) in;
+
+struct InstanceData {
+  mat4 transform;
+};
+
+layout(std430, set = 1, binding = 0) readonly buffer InstanceInput {
+  InstanceData instances[];
+};
+
+layout(std430, set = 1, binding = 1) readonly buffer VisibilityInput {
+  uint visibility[];
+};
+
+layout(std430, set = 1, binding = 2) readonly buffer PrefixSumInput {
+  uint prefix_sum[];
+};
+
+layout(std430, set = 1, binding = 3) buffer InstanceOutput {
+  InstanceData culled_instances[];
+};
+
+layout(std430, set = 1, binding = 4) buffer Counter {
+  uint culled_instance_count;
+};
+
+void main()
+{
+  uint id = gl_GlobalInvocationID.x;
+  if (id >= instances.length()) return;
+
+  if (visibility[id] == 1) {
+    uint index = prefix_sum[id];
+    culled_instances[index] = instances[id];
+
+    if (id == instances.length() - 1 || visibility[id + 1] == 0)
+      culled_instance_count = index + 1;
+  }
+}

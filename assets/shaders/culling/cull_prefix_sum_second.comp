@@ -1,0 +1,35 @@
+#version 450
+#include "set0.glsl"
+
+layout(local_size_x = 64) in;
+
+layout(std430, set = 1, binding = 0) buffer WorkgroupSums {
+  uint group_totals[];
+};
+
+layout(std430, set = 1, binding = 1) buffer WorkgroupPrefix {
+  uint group_prefix[];
+};
+
+shared uint temp[64];
+
+void main() {
+  uint id = gl_GlobalInvocationID.x;
+  if (id >= group_totals.length())
+    return;
+
+  temp[id] = group_totals[id];
+  memoryBarrierShared();
+  barrier();
+
+  for (uint offset = 1; offset < 64; offset <<= 1) {
+    uint val = 0;
+    if (id >= offset)
+      val = temp[id - offset];
+    barrier();
+    temp[id] += val;
+    barrier();
+  }
+
+  group_prefix[id] = id == 0 ? 0 : temp[id - 1];
+}

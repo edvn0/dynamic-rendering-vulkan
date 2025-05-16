@@ -22,12 +22,17 @@
 
 enum class RenderPass : std::uint8_t
 {
+  Invalid,
   MainGeometry,
   Shadow,
   Line,
   ZPrepass,
   ColourCorrection,
-  ComputeCulling,
+  ComputePrefixCullingFirst,
+  ComputePrefixCullingSecond,
+  ComputePrefixCullingDistribute,
+  ComputeCullingScatter,
+  ComputeCullingVisibility,
   Skybox
 };
 auto
@@ -94,12 +99,15 @@ public:
   {
     camera_frustum.update(vp);
   }
+
   auto get_light_environment() -> auto& { return light_environment; }
   [[nodiscard]] auto get_material_by_name(const std::string& name) const
     -> Material*
   {
     switch (to_renderpass(name)) {
       using enum RenderPass;
+      case Invalid:
+        return nullptr;
       case MainGeometry:
         return geometry_material.get();
       case Shadow:
@@ -110,10 +118,18 @@ public:
         return z_prepass_material.get();
       case ColourCorrection:
         return colour_corrected_material.get();
-      case ComputeCulling:
-        return cull_instances_compute_material.get();
       case Skybox:
         return skybox_material.get();
+      case ComputePrefixCullingFirst:
+        return cull_prefix_sum_material_first.get();
+      case ComputePrefixCullingSecond:
+        return cull_prefix_sum_material_second.get();
+      case ComputePrefixCullingDistribute:
+        return cull_prefix_sum_material_distribute.get();
+      case ComputeCullingScatter:
+        return cull_scatter_material.get();
+      case ComputeCullingVisibility:
+        return cull_visibility_material.get();
       default:
         assert(false && "Unknown render pass name");
         return nullptr;
@@ -121,6 +137,7 @@ public:
   }
   [[nodiscard]] auto get_renderer_descriptor_set_layout(
     Badge<AssetReloader>) const -> VkDescriptorSetLayout;
+  static auto get_white_texture() { return white_texture.get(); }
 
 private:
   const Device* device{ nullptr };
@@ -160,9 +177,17 @@ private:
   std::unique_ptr<Material> line_material;
 
   std::uint32_t instance_count_this_frame{ 0 };
-  std::unique_ptr<Material> cull_instances_compute_material;
   std::unique_ptr<GPUBuffer> culled_instance_vertex_buffer;
   std::unique_ptr<GPUBuffer> culled_instance_count_buffer;
+  std::unique_ptr<GPUBuffer> visibility_buffer;
+  std::unique_ptr<GPUBuffer> workgroup_sum_buffer;
+  std::unique_ptr<GPUBuffer> workgroup_sum_prefix_buffer;
+  std::unique_ptr<GPUBuffer> prefix_sum_buffer;
+  std::unique_ptr<Material> cull_visibility_material;
+  std::unique_ptr<Material> cull_scatter_material;
+  std::unique_ptr<Material> cull_prefix_sum_material_first;
+  std::unique_ptr<Material> cull_prefix_sum_material_second;
+  std::unique_ptr<Material> cull_prefix_sum_material_distribute;
 
   std::vector<LineInstanceData> line_instances{};
   std::unique_ptr<GPUBuffer> line_instance_buffer{};
@@ -188,7 +213,6 @@ private:
   auto run_z_prepass(std::uint32_t, const DrawList&) -> void;
   auto run_geometry_pass(std::uint32_t, const DrawList&) -> void;
   auto run_composite_pass(std::uint32_t) -> void;
-  auto run_line_pass(std::uint32_t) -> void;
   auto run_colour_correction_pass(std::uint32_t) -> void;
   auto run_postprocess_passes(const std::uint32_t frame_index) -> void
   {
@@ -196,4 +220,6 @@ private:
   }
 
   auto destroy() -> void;
+
+  static inline std::unique_ptr<Image> white_texture{ nullptr };
 };

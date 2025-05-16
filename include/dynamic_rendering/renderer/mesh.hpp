@@ -1,7 +1,5 @@
 #pragma once
 
-#pragma once
-
 #include "core/device.hpp"
 #include "core/forward.hpp"
 #include "core/gpu_buffer.hpp"
@@ -9,6 +7,7 @@
 #include "core/util.hpp"
 #include "renderer/material.hpp"
 
+#include <BS_thread_pool.hpp>
 #include <glm/glm.hpp>
 
 #include <memory>
@@ -17,6 +16,9 @@
 #include <unordered_map>
 #include <vector>
 #include <vulkan/vulkan.h>
+
+struct aiScene;
+struct aiMesh;
 
 struct AABB
 {
@@ -116,6 +118,16 @@ struct Submesh
   AABB local_aabb;
 };
 
+struct LoadedSubmesh
+{
+  std::vector<Vertex> vertices;
+  std::vector<std::uint32_t> indices;
+  AABB aabb;
+  std::uint32_t material_index;
+  glm::mat4 transform;
+  std::int32_t parent_index;
+};
+
 class Mesh
 {
 public:
@@ -124,6 +136,10 @@ public:
 
   auto load_from_file(const Device&,
                       const BlueprintRegistry&,
+                      const std::string& path) -> bool;
+  auto load_from_file(const Device&,
+                      const BlueprintRegistry&,
+                      BS::priority_thread_pool*,
                       const std::string& path) -> bool;
   static auto load_from_memory(const Device&,
                                const BlueprintRegistry&,
@@ -175,6 +191,12 @@ public:
     return submeshes.at(submesh_index)
       .local_aabb.transformed(get_world_transform(submesh_index));
   }
+
+  auto upload_materials(const aiScene*,
+                        const Device&,
+                        const BlueprintRegistry&,
+                        const std::string&) -> void;
+  auto process_mesh(const aiMesh*, glm::mat4, std::int32_t) -> LoadedSubmesh;
 
 private:
   std::vector<Vertex> vertices;

@@ -1,0 +1,22 @@
+#version 450
+#include "set0.glsl"
+
+layout(local_size_x = 64) in;
+
+layout(std430, set = 1, binding = 0) buffer PrefixSumOutput {
+  uint prefix_sum[];
+};
+
+layout(std430, set = 1, binding = 1) readonly buffer WorkgroupPrefix {
+  uint group_prefix[];
+};
+
+void main() {
+  uint global_id = gl_GlobalInvocationID.x;
+  uint group_id = gl_WorkGroupID.x;
+
+  if (global_id >= prefix_sum.length())
+    return;
+
+  prefix_sum[global_id] += group_prefix[group_id];
+}

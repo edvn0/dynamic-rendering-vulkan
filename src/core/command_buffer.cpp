@@ -231,23 +231,31 @@ auto
 CommandBuffer::resolve_timers(uint32_t frame_index) const
   -> std::vector<TimedSection>
 {
+  constexpr uint32_t delay_frames = 2;
+  uint32_t resolve_index =
+    (frame_index + frames_in_flight - delay_frames) % frames_in_flight;
+
   std::vector<TimedSection> resolved;
-  if (timer_sections[frame_index].empty())
+  if (timer_sections[resolve_index].empty())
     return resolved;
 
-  uint32_t max_query = next_query_index[frame_index];
+  uint32_t max_query = next_query_index[resolve_index];
   std::vector<uint64_t> raw(max_query);
 
-  vkGetQueryPoolResults(device->get_device(),
-                        query_pools[frame_index],
-                        0,
-                        max_query,
-                        sizeof(uint64_t) * raw.size(),
-                        raw.data(),
-                        sizeof(uint64_t),
-                        VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT);
+  auto result =
+    vkGetQueryPoolResults(device->get_device(),
+                          query_pools[resolve_index],
+                          0,
+                          max_query,
+                          sizeof(uint64_t) * raw.size(),
+                          raw.data(),
+                          sizeof(uint64_t),
+                          VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT);
 
-  for (auto& [_, section] : timer_sections[frame_index]) {
+  if (result != VK_SUCCESS)
+    return resolved;
+
+  for (auto& [_, section] : timer_sections[resolve_index]) {
     if (section.end_query > section.begin_query) {
       auto delta = (raw[section.end_query] - raw[section.begin_query]) *
                    timestamp_period * 1e-6;
