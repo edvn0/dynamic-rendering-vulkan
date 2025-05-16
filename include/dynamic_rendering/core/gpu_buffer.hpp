@@ -14,12 +14,14 @@ template<typename T>
 concept AdmitsGPUBuffer =
   std::is_trivially_copyable_v<T> && std::is_trivially_destructible_v<T>;
 
+using byte_span = std::span<const std::byte>;
+
 class GPUBuffer;
 
 auto
 upload_to_device_buffer(const Device& device,
                         GPUBuffer& target_buffer,
-                        std::span<const std::byte> data,
+                        byte_span data,
                         std::size_t offset = 0ULL) -> void;
 
 class GPUBuffer
@@ -51,7 +53,7 @@ public:
   auto get() const -> const VkBuffer& { return buffer; }
   auto get_size() const -> const auto& { return current_size; }
 
-  auto set_name(std::string_view name) -> void
+  auto set_name(const std::string_view name) -> void
   {
     debug_name = std::string(name);
     if (buffer && allocation) {
@@ -68,23 +70,19 @@ public:
       recreate(required_size);
 
     if (!mapped_on_create) {
-      upload_to_device_buffer(
-        device,
-        *this,
-        std::span<const std::byte>{
-          reinterpret_cast<const std::byte*>(data.data()), data.size_bytes() });
+      upload_to_device_buffer(device, *this, std::as_bytes(data));
       return;
     }
 
     void* mapped = persistent_ptr;
     if (!mapped) {
-      vmaMapMemory(device.get_allocator().get(), allocation, &mapped);
+      map(mapped);
     }
 
     std::memcpy(mapped, data.data(), required_size);
 
     if (!persistent_ptr) {
-      vmaUnmapMemory(device.get_allocator().get(), allocation);
+      unmap();
     }
   }
 
@@ -103,26 +101,24 @@ public:
       recreate(required_size);
 
     if (!mapped_on_create) {
-      upload_to_device_buffer(
-        device,
-        *this,
-        std::span<const std::byte>{
-          std::bit_cast<const std::byte*>(data.data()), data.size_bytes() },
-        offset_bytes);
+      upload_to_device_buffer(device, *this, std::as_bytes(data), offset_bytes);
       return;
     }
 
     void* mapped = persistent_ptr;
-    if (!mapped) {
-      vmaMapMemory(device.get_allocator().get(), allocation, &mapped);
+    if (nullptr == mapped) {
+      map(mapped);
     }
 
-    std::memcpy(static_cast<std::byte*>(mapped) + offset_bytes,
+    if (nullptr == mapped)
+      assert(false && "Could not map the buffer");
+
+    std::memcpy(offset_bytes + static_cast<std::byte*>(mapped),
                 data.data(),
                 data.size_bytes());
 
-    if (!persistent_ptr) {
-      vmaUnmapMemory(device.get_allocator().get(), allocation);
+    if (nullptr == persistent_ptr) {
+      unmap();
     }
   }
 
@@ -172,6 +168,9 @@ private:
   bool mapped_on_create{};
   std::size_t current_size{ 0 };
   std::string debug_name;
+
+  auto map(Pointers::transparent) const -> void;
+  auto unmap() const -> void;
 };
 
 class IndexBuffer

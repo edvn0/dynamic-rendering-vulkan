@@ -50,11 +50,17 @@ Shader::load_binary(std::string_view file_path,
   if (path.extension() != ".spv")
     path += ".spv";
 
-  const auto stripped = path.generic_string().starts_with("shaders/")
-                          ? path.lexically_relative("shaders")
-                          : path;
+  auto stripped = path.generic_string().starts_with("shaders/")
+                    ? path.lexically_relative("shaders")
+                    : path;
 
-  auto shader_path = assets_path() / "shaders" / stripped;
+  // Replace slashes with OS-specific separators
+  auto stripped_string = stripped.generic_string();
+  for (auto& c : stripped_string)
+    if (c == '/')
+      c = std::filesystem::path::preferred_separator;
+
+  auto shader_path = assets_path() / "shaders" / stripped_string;
   std::vector<std::uint32_t> temp;
   auto result = FS::load_binary(shader_path, temp);
   if (!result)

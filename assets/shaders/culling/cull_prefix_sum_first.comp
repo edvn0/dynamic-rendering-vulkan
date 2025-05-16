@@ -1,0 +1,48 @@
+#version 450
+#include "set0.glsl"
+
+layout(local_size_x = 64) in;
+
+layout(std430, set = 1, binding = 0) buffer VisibilityInput {
+  uint visibility[];
+};
+
+layout(std430, set = 1, binding = 1) buffer PrefixSumOutput {
+  uint prefix_sum[];
+};
+
+layout(std430, set = 1, binding = 2) buffer WorkgroupSums {
+  uint group_totals[];
+};
+
+shared uint temp[64];
+
+void main() {
+  uint global_id = gl_GlobalInvocationID.x;
+  uint local_id = gl_LocalInvocationID.x;
+  uint group_id = gl_WorkGroupID.x;
+
+  if (global_id >= visibility.length())
+    return;
+
+  temp[local_id] = visibility[global_id];
+  memoryBarrierShared();
+  barrier();
+
+  for (uint offset = 1; offset < 64; offset <<= 1) {
+    uint val = 0;
+    if (local_id >= offset)
+      val = temp[local_id - offset];
+    barrier();
+    temp[local_id] += val;
+    barrier();
+  }
+
+  uint inclusive = temp[local_id];
+  uint exclusive = inclusive - visibility[global_id];
+
+  prefix_sum[global_id] = exclusive;
+
+  if (local_id == 63)
+    group_totals[group_id] = inclusive;
+}

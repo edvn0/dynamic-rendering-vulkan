@@ -1,0 +1,3 @@
+shaders:
+  - stage: compute
+    path: cull_prefix_sum_first.comp

@@ -19,7 +19,7 @@ create_logger() -> std::shared_ptr<spdlog::logger>
 #endif
   auto logger =
     std::make_shared<spdlog::logger>("default", sinks.begin(), sinks.end());
-  logger->set_pattern("[%H:%M:%S %z] [%^%l%$] %v");
+  logger->set_pattern("[%H:%M:%S %z] [%t %^%l%$] %v");
   logger->set_level(spdlog::level::debug);
   spdlog::set_default_logger(logger);
   return logger;

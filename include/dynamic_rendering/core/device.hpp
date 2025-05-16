@@ -39,6 +39,10 @@ public:
   auto wait_idle() const -> void;
 
   auto destroy() -> void;
+  auto create_resettable_command_pool() const -> VkCommandPool;
+  auto allocate_secondary_command_buffer(VkCommandPool) const
+    -> VkCommandBuffer;
+  auto allocate_primary_command_buffer(VkCommandPool) const -> VkCommandBuffer;
 
 private:
   explicit Device(const Core::Instance&, const vkb::Device&);

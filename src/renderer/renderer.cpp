@@ -110,15 +110,26 @@ to_renderpass(const std::string_view name) -> RenderPass
   if (name == "colour_correction") {
     return RenderPass::ColourCorrection;
   }
-  if (name == "compute_culling") {
-    return RenderPass::ComputeCulling;
-  }
   if (name == "skybox") {
     return RenderPass::Skybox;
   }
+  if (name == "cull_prefix_sum_first") {
+    return RenderPass::ComputePrefixCullingFirst;
+  }
+  if (name == "cull_prefix_sum_second") {
+    return RenderPass::ComputePrefixCullingSecond;
+  }
+  if (name == "cull_prefix_sum_distribute") {
+    return RenderPass::ComputePrefixCullingDistribute;
+  }
+  if (name == "cull_scatter") {
+    return RenderPass::ComputeCullingScatter;
+  }
+  if (name == "cull_visibility") {
+    return RenderPass::ComputeCullingVisibility;
+  }
 
-  assert(false && "Unknown render pass name");
-  return RenderPass::MainGeometry;
+  return RenderPass::Invalid;
 }
 
 Renderer::Renderer(const Device& dev,
@@ -330,14 +341,6 @@ Renderer::Renderer(const Device& dev,
   }
 
   {
-    auto result =
-      Material::create(*device, blueprint_registry->get("compute_culling"));
-
-    if (result.has_value()) {
-      cull_instances_compute_material = std::move(result.value());
-    } else {
-      assert(false && "Failed to create compute culling material.");
-    }
 
     culled_instance_count_buffer = std::make_unique<GPUBuffer>(
       *device, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, true);
@@ -356,13 +359,93 @@ Renderer::Renderer(const Device& dev,
       culled_instance_vertex_buffer->upload(
         std::span{ bytes.get(), instance_size_bytes });
     }
+    {
 
-    cull_instances_compute_material->upload("InstanceInput",
-                                            instance_vertex_buffer.get());
-    cull_instances_compute_material->upload(
-      "InstanceOutput", culled_instance_vertex_buffer.get());
-    cull_instances_compute_material->upload("CounterBuffer",
-                                            culled_instance_count_buffer.get());
+      visibility_buffer =
+        GPUBuffer::zero_initialise(*device,
+                                   sizeof(std::uint32_t) * 1'000'000,
+                                   VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                                   true,
+                                   "visibility_buffer");
+
+      prefix_sum_buffer =
+        GPUBuffer::zero_initialise(*device,
+                                   sizeof(std::uint32_t) * 1'000'000,
+                                   VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                                   true,
+                                   "prefix_sum_buffer");
+
+      static constexpr std::size_t max_workgroups = 16384;
+
+      workgroup_sum_buffer =
+        GPUBuffer::zero_initialise(*device,
+                                   sizeof(std::uint32_t) * max_workgroups,
+                                   VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                                   true,
+                                   "workgroup_sum_buffer");
+
+      workgroup_sum_prefix_buffer =
+        GPUBuffer::zero_initialise(*device,
+                                   sizeof(std::uint32_t) * max_workgroups,
+                                   VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                                   true,
+                                   "workgroup_sum_prefix_buffer");
+    }
+
+    auto result =
+      Material::create(*device, blueprint_registry->get("cull_visibility"));
+    assert(result.has_value());
+    cull_visibility_material = std::move(result.value());
+
+    result = Material::create(*device, blueprint_registry->get("cull_scatter"));
+    assert(result.has_value());
+    cull_scatter_material = std::move(result.value());
+
+    cull_prefix_sum_material_first =
+      Material::create(*device,
+                       blueprint_registry->get("cull_prefix_sum_first"))
+        .value();
+
+    cull_prefix_sum_material_second =
+      Material::create(*device,
+                       blueprint_registry->get("cull_prefix_sum_second"))
+        .value();
+
+    cull_prefix_sum_material_distribute =
+      Material::create(*device,
+                       blueprint_registry->get("cull_prefix_sum_distribute"))
+        .value();
+
+    cull_visibility_material->upload("InstanceInput",
+                                     instance_vertex_buffer.get());
+    cull_visibility_material->upload("VisibilityOutput",
+                                     visibility_buffer.get());
+
+    cull_scatter_material->upload("InstanceInput",
+                                  instance_vertex_buffer.get());
+    cull_scatter_material->upload("VisibilityInput", visibility_buffer.get());
+    cull_scatter_material->upload("PrefixSumInput", prefix_sum_buffer.get());
+    cull_scatter_material->upload("InstanceOutput",
+                                  culled_instance_vertex_buffer.get());
+    cull_scatter_material->upload("Counter",
+                                  culled_instance_count_buffer.get());
+
+    cull_prefix_sum_material_first->upload("VisibilityInput",
+                                           visibility_buffer.get());
+    cull_prefix_sum_material_first->upload("PrefixSumOutput",
+                                           prefix_sum_buffer.get());
+    cull_prefix_sum_material_first->upload("WorkgroupSums",
+                                           workgroup_sum_buffer.get());
+
+    cull_prefix_sum_material_second->upload("WorkgroupSums",
+                                            workgroup_sum_buffer.get());
+    cull_prefix_sum_material_second->upload("WorkgroupPrefix",
+                                            workgroup_sum_prefix_buffer.get());
+
+    cull_prefix_sum_material_distribute->upload("PrefixSumOutput",
+                                                prefix_sum_buffer.get());
+    cull_prefix_sum_material_distribute->upload(
+      "WorkgroupPrefix", workgroup_sum_prefix_buffer.get());
   }
 
   camera_uniform_buffer =
@@ -389,6 +472,22 @@ Renderer::Renderer(const Device& dev,
                        frustum_buffer.get() };
   std::array images{ shadow_depth_image.get() };
   descriptor_set_manager->allocate_sets(std::span(uniforms), std::span(images));
+
+  white_texture = Image::create(*device,
+                                {
+                                  .extent = { 1, 1 },
+                                  .format = VK_FORMAT_R8G8B8A8_UNORM,
+                                  .usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
+                                           VK_IMAGE_USAGE_SAMPLED_BIT |
+                                           VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                                  .sample_count = VK_SAMPLE_COUNT_1_BIT,
+                                  .allow_in_ui = false,
+                                  .debug_name = "white_texture",
+                                });
+  static constexpr std::array<unsigned char, 4> white_pixel = {
+    0xff, 0xff, 0xff, 0xff
+  };
+  white_texture->upload_rgba(white_pixel);
 }
 
 auto
@@ -401,6 +500,7 @@ Renderer::get_renderer_descriptor_set_layout(Badge<AssetReloader>) const
 auto
 Renderer::destroy() -> void
 {
+  white_texture.reset();
 }
 
 Renderer::~Renderer()
@@ -411,6 +511,10 @@ Renderer::~Renderer()
 auto
 Renderer::submit(const DrawCommand& cmd, const glm::mat4& transform) -> void
 {
+  if (cmd.mesh == nullptr) {
+    return;
+  }
+
   for (auto& submesh : cmd.mesh->get_submeshes()) {
     auto command = DrawCommand{
       .mesh = cmd.mesh,
@@ -609,7 +713,7 @@ Renderer::end_frame(std::uint32_t frame_index) -> void
 {
   ZoneScoped;
 
-  if ((shadow_draw_commands.empty() && draw_commands.empty()))
+  if (shadow_draw_commands.empty() && draw_commands.empty())
     return;
 
   DrawList flat_shadow_draw_commands;
@@ -633,10 +737,12 @@ Renderer::end_frame(std::uint32_t frame_index) -> void
   auto&& [should_geom_cull, should_shadow_cull] = submit_tuple_and_wait(
     *thread_pool,
     [&] {
+      ZoneScopedN("Geom Culling");
       return DrawListManager::should_perform_culling(draw_commands,
                                                      culling_threshold);
     },
     [&] {
+      ZoneScopedN("Shadow Culling");
       return DrawListManager::should_perform_culling(shadow_draw_commands,
                                                      culling_threshold);
     });
@@ -694,16 +800,21 @@ Renderer::end_frame(std::uint32_t frame_index) -> void
     uploads.count_down();
   });
 
-  uploads_remaining.wait();
+  {
+    ZoneScopedN("Performance uploads");
+    uploads_remaining.wait();
+  }
 
-  command_buffer->begin_frame(frame_index);
+  {
+    ZoneScopedN("Begin command buffer");
+    command_buffer->begin_frame(frame_index);
+  }
   run_culling_compute_pass(frame_index);
 
   run_skybox_pass(frame_index);
   run_shadow_pass(frame_index, flat_shadow_draw_commands);
   run_z_prepass(frame_index, flat_draw_commands);
   run_geometry_pass(frame_index, flat_draw_commands);
-  run_line_pass(frame_index);
 
   run_composite_pass(frame_index);
   run_postprocess_passes(frame_index);
@@ -1063,135 +1174,6 @@ Renderer::run_geometry_pass(std::uint32_t frame_index,
                      offset);
   }
 
-  vkCmdEndRendering(cmd);
-  CoreUtils::cmd_transition_to_shader_read(cmd, geometry_image->get_image());
-
-  command_buffer->end_timer(frame_index, "geometry_pass");
-}
-
-auto
-Renderer::run_culling_compute_pass(std::uint32_t frame_index) -> void
-{
-  ZoneScopedN("Compute pass");
-
-  compute_command_buffer->begin_frame(frame_index);
-  compute_command_buffer->begin_timer(frame_index, "cull_instances");
-
-  const auto cmd = compute_command_buffer->get(frame_index);
-
-  static constexpr std::uint32_t zero = 0;
-  culled_instance_count_buffer->upload(std::span{ &zero, 1 });
-
-  auto& cull_pipeline = cull_instances_compute_material->get_pipeline();
-  const auto cull_descriptor_set =
-    cull_instances_compute_material->prepare_for_rendering(frame_index);
-
-  const std::array descriptor_sets{
-    descriptor_set_manager->get_set(frame_index),
-    cull_descriptor_set,
-  };
-
-  vkCmdBindPipeline(cmd, cull_pipeline.bind_point, cull_pipeline.pipeline);
-
-  vkCmdBindDescriptorSets(cmd,
-                          cull_pipeline.bind_point,
-                          cull_pipeline.layout,
-                          0,
-                          static_cast<std::uint32_t>(descriptor_sets.size()),
-                          descriptor_sets.data(),
-                          0,
-                          nullptr);
-
-  const uint32_t num_instances =
-    instance_count_this_frame; // whatever your max is
-  const uint32_t group_count = (num_instances + 63) / 64;
-  vkCmdDispatch(cmd, group_count, 1, 1);
-
-  compute_command_buffer->end_timer(frame_index, "cull_instances");
-
-  compute_command_buffer->submit_and_end(frame_index);
-  compute_command_buffer->wait_for_fence(frame_index);
-
-  std::uint32_t cull_count = 0;
-  if (!culled_instance_count_buffer->read_into_with_offset(cull_count, 0)) {
-    Logger::log_error("Failed to read cull count from buffer");
-  }
-}
-
-auto
-Renderer::run_line_pass(std::uint32_t frame_index) -> void
-{
-  ZoneScopedN("Line pass");
-
-  command_buffer->begin_timer(frame_index, "line_pass");
-
-  const VkCommandBuffer cmd = command_buffer->get(frame_index);
-
-  CoreUtils::cmd_transition_image(
-    cmd,
-    {
-      .image = geometry_image->get_image(),
-      .old_layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-      .new_layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-      .src_access_mask = VK_ACCESS_SHADER_READ_BIT,
-      .dst_access_mask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
-      .src_stage_mask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-      .dst_stage_mask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-    });
-
-  VkRenderingAttachmentInfo color_attachment{
-    .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
-    .pNext = nullptr,
-    .imageView = geometry_msaa_image->get_view(),
-    .imageLayout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
-    .resolveMode = VK_RESOLVE_MODE_AVERAGE_BIT_KHR,
-    .resolveImageView = geometry_image->get_view(),
-    .resolveImageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-    .loadOp = VK_ATTACHMENT_LOAD_OP_LOAD,
-    .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
-    .clearValue = {}
-  };
-
-  VkRenderingAttachmentInfo depth_attachment{
-    .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
-    .pNext = nullptr,
-    .imageView = geometry_depth_image->get_view(),
-    .imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
-    .resolveMode = VK_RESOLVE_MODE_NONE,
-    .resolveImageView = VK_NULL_HANDLE,
-    .resolveImageLayout = VK_IMAGE_LAYOUT_UNDEFINED,
-    .loadOp = VK_ATTACHMENT_LOAD_OP_LOAD,
-    .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
-    .clearValue = {}
-  };
-
-  const VkRenderingInfo rendering_info{
-    .sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
-    .pNext = nullptr,
-    .flags = 0,
-    .renderArea = { { 0, 0 },
-                    { geometry_image->width(), geometry_image->height() } },
-    .layerCount = 1,
-    .viewMask = 0,
-    .colorAttachmentCount = 1,
-    .pColorAttachments = &color_attachment,
-    .pDepthAttachment = &depth_attachment,
-    .pStencilAttachment = nullptr,
-  };
-
-  vkCmdBeginRendering(cmd, &rendering_info);
-
-  const VkViewport viewport{
-    .x = 0.f,
-    .y = static_cast<float>(geometry_image->height()),
-    .width = static_cast<float>(geometry_image->width()),
-    .height = -static_cast<float>(geometry_image->height()),
-    .minDepth = 1.f,
-    .maxDepth = 0.f,
-  };
-  vkCmdSetViewport(cmd, 0, 1, &viewport);
-  vkCmdSetScissor(cmd, 0, 1, &rendering_info.renderArea);
-
   auto& line_pipeline = line_material->get_pipeline();
   vkCmdBindPipeline(
     cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, line_pipeline.pipeline);
@@ -1212,7 +1194,99 @@ Renderer::run_line_pass(std::uint32_t frame_index) -> void
 
   vkCmdEndRendering(cmd);
   CoreUtils::cmd_transition_to_shader_read(cmd, geometry_image->get_image());
-  command_buffer->end_timer(frame_index, "line_pass");
+
+  command_buffer->end_timer(frame_index, "geometry_pass");
+}
+
+auto
+Renderer::run_culling_compute_pass(std::uint32_t frame_index) -> void
+{
+  ZoneScopedN("Compute pass");
+
+  compute_command_buffer->begin_frame(frame_index);
+  compute_command_buffer->begin_timer(frame_index, "gpu_culling");
+
+  const auto cmd = compute_command_buffer->get(frame_index);
+
+  static constexpr std::uint32_t zero = 0;
+  culled_instance_count_buffer->upload(std::span{ &zero, 1 });
+
+  const std::uint32_t local_size = 64;
+  const std::uint32_t num_instances = instance_count_this_frame;
+  const std::uint32_t group_count =
+    (num_instances + local_size - 1) / local_size;
+
+  auto dispatch = [&](Material& mat,
+                      std::string_view label,
+                      std::uint32_t groups,
+                      bool insert_barrier) {
+    compute_command_buffer->begin_timer(frame_index, label);
+
+    const auto& pipeline = mat.get_pipeline();
+    const auto set = mat.prepare_for_rendering(frame_index);
+    std::array sets = {
+      descriptor_set_manager->get_set(frame_index),
+      set,
+    };
+
+    vkCmdBindPipeline(cmd, pipeline.bind_point, pipeline.pipeline);
+    vkCmdBindDescriptorSets(cmd,
+                            pipeline.bind_point,
+                            pipeline.layout,
+                            0,
+                            static_cast<std::uint32_t>(sets.size()),
+                            sets.data(),
+                            0,
+                            nullptr);
+    vkCmdDispatch(cmd, groups, 1, 1);
+    compute_command_buffer->end_timer(frame_index, label);
+
+    if (insert_barrier) {
+      vkCmdPipelineBarrier(cmd,
+                           VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                           VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                           0,
+                           0,
+                           nullptr,
+                           0,
+                           nullptr,
+                           0,
+                           nullptr);
+    }
+  };
+
+  {
+    ZoneScopedN("Visibility pass");
+    dispatch(*cull_visibility_material, "visibility_pass", group_count, true);
+  }
+  {
+    ZoneScopedN("Prefix sum pass 1");
+    dispatch(
+      *cull_prefix_sum_material_first, "prefix_sum_pass_1", group_count, true);
+  }
+  {
+    ZoneScopedN("Prefix sum pass 2");
+    dispatch(*cull_prefix_sum_material_second, "prefix_sum_pass_2", 1, true);
+  }
+  {
+    ZoneScopedN("Distribute pass");
+    dispatch(*cull_prefix_sum_material_distribute,
+             "prefix_sum_distribute",
+             group_count,
+             true);
+  }
+  {
+    ZoneScopedN("Scatter pass");
+    dispatch(*cull_scatter_material, "scatter_pass", group_count, false);
+  }
+  compute_command_buffer->end_timer(frame_index, "gpu_culling");
+  compute_command_buffer->submit_and_end(frame_index);
+  compute_command_buffer->wait_for_fence(frame_index);
+
+  std::uint32_t culled_count = 0;
+  if (!culled_instance_count_buffer->read_into_with_offset(culled_count, 0)) {
+    Logger::log_error("Failed to read culled instance count");
+  }
 }
 
 auto

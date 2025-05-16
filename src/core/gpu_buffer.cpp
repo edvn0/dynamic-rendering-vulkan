@@ -100,3 +100,15 @@ GPUBuffer::recreate(size_t size) -> void
     set_debug_name(debug_name);
   }
 }
+
+auto
+GPUBuffer::map(Pointers::transparent mapped_data) const -> void
+{
+  vmaMapMemory(device.get_allocator().get(), allocation, &mapped_data);
+}
+
+auto
+GPUBuffer::unmap() const -> void
+{
+  vmaUnmapMemory(device.get_allocator().get(), allocation);
+}

@@ -27,11 +27,11 @@ private:
   glm::vec2 bounds{};
 
   std::unique_ptr<Mesh> mesh;
+  std::unique_ptr<Mesh> tokyo_mesh;
 
   glm::vec3 light_position{ 28.f, 23.f, 1.f };
   glm::vec4 light_color{ 1.F, 0.5F, 0.F, 1.F };
 
   std::vector<glm::mat4> transforms;
-  std::vector<glm::mat4> cerberus_transforms;
   std::vector<Material> materials;
 };

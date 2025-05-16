@@ -113,7 +113,6 @@ private:
   std::size_t pipeline_hash{ 0 };
 
   MaterialData material_data;
-  std::unique_ptr<Image> white_texture{ nullptr };
 
   Material(const Device&,
            frame_array<VkDescriptorSet>&&,

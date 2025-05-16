@@ -49,24 +49,25 @@ public:
 
   ~Image() { destroy(); }
 
-  auto get_view() const -> VkImageView { return default_view; }
-  auto get_sampler() const -> const VkSampler&;
+  [[nodiscard]] auto get_view() const -> VkImageView { return default_view; }
+  [[nodiscard]] auto get_sampler() const -> const VkSampler&;
   template<typename T>
-  auto get_texture_id() const -> T
+  [[nodiscard]] auto get_texture_id() const -> T
   {
     return std::bit_cast<T>(texture_implementation_pointer);
   }
-  auto get_mip_layer_view(const uint32_t mip, const uint32_t layer) const
+  [[nodiscard]] auto get_mip_layer_view(const uint32_t mip,
+                                        const uint32_t layer) const
     -> VkImageView
   {
     return mip_layer_views[layer * mip_levels + mip];
   }
-  auto get_image() const -> VkImage { return image; }
-  auto width() const -> uint32_t { return extent.width; }
-  auto height() const -> uint32_t { return extent.height; }
-  auto layers() const -> uint32_t { return array_layers; }
-  auto mips() const -> uint32_t { return mip_levels; }
-  auto get_descriptor_info() const -> const VkDescriptorImageInfo&
+  [[nodiscard]] auto get_image() const -> VkImage { return image; }
+  [[nodiscard]] auto width() const -> uint32_t { return extent.width; }
+  [[nodiscard]] auto height() const -> uint32_t { return extent.height; }
+  [[nodiscard]] auto layers() const -> uint32_t { return array_layers; }
+  [[nodiscard]] auto mips() const -> uint32_t { return mip_levels; }
+  [[nodiscard]] auto get_descriptor_info() const -> const VkDescriptorImageInfo&
   {
     return image_descriptor_info;
   }
@@ -84,7 +85,10 @@ public:
     }
   }
   auto set_debug_name(std::string_view name) -> void;
-  auto get_name() const -> const std::string& { return debug_name; }
+  [[nodiscard]] auto get_name() const -> const std::string&
+  {
+    return debug_name;
+  }
 
   auto upload_rgba(std::span<const unsigned char>) -> void;
 
@@ -93,6 +97,18 @@ public:
                              bool flip_y = true) -> std::unique_ptr<Image>;
   static auto load_cubemap(const Device&, const std::string&)
     -> std::unique_ptr<Image>;
+
+  struct ImageWithStaging
+  {
+    std::unique_ptr<Image> image;
+    std::unique_ptr<GPUBuffer> staging;
+  };
+  static auto load_from_file_with_staging(const Device& dev,
+                                          const std::string& path,
+                                          bool flip_y,
+                                          bool ui_allow,
+                                          VkCommandBuffer cmd)
+    -> ImageWithStaging;
 
 private:
   Image(const Device& dev,
@@ -141,4 +157,11 @@ private:
   // For UI systems.
   bool allow_in_ui{ true }; // For UI systems
   std::uint64_t texture_implementation_pointer{};
+
+  auto upload_rgba_with_command_buffer(std::span<const unsigned char>,
+                                       VkCommandBuffer) -> void;
+  auto record_upload_rgba_with_staging(VkCommandBuffer cmd,
+                                       const GPUBuffer& staging,
+                                       uint32_t width,
+                                       uint32_t height) const -> void;
 };

@@ -217,3 +217,49 @@ Device::get_timestamp_period() const -> double
 {
   return props->limits.timestampPeriod;
 }
+
+auto
+Device::allocate_primary_command_buffer(VkCommandPool pool) const
+  -> VkCommandBuffer
+{
+  VkCommandBufferAllocateInfo alloc_info{};
+  alloc_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+  alloc_info.commandPool = pool;
+  alloc_info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+  alloc_info.commandBufferCount = 1;
+
+  VkCommandBuffer cmd;
+  vkAllocateCommandBuffers(device, &alloc_info, &cmd);
+
+  return cmd;
+}
+
+auto
+Device::allocate_secondary_command_buffer(VkCommandPool pool) const
+  -> VkCommandBuffer
+{
+  VkCommandBufferAllocateInfo alloc_info{};
+  alloc_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+  alloc_info.commandPool = pool;
+  alloc_info.level = VK_COMMAND_BUFFER_LEVEL_SECONDARY;
+  alloc_info.commandBufferCount = 1;
+
+  VkCommandBuffer cmd;
+  vkAllocateCommandBuffers(device, &alloc_info, &cmd);
+
+  return cmd;
+}
+
+auto
+Device::create_resettable_command_pool() const -> VkCommandPool
+{
+  VkCommandPoolCreateInfo pool_info{};
+  pool_info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+  pool_info.queueFamilyIndex =
+    graphics_queue_family_index(); // your stored index
+  pool_info.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+
+  VkCommandPool command_pool;
+  vkCreateCommandPool(device, &pool_info, nullptr, &command_pool);
+  return command_pool;
+}

@@ -244,6 +244,7 @@ App::run() -> std::error_code
 auto
 App::interface() -> void
 {
+  ZoneScopedN("Interface");
   gui_system->begin_frame();
   for (const auto& layer : layers)
     layer->on_interface();
@@ -256,6 +257,7 @@ App::interface() -> void
     0;
 
   if (ImGui::Begin("Renderer Output", nullptr, flags)) {
+    ZoneScopedN("Renderer Output");
     auto size = ImGui::GetWindowSize();
     ImGui::Image(renderer->get_output_image().get_texture_id<ImTextureID>(),
                  size);
@@ -263,6 +265,7 @@ App::interface() -> void
   }
 
   if (ImGui::Begin("Shadow Output", nullptr, flags)) {
+    ZoneScopedN("Shadow Output");
     auto size = ImGui::GetWindowSize();
     ImGui::Image(renderer->get_shadow_image().get_texture_id<ImTextureID>(),
                  size);
@@ -270,6 +273,7 @@ App::interface() -> void
   }
 
   if (ImGui::Begin("Performance Metrics")) {
+    ZoneScopedN("Performance Metrics");
     plotter->plot();
     ImGui::Text("Smoothed FPS: %.2f", 1.0 / smoother->get_smoothed());
     ImGui::Text("Smoothed Frame Time: %.2f ms",
@@ -278,6 +282,8 @@ App::interface() -> void
   }
 
   if (ImGui::Begin("GPU Timers")) {
+#ifdef PERFORMANCE
+    ZoneScopedN("GPU Timers");
     const auto& command_buffer = renderer->get_command_buffer();
     const auto& compute_command_buffer = renderer->get_compute_command_buffer();
 
@@ -313,6 +319,7 @@ App::interface() -> void
     }
 
     ImGui::EndTable();
+#endif
     ImGui::End();
   }
 }
