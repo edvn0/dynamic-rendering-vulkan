@@ -23,6 +23,13 @@ struct ApplicationArguments
   std::optional<std::filesystem::path> window_config_path{};
 };
 
+struct IRayPickListener
+{
+  virtual ~IRayPickListener() = default;
+  virtual auto on_ray_pick(const glm::vec3& origin, const glm::vec3& direction)
+    -> void = 0;
+};
+
 auto
 parse_command_line_args(int, char**)
   -> std::expected<ApplicationArguments, std::error_code>;
@@ -63,7 +70,15 @@ public:
                     "Layer constructor must be compatible with (Device&, "
                     "[BS::thread_pool*], Args...)");
     }
+
+    return layers.back().get();
   }
+
+  auto add_ray_pick_listener(IRayPickListener* listener) -> void
+  {
+    ray_pick_listeners.push_back(listener);
+  }
+
   auto run() -> std::error_code;
 
 private:
@@ -91,6 +106,7 @@ private:
   bool running = true;
 
   std::unique_ptr<AssetFileWatcher> file_watcher;
+  std::vector<IRayPickListener*> ray_pick_listeners;
 };
 
 }

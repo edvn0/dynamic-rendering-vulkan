@@ -13,7 +13,9 @@ main(int argc, char** argv)
 
   DynamicRendering::App app(*args);
 
-  app.add_layer<AppLayer>();
+  auto* layer = app.add_layer<AppLayer>();
+  app.add_ray_pick_listener(
+    dynamic_cast<DynamicRendering::IRayPickListener*>(layer));
 
   return app.run().value();
 }

@@ -51,7 +51,7 @@ public:
   }
 
   template<MeshType T>
-  auto get_mesh() const -> std::expected<Mesh*, MeshCacheError>
+  auto get_mesh() const -> std::expected<StaticMesh*, MeshCacheError>
   {
     auto it = meshes.find(T);
     if (it == meshes.end()) {
@@ -68,7 +68,7 @@ private:
   const Device* device{ nullptr };
   const BlueprintRegistry* blueprint_registry{ nullptr };
 
-  std::unordered_map<MeshType, std::unique_ptr<Mesh>> meshes;
+  std::unordered_map<MeshType, std::unique_ptr<StaticMesh>> meshes;
   static inline std::unique_ptr<MeshCache> instance{ nullptr };
   static inline std::mutex mutex{};
 

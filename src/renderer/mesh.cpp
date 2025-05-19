@@ -325,12 +325,12 @@ upload_materials_impl_secondary(
 
 } // namespace
 
-Mesh::~Mesh() = default;
+StaticMesh::~StaticMesh() = default;
 
 auto
-Mesh::load_from_file(const Device& device,
-                     const BlueprintRegistry& registry,
-                     const std::string& path) -> bool
+StaticMesh::load_from_file(const Device& device,
+                           const BlueprintRegistry& registry,
+                           const std::string& path) -> bool
 {
   ZoneScopedN("Load from file (ST)");
 
@@ -594,12 +594,12 @@ Mesh::load_from_file(const Device& device,
 }
 
 auto
-Mesh::load_from_memory(const Device& device,
-                       const BlueprintRegistry& registry,
-                       std::unique_ptr<VertexBuffer>&& vertex_buffer,
-                       std::unique_ptr<IndexBuffer>&& index_buffer)
+StaticMesh::load_from_memory(const Device& device,
+                             const BlueprintRegistry& registry,
+                             std::unique_ptr<VertexBuffer>&& vertex_buffer,
+                             std::unique_ptr<IndexBuffer>&& index_buffer)
 {
-  auto mesh = std::make_unique<Mesh>();
+  auto mesh = std::make_unique<StaticMesh>();
   mesh->vertex_buffer = std::move(vertex_buffer);
   mesh->index_buffer = std::move(index_buffer);
   mesh->materials.reserve(1);
@@ -609,10 +609,10 @@ Mesh::load_from_memory(const Device& device,
 }
 
 auto
-Mesh::load_from_file(const Device& device,
-                     const BlueprintRegistry& registry,
-                     BS::priority_thread_pool* thread_pool,
-                     const std::string& path) -> bool
+StaticMesh::load_from_file(const Device& device,
+                           const BlueprintRegistry& registry,
+                           BS::priority_thread_pool* thread_pool,
+                           const std::string& path) -> bool
 {
   ZoneScopedN("Load from file (MT)");
 
@@ -716,19 +716,19 @@ Mesh::load_from_file(const Device& device,
 }
 
 auto
-Mesh::upload_materials(const aiScene* scene,
-                       const Device& device,
-                       const BlueprintRegistry& registry,
-                       const std::string& directory) -> void
+StaticMesh::upload_materials(const aiScene* scene,
+                             const Device& device,
+                             const BlueprintRegistry& registry,
+                             const std::string& directory) -> void
 {
   upload_materials_impl_secondary(
     scene, device, registry, directory, loaded_textures, materials);
 }
 
 auto
-Mesh::process_mesh(const aiMesh* mesh,
-                   glm::mat4 current_transform,
-                   int parent_index) -> LoadedSubmesh
+StaticMesh::process_mesh(const aiMesh* mesh,
+                         glm::mat4 current_transform,
+                         int parent_index) -> LoadedSubmesh
 {
   return process_mesh_impl(mesh, current_transform, parent_index);
 }

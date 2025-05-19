@@ -7,8 +7,6 @@
 #include <string>
 #include <vector>
 
-using DomainMesh = Mesh;
-
 namespace Component {
 
 struct Transform
@@ -16,6 +14,12 @@ struct Transform
   glm::vec3 position{ 0.f };
   glm::quat rotation{ 1.f, 0.f, 0.f, 0.f };
   glm::vec3 scale{ 1.f };
+
+  auto compute() const -> glm::mat4
+  {
+    return glm::translate(glm::mat4(1.f), position) * glm::mat4_cast(rotation) *
+           glm::scale(glm::mat4(1.f), scale);
+  }
 };
 
 struct Tag
@@ -31,7 +35,8 @@ struct Hierarchy
 
 struct Mesh
 {
-  const DomainMesh* mesh;
+  StaticMesh* mesh;
+  bool casts_shadows{ true };
 };
 
 } // namespace Component

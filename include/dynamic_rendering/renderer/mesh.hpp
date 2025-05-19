@@ -128,11 +128,11 @@ struct LoadedSubmesh
   std::int32_t parent_index;
 };
 
-class Mesh
+class StaticMesh
 {
 public:
-  Mesh() = default;
-  ~Mesh();
+  StaticMesh() = default;
+  ~StaticMesh();
 
   auto load_from_file(const Device&,
                       const BlueprintRegistry&,

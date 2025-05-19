@@ -1,6 +1,8 @@
 #pragma once
 
+#include "core/forward.hpp"
 #include "core/util.hpp"
+
 #include "scene/entity.hpp"
 
 #include <entt/entt.hpp>
@@ -53,6 +55,10 @@ public:
   auto create_entity(std::string_view) -> Entity;
   auto create_entt_entity() -> entt::entity;
   auto get_registry() -> auto& { return registry; }
+
+  auto on_update(double ts) -> void;
+  auto on_render(Renderer& renderer) -> void;
+  auto on_resize(std::uint32_t w, std::uint32_t h) -> void;
 
 private:
   entt::registry registry;

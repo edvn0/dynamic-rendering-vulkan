@@ -11,7 +11,7 @@
 
 struct DrawCommand
 {
-  Mesh* mesh;
+  StaticMesh* mesh;
   Material* override_material{ nullptr };
   std::int32_t submesh_index{ -1 };
   bool casts_shadows{ true };

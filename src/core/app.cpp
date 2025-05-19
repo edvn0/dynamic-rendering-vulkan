@@ -315,8 +315,8 @@ App::interface() -> void
                            camera->get_view(),
                            camera->get_projection());
 
-      // Now use ray_origin and ray_dir to do picking
-      // selected_entity = pick_entity(ray_origin, ray_dir);
+      for (auto* listener : ray_pick_listeners)
+        listener->on_ray_pick(ray_origin, ray_dir);
     }
 
     ImGui::End();

@@ -21,13 +21,13 @@ AppLayer::AppLayer(const Device& dev,
   active_scene = std::make_shared<Scene>("Basic");
 
   auto tokyo_entity = active_scene->create_entity("Tokyo");
-  tokyo_entity.add_component<Component::Mesh>();
 
   // assert(mesh->load_from_file(dev, *blueprint_registry,
   // "cerberus/scene.gltf"));
 
   tokyo_mesh->load_from_file(
     dev, *blueprint_registry, pool, "little_tokyo/scene.gltf");
+  tokyo_entity.add_component<Component::Mesh>(tokyo_mesh.get(), false);
   armour_mesh->load_from_file(
     dev, *blueprint_registry, "battle_armour/scene.gltf");
   hunter_mesh->load_from_file(
@@ -76,6 +76,7 @@ auto
 AppLayer::on_update(double ts) -> void
 {
   ZoneScopedN("On update");
+  active_scene->on_update(ts);
 
   static float angle_deg = 0.f;
   angle_deg += static_cast<float>(ts) * rotation_speed;
@@ -93,6 +94,7 @@ auto
 AppLayer::on_render(Renderer& renderer) -> void
 {
   ZoneScopedN("App on_render");
+  active_scene->on_render(renderer);
 
   auto& light_env = renderer.get_light_environment();
   light_env.light_position = light_position;
@@ -185,4 +187,14 @@ AppLayer::generate_scene() -> void
     glm::translate(glm::mat4(1.0f), glm::vec3(6.0f, -1.0f, 6.0f)) *
     glm::scale(glm::mat4(1.0f), glm::vec3(24.0f, 1.0f, 24.0f));
   transforms.insert(transforms.begin(), ground);
+}
+
+auto
+AppLayer::on_ray_pick(const glm::vec3& origin, const glm::vec3& direction)
+  -> void
+{
+  (void)origin;
+  (void)direction;
+  if (!active_scene)
+    return;
 }

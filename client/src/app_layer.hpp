@@ -2,7 +2,9 @@
 
 #include <dynamic_rendering/dynamic_rendering.hpp>
 
-class AppLayer : public ILayer
+class AppLayer
+  : public ILayer
+  , public DynamicRendering::IRayPickListener
 {
 public:
   explicit AppLayer(const Device&,
@@ -17,6 +19,9 @@ public:
   auto on_render(Renderer& renderer) -> void override;
   auto on_resize(std::uint32_t w, std::uint32_t h) -> void override;
 
+  auto on_ray_pick(const glm::vec3& origin, const glm::vec3& direction)
+    -> void override;
+
 private:
   BS::priority_thread_pool* thread_pool{ nullptr };
   BlueprintRegistry* blueprint_registry{ nullptr };
@@ -28,10 +33,10 @@ private:
 
   std::shared_ptr<Scene> active_scene;
 
-  std::unique_ptr<Mesh> mesh{ std::make_unique<Mesh>() };
-  std::unique_ptr<Mesh> tokyo_mesh{ std::make_unique<Mesh>() };
-  std::unique_ptr<Mesh> hunter_mesh{ std::make_unique<Mesh>() };
-  std::unique_ptr<Mesh> armour_mesh{ std::make_unique<Mesh>() };
+  std::unique_ptr<StaticMesh> mesh{ std::make_unique<StaticMesh>() };
+  std::unique_ptr<StaticMesh> tokyo_mesh{ std::make_unique<StaticMesh>() };
+  std::unique_ptr<StaticMesh> hunter_mesh{ std::make_unique<StaticMesh>() };
+  std::unique_ptr<StaticMesh> armour_mesh{ std::make_unique<StaticMesh>() };
 
   glm::vec3 light_position{ 28.f, 23.f, 1.f };
   glm::vec4 light_color{ 1.F, 0.5F, 0.F, 1.F };

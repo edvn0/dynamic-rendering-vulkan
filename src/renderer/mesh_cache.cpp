@@ -44,12 +44,12 @@ MeshCache::MeshCache(const Device& dev, const BlueprintRegistry& reg)
   , blueprint_registry(&reg)
 {
 
-  meshes[MeshType::Cube] = std::make_unique<Mesh>();
-  meshes[MeshType::Quad] = std::make_unique<Mesh>();
-  meshes[MeshType::Sphere] = std::make_unique<Mesh>();
-  meshes[MeshType::Cylinder] = std::make_unique<Mesh>();
-  meshes[MeshType::Cone] = std::make_unique<Mesh>();
-  meshes[MeshType::Torus] = std::make_unique<Mesh>();
+  meshes[MeshType::Cube] = std::make_unique<StaticMesh>();
+  meshes[MeshType::Quad] = std::make_unique<StaticMesh>();
+  meshes[MeshType::Sphere] = std::make_unique<StaticMesh>();
+  meshes[MeshType::Cylinder] = std::make_unique<StaticMesh>();
+  meshes[MeshType::Cone] = std::make_unique<StaticMesh>();
+  meshes[MeshType::Torus] = std::make_unique<StaticMesh>();
 
   /*for (auto&& [type, mesh] : meshes) {
     if (!mesh->load_from_file(
@@ -169,7 +169,7 @@ MeshCache::initialise_cube() -> void
   {
     auto&& [cube_vertex, cube_index] = generate_cube_counter_clockwise(*device);
     auto& mesh = meshes[MeshType::Cube];
-    mesh = std::make_unique<Mesh>();
+    mesh = std::make_unique<StaticMesh>();
     mesh->vertex_buffer = std::move(cube_vertex);
     mesh->index_buffer = std::move(cube_index);
     mesh->submeshes.push_back(Submesh{
@@ -189,7 +189,7 @@ MeshCache::initialise_cube() -> void
     auto&& [cube_vertex, cube_index] =
       generate_cube_counter_clockwise<true>(*device);
     auto& mesh = meshes[MeshType::CubeOnlyPosition];
-    mesh = std::make_unique<Mesh>();
+    mesh = std::make_unique<StaticMesh>();
     mesh->vertex_buffer = std::move(cube_vertex);
     mesh->index_buffer = std::move(cube_index);
     mesh->submeshes.push_back(Submesh{

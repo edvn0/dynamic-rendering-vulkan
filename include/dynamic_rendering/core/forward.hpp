@@ -26,7 +26,7 @@ class AssetReloader;
 class VertexBuffer;
 class IndexBuffer;
 class Material;
-class Mesh;
+class StaticMesh;
 
 class Renderer;
 class BlueprintRegistry;

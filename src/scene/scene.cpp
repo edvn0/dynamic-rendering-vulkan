@@ -2,6 +2,8 @@
 
 #include "scene/components.hpp"
 
+#include "renderer/renderer.hpp"
+
 Scene::Scene(const std::string_view n)
   : scene_name(n) {};
 
@@ -25,4 +27,25 @@ auto
 Scene::create_entt_entity() -> entt::entity
 {
   return registry.create();
+}
+
+auto
+Scene::on_update(double) -> void
+{
+}
+
+auto
+Scene::on_render(Renderer& renderer) -> void
+{
+
+  // Find all meshes+transforms in the scene
+  auto view = registry.view<Component::Mesh, Component::Transform>();
+  for (auto [entity, mesh, transform] : view.each()) {
+    renderer.submit(
+      {
+        .mesh = mesh.mesh,
+        .casts_shadows = mesh.casts_shadows,
+      },
+      transform.compute());
+  }
 }
