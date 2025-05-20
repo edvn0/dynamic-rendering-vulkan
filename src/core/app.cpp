@@ -24,6 +24,7 @@ auto
 generate_world_ray(const glm::vec2& mouse_pos,
                    const glm::vec2& viewport_pos,
                    const glm::vec2& viewport_size,
+                   const glm::vec3& camera_pos,
                    const glm::mat4& view,
                    const glm::mat4& projection)
   -> std::pair<glm::vec3, glm::vec3>
@@ -44,15 +45,18 @@ generate_world_ray(const glm::vec2& mouse_pos,
   glm::vec4 ray_eye = glm::inverse(projection) * ray_clip;
   ray_eye = glm::vec4(ray_eye.x, ray_eye.y, -1.0f, 0.0f);
 
-  glm::vec3 ray_world = glm::normalize(glm::vec3(glm::inverse(view) * ray_eye));
-  glm::vec3 ray_origin = glm::vec3(glm::inverse(view)[3]);
+  glm::vec3 ray_origin = camera_pos;
+  glm::vec3 ray_direction =
+    glm::normalize(glm::vec3(glm::inverse(view) * ray_eye));
 
   Logger::log_info(
     "Ray Origin: ({}, {}, {})", ray_origin.x, ray_origin.y, ray_origin.z);
-  Logger::log_info(
-    "Ray Direction: ({}, {}, {})", ray_world.x, ray_world.y, ray_world.z);
+  Logger::log_info("Ray Direction: ({}, {}, {})",
+                   ray_direction.x,
+                   ray_direction.y,
+                   ray_direction.z);
 
-  return { ray_origin, ray_world };
+  return { ray_origin, ray_direction };
 }
 
 namespace DynamicRendering {
@@ -215,6 +219,18 @@ App::add_layer(std::unique_ptr<ILayer> layer)
 auto
 App::run() -> std::error_code
 {
+  InitialisationParameters params{
+    .app = *this,
+    .device = *device,
+    .window = *window,
+    .swapchain = *swapchain,
+    .camera = *camera,
+    .file_watcher = *file_watcher,
+    .asset_reloader = *asset_reloader,
+  };
+  for (const auto& layer : layers)
+    layer->on_initialise(params);
+
   while (running && !window->should_close()) {
     ZoneScopedN("Main loop");
 
@@ -312,6 +328,7 @@ App::interface() -> void
         generate_world_ray(mouse_screen,
                            viewport_pos,
                            viewport_size,
+                           camera->get_position(),
                            camera->get_view(),
                            camera->get_projection());
 

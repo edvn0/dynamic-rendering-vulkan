@@ -36,7 +36,7 @@ enum class RenderPass : std::uint8_t
   Skybox
 };
 auto
-to_renderpass(const std::string_view name) -> RenderPass;
+to_renderpass(std::string_view name) -> RenderPass;
 
 struct LightEnvironment
 {
@@ -45,12 +45,6 @@ struct LightEnvironment
   glm::vec4 ambient_color{ 0.1F, 0.1F, 0.1F, 1.0F };
 };
 
-struct LineDrawCommand
-{
-  GPUBuffer* vertex_buffer{ nullptr };
-  std::uint32_t vertex_count{ 0 };
-  Material* override_material{ nullptr };
-};
 struct LineInstanceData
 {
   glm::vec3 start;

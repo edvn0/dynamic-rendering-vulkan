@@ -27,6 +27,7 @@ class VertexBuffer;
 class IndexBuffer;
 class Material;
 class StaticMesh;
+struct InitialisationParameters;
 
 class Renderer;
 class BlueprintRegistry;

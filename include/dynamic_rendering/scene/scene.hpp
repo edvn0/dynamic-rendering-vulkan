@@ -56,14 +56,67 @@ public:
   auto create_entt_entity() -> entt::entity;
   auto get_registry() -> auto& { return registry; }
 
+  auto on_initialise(const InitialisationParameters&) -> void;
+  auto on_interface() -> void;
   auto on_update(double ts) -> void;
   auto on_render(Renderer& renderer) -> void;
-  auto on_resize(std::uint32_t w, std::uint32_t h) -> void;
+  auto on_resize(const EditorCamera&, std::uint32_t w, std::uint32_t h) -> void;
+  template<typename... Ts>
+  auto view()
+  {
+    return registry.view<Ts...>();
+  }
+  template<typename... Ts>
+  auto view() const
+  {
+    return registry.view<Ts...>();
+  }
+  template<typename... Ts>
+  auto each(auto&& func)
+  {
+    return registry.view<Ts...>().each(std::forward<decltype(func)>(func));
+  }
+  template<typename... Ts>
+  auto each(auto&& func) const
+  {
+    return registry.view<Ts...>().each(std::forward<decltype(func)>(func));
+  }
+
+  auto set_selected_entity(entt::entity entity = entt::null) -> void
+  {
+    selected_entity = entity;
+  }
 
 private:
   entt::registry registry;
   std::string scene_name{};
   TagRegistry tag_registry;
+
+  entt::entity selected_entity = entt::null;
+
+  struct SceneCameraComponent
+  {
+    glm::vec3 position{};
+    glm::mat4 view{};
+    glm::mat4 projection{};
+  };
+  Entity scene_camera_entity;
+
+  bool show_components = false;
+  bool show_statistics = true;
+
+  auto draw_vector3_slider(const char* label,
+                           glm::vec3& value,
+                           float v_min,
+                           float v_max,
+                           const char* format) -> bool;
+  auto draw_vector4_slider(const char* label,
+                           glm::vec4& value,
+                           float v_min,
+                           float v_max,
+                           const char* format) -> bool;
+  auto draw_quaternion_slider(const char* label, glm::quat& quaternion) -> bool;
+  auto draw_entity_item(entt::entity entity, std::string_view tag) -> void;
 
   friend class Entity;
 };

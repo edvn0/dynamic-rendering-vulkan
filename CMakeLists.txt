@@ -186,6 +186,8 @@ target_link_libraries(DynamicRendering_Scene
         EnTT::EnTT
         PRIVATE
         DynamicRendering_Core
+        imgui
+        imguizmo::imguizmo
 )
 
 target_precompile_headers(DynamicRendering_Scene REUSE_FROM DynamicRendering_Core)

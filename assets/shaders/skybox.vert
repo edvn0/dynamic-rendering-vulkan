@@ -2,13 +2,17 @@
 
 #include "set0.glsl"
 
-layout(location = 0) in vec3 inPos;
-
-layout(location = 0) out vec3 outUVW;
+layout(location = 0) in vec3 in_pos;
+layout(location = 0) out vec3 out_uvw;
 
 void main()
 {
-  outUVW = inPos;
-  mat4 viewMat = mat4(mat3(camera_ubo.view));
-  gl_Position = camera_ubo.projection * viewMat * vec4(inPos.xyz, 1.0);
+    vec3 pos = in_pos;
+    out_uvw = pos;
+
+    mat4 view = mat4(mat3(camera_ubo.view));
+    mat4 proj = camera_ubo.projection;
+
+    gl_Position = proj * view * vec4(pos, 1.0);
+    out_uvw.y = -pos.y;
 }

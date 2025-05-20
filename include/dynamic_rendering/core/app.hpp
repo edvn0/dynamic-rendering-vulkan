@@ -81,6 +81,8 @@ public:
 
   auto run() -> std::error_code;
 
+  auto get_editor_camera() const -> const EditorCamera& { return *camera; }
+
 private:
   void process_events(Event&);
   void update(double dt);

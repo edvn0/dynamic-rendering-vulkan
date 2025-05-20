@@ -22,6 +22,7 @@ GUISystem::begin_frame() const -> void
   ImGui_ImplVulkan_NewFrame();
   ImGui_ImplGlfw_NewFrame();
   ImGui::NewFrame();
+  ImGuizmo::BeginFrame();
 
   const auto* vp = ImGui::GetMainViewport();
 
@@ -50,9 +51,6 @@ GUISystem::begin_frame() const -> void
   ImGuiDockNodeFlags dockspace_flags = ImGuiDockNodeFlags_PassthruCentralNode;
 
   ImGui::DockSpace(dockspace_id, ImVec2(0.0f, 0.0f), dockspace_flags);
-
-  ImGuizmo::SetOrthographic(false);
-  ImGuizmo::BeginFrame();
 }
 
 auto

@@ -20,3 +20,13 @@ Entity::has_component() const
 {
   return scene->get_registry().any_of<T>(handle);
 }
+
+template<typename T>
+auto
+Entity::try_get() -> T*
+{
+  if (scene->get_registry().any_of<T>(handle)) {
+    return &scene->get_registry().get<T>(handle);
+  }
+  return nullptr;
+}

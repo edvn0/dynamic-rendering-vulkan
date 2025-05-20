@@ -12,6 +12,12 @@
 #include <random>
 #include <tracy/Tracy.hpp>
 
+struct CubeComponent
+{
+  static constexpr auto name = "CubeComponent";
+  bool is_active{ true };
+};
+
 AppLayer::AppLayer(const Device& dev,
                    BS::priority_thread_pool* pool,
                    BlueprintRegistry* registry)
@@ -63,6 +69,8 @@ AppLayer::on_interface() -> void
     }
   };
 
+  active_scene->on_interface();
+
   window("Controls", [&rs = rotation_speed, this]() {
     ImGui::Text("Adjust settings:");
     ImGui::SliderFloat("Rotation Speed", &rs, 0.1f, 150.0f);
@@ -82,12 +90,17 @@ AppLayer::on_update(double ts) -> void
   angle_deg += static_cast<float>(ts) * rotation_speed;
   angle_deg = fmod(angle_deg, 360.f);
 
-  for (std::size_t i = 1; i < transforms.size(); ++i) {
-    const auto position = glm::vec3(transforms[i][3]);
-    transforms[i] =
-      glm::translate(glm::mat4(1.f), position) *
-      glm::rotate(glm::mat4(1.f), glm::radians(angle_deg), { 0.f, 1.f, 0.f });
-  }
+  bool first = true;
+  active_scene->each<const CubeComponent, Component::Transform>(
+    [&](auto, const auto&, Component::Transform& transform) {
+      if (first) {
+        first = false;
+        return;
+      }
+
+      transform.rotation =
+        glm::angleAxis(glm::radians(angle_deg), glm::vec3(0.f, 1.f, 0.f));
+    });
 }
 
 auto
@@ -106,29 +119,6 @@ AppLayer::on_render(Renderer& renderer) -> void
     },
     glm::mat4(1.f));
 
-  renderer.submit(
-    {
-      .mesh = tokyo_mesh.get(),
-    },
-    glm::translate(glm::mat4(1.f), { 0.f, -1.f, 0.f }) *
-      glm::rotate(
-        glm::mat4{ 1.f }, glm::radians(90.F), glm::vec3(0.0F, 1.0F, 0.0F)) *
-      glm::scale(glm::mat4(1.f), { 0.01f, 0.01f, 0.01f }));
-  renderer.submit(
-    {
-      .mesh = armour_mesh.get(),
-    },
-    glm::translate(glm::mat4(1.f), { 0.f, -1.f, 0.f }) *
-      glm::rotate(
-        glm::mat4{ 1.f }, glm::radians(90.F), glm::vec3(0.0F, 1.0F, 0.0F)));
-  renderer.submit(
-    {
-      .mesh = hunter_mesh.get(),
-    },
-    glm::translate(glm::mat4(1.f), { 0.f, -1.f, 0.f }) *
-      glm::rotate(
-        glm::mat4{ 1.f }, glm::radians(90.F), glm::vec3(0.0F, 1.0F, 0.0F)));
-
   static constexpr float line_width = 1.2f;
   static constexpr float line_length = 50.f;
 
@@ -144,23 +134,6 @@ AppLayer::on_render(Renderer& renderer) -> void
                         { 0.f, 0.f, line_length },
                         line_width,
                         { 0.f, 0.f, 1.f, 1.f });
-
-  auto maybe_cube_mesh = MeshCache::the().get_mesh<MeshType::Cube>();
-
-  if (!maybe_cube_mesh.has_value()) {
-    return;
-  }
-
-  auto cube_mesh = maybe_cube_mesh.value();
-
-  for (const auto& transform : transforms) {
-    renderer.submit(
-      {
-        .mesh = cube_mesh,
-        .casts_shadows = true,
-      },
-      transform);
-  }
 }
 
 auto
@@ -168,33 +141,91 @@ AppLayer::on_resize(std::uint32_t w, std::uint32_t h) -> void
 {
   bounds.x = static_cast<float>(w);
   bounds.y = static_cast<float>(h);
+
+  active_scene->on_resize(app->get_editor_camera(), w, h);
+}
+
+auto
+AppLayer::on_initialise(const InitialisationParameters& params) -> void
+{
+  app = &params.app;
+  active_scene->on_initialise(params);
 }
 
 auto
 AppLayer::generate_scene() -> void
 {
-  transforms.clear();
+  auto maybe_cube_mesh = MeshCache::the().get_mesh<MeshType::Cube>();
+  if (!maybe_cube_mesh.has_value()) {
+    return;
+  }
+
+  auto cube_mesh = maybe_cube_mesh.value();
+
+  {
+    auto entity = active_scene->create_entity("Ground");
+    auto& transform = entity.get_component<Component::Transform>();
+    entity.add_component<Component::Mesh>(cube_mesh, true);
+    transform.position = glm::vec3(6.0f, -1.0f, 6.0f);
+    transform.scale = glm::vec3(24.0f, 1.0f, 24.0f);
+  }
 
   for (int z = 0; z < 3; ++z) {
     for (int x = 0; x < 4; ++x) {
-      glm::mat4 model =
-        glm::translate(glm::mat4(1.0f), glm::vec3(x * 4.0f, 1.0f, z * 4.0f));
-      transforms.push_back(model);
+      auto entity =
+        active_scene->create_entity(std::format("Cube_{}_{}", x, z));
+      entity.add_component<Component::Mesh>(cube_mesh, true);
+      entity.add_component<CubeComponent>();
+      auto& transform = entity.get_component<Component::Transform>();
+      transform.position = glm::vec3(x * 4.0f, 1.0f, z * 4.0f);
     }
   }
-
-  glm::mat4 ground =
-    glm::translate(glm::mat4(1.0f), glm::vec3(6.0f, -1.0f, 6.0f)) *
-    glm::scale(glm::mat4(1.0f), glm::vec3(24.0f, 1.0f, 24.0f));
-  transforms.insert(transforms.begin(), ground);
 }
 
 auto
 AppLayer::on_ray_pick(const glm::vec3& origin, const glm::vec3& direction)
   -> void
 {
-  (void)origin;
-  (void)direction;
   if (!active_scene)
     return;
+
+  float closest_distance = std::numeric_limits<float>::max();
+  entt::entity closest_entity = entt::null;
+
+  active_scene->each<const CubeComponent, Component::Transform>(
+    [&](entt::entity entity,
+        const CubeComponent&,
+        const Component::Transform& transform) {
+      const glm::mat4 model = transform.compute();
+      const glm::vec3 aabb_min(-0.5f), aabb_max(0.5f);
+
+      const glm::mat4 inv_model = glm::inverse(model);
+      glm::vec3 ray_origin_local =
+        glm::vec3(inv_model * glm::vec4(origin, 1.0f));
+      glm::vec3 ray_dir_local =
+        glm::normalize(glm::vec3(inv_model * glm::vec4(direction, 0.0f)));
+
+      float tmin = 0.0f, tmax = 10000.0f;
+
+      for (int i = 0; i < 3; ++i) {
+        float inv_d = 1.0f / ray_dir_local[i];
+        float t0 = (aabb_min[i] - ray_origin_local[i]) * inv_d;
+        float t1 = (aabb_max[i] - ray_origin_local[i]) * inv_d;
+        if (inv_d < 0.0f)
+          std::swap(t0, t1);
+        tmin = std::max(tmin, t0);
+        tmax = std::min(tmax, t1);
+        if (tmax < tmin)
+          return; // correct: just skip this entity
+      }
+
+      if (tmin < closest_distance) {
+        closest_distance = tmin;
+        closest_entity = entity;
+      }
+    });
+
+  if (closest_entity != entt::null) {
+    active_scene->set_selected_entity(closest_entity);
+  }
 }

@@ -636,8 +636,8 @@ Renderer::update_shadow_buffers(std::uint32_t frame_index) -> void
 {
   static constexpr auto calculate_light_view_projection =
     [](const glm::vec3& light_pos) {
-      const glm::vec3 center{ 0.f, 0.f, 0.f };
-      const glm::vec3 up{ 0.f, 1.f, 0.f };
+      constexpr glm::vec3 center{ 0.f, 0.f, 0.f };
+      constexpr glm::vec3 up{ 0.f, 1.f, 0.f };
 
       const auto view = glm::lookAtRH(light_pos, center, up);
 
@@ -853,7 +853,7 @@ Renderer::run_skybox_pass(std::uint32_t frame_index) -> void
 
   command_buffer->begin_timer(frame_index, "skybox_pass");
 
-  const VkCommandBuffer cmd = command_buffer->get(frame_index);
+  const VkCommandBuffer& cmd = command_buffer->get(frame_index);
 
   CoreUtils::cmd_transition_image(
     cmd,
@@ -867,7 +867,7 @@ Renderer::run_skybox_pass(std::uint32_t frame_index) -> void
       .dst_stage_mask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
     });
 
-  const VkClearValue clear_value = { .color = { { 0.f, 0.f, 0.f, 0.f } } };
+  constexpr VkClearValue clear_value = { .color = { { 0.f, 0.f, 0.f, 0.f } } };
   VkRenderingAttachmentInfo color_attachment = {
     .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
     .imageView = skybox_attachment_texture->get_view(),
@@ -917,9 +917,10 @@ Renderer::run_skybox_pass(std::uint32_t frame_index) -> void
                           0,
                           nullptr);
 
-  auto mesh_expected = MeshCache::the().get_mesh<MeshType::CubeOnlyPosition>();
-  if (mesh_expected.has_value()) {
-    auto& mesh = mesh_expected.value();
+  if (const auto mesh_expected =
+        MeshCache::the().get_mesh<MeshType::CubeOnlyPosition>();
+      mesh_expected.has_value()) {
+    const auto& mesh = mesh_expected.value();
     const auto& vertex_buffer = mesh->get_vertex_buffer();
     const auto& index_buffer = mesh->get_index_buffer();
 
@@ -946,6 +947,16 @@ Renderer::run_skybox_pass(std::uint32_t frame_index) -> void
 
   command_buffer->end_timer(frame_index, "skybox_pass");
 }
+auto
+bind_sets(auto cmd, auto layout, std::ranges::contiguous_range auto sets)
+{
+  auto valid = sets | std::views::filter(
+                        [](const auto& v) { return v != VK_NULL_HANDLE; });
+  for (auto& v : valid) {
+    vkCmdBindDescriptorSets(
+      cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 0, 1, &v, 0, nullptr);
+  }
+}
 
 auto
 Renderer::run_z_prepass(std::uint32_t frame_index, const DrawList& draw_list)
@@ -955,12 +966,11 @@ Renderer::run_z_prepass(std::uint32_t frame_index, const DrawList& draw_list)
 
   command_buffer->begin_timer(frame_index, "z_prepass");
 
-  const VkCommandBuffer cmd = command_buffer->get(frame_index);
+  const VkCommandBuffer& cmd = command_buffer->get(frame_index);
   CoreUtils::cmd_transition_to_depth_attachment(
     cmd, geometry_depth_image->get_image());
 
-  const VkClearValue depth_clear = { .depthStencil = { 0.0f, 0 } };
-
+  constexpr VkClearValue depth_clear = { .depthStencil = { 0.0f, 0 } };
   VkRenderingAttachmentInfo depth_attachment = {
     .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
     .pNext = nullptr,
@@ -1004,18 +1014,11 @@ Renderer::run_z_prepass(std::uint32_t frame_index, const DrawList& draw_list)
   vkCmdBindPipeline(
     cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, z_prepass_pipeline.pipeline);
 
-  std::vector sets = { descriptor_set_manager->get_set(frame_index) };
-  if (const auto set = z_prepass_material->prepare_for_rendering(frame_index)) {
-    sets.push_back(set);
-  }
-  vkCmdBindDescriptorSets(cmd,
-                          VK_PIPELINE_BIND_POINT_GRAPHICS,
-                          z_prepass_pipeline.layout,
-                          0,
-                          static_cast<std::uint32_t>(sets.size()),
-                          sets.data(),
-                          0,
-                          nullptr);
+  const std::array sets = {
+    descriptor_set_manager->get_set(frame_index),
+    z_prepass_material->prepare_for_rendering(frame_index),
+  };
+  bind_sets(cmd, z_prepass_pipeline.layout, sets);
   for (const auto& [cmd_info, offset, instance_count] : draw_list) {
     const auto* submesh = cmd_info.mesh->get_submesh(cmd_info.submesh_index);
     if (!submesh)
@@ -1056,7 +1059,7 @@ Renderer::run_geometry_pass(std::uint32_t frame_index,
 
   command_buffer->begin_timer(frame_index, "geometry_pass");
 
-  const VkCommandBuffer cmd = command_buffer->get(frame_index);
+  const VkCommandBuffer& cmd = command_buffer->get(frame_index);
   CoreUtils::cmd_transition_image(
     cmd,
     {
@@ -1226,20 +1229,20 @@ Renderer::run_culling_compute_pass(std::uint32_t frame_index) -> void
   static constexpr std::uint32_t zero = 0;
   culled_instance_count_buffer->upload(std::span{ &zero, 1 });
 
-  const std::uint32_t local_size = 64;
+  constexpr std::uint32_t local_size = 64;
   const std::uint32_t num_instances = instance_count_this_frame;
   const std::uint32_t group_count =
     (num_instances + local_size - 1) / local_size;
 
   auto dispatch = [&](Material& mat,
-                      std::string_view label,
-                      std::uint32_t groups,
-                      bool insert_barrier) {
+                      const std::string_view label,
+                      const std::uint32_t groups,
+                      const bool insert_barrier) {
     compute_command_buffer->begin_timer(frame_index, label);
 
     const auto& pipeline = mat.get_pipeline();
     const auto set = mat.prepare_for_rendering(frame_index);
-    std::array sets = {
+    const std::array sets = {
       descriptor_set_manager->get_set(frame_index),
       set,
     };
@@ -1312,7 +1315,7 @@ Renderer::run_shadow_pass(std::uint32_t frame_index, const DrawList& draw_list)
 
   command_buffer->begin_timer(frame_index, "shadow_pass");
 
-  const VkCommandBuffer cmd = command_buffer->get(frame_index);
+  const VkCommandBuffer& cmd = command_buffer->get(frame_index);
   CoreUtils::cmd_transition_to_depth_attachment(
     cmd, shadow_depth_image->get_image());
 
@@ -1507,18 +1510,18 @@ Renderer::run_colour_correction_pass(std::uint32_t frame_index) -> void
 }
 
 auto
-Renderer::run_composite_pass(std::uint32_t frame_index) -> void
+Renderer::run_composite_pass(const std::uint32_t frame_index) -> void
 {
   ZoneScopedN("Composite pass");
 
   command_buffer->begin_timer(frame_index, "composite_pass");
 
-  const VkCommandBuffer cmd = command_buffer->get(frame_index);
+  const VkCommandBuffer& cmd = command_buffer->get(frame_index);
 
   CoreUtils::cmd_transition_to_color_attachment(
     cmd, composite_attachment_texture->get_image());
 
-  const VkClearValue clear_value = { .color = { { 0.F, 0.F, 0.F, 0.F } } };
+  constexpr VkClearValue clear_value = { .color = { { 0.F, 0.F, 0.F, 0.F } } };
   VkRenderingAttachmentInfo color_attachment = {
     .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
     .imageView = composite_attachment_texture->get_view(),

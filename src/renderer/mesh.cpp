@@ -75,18 +75,6 @@ process_mesh_impl(const aiMesh* mesh, glm::mat4 transform, int parent_index)
     raw_indices.insert(
       raw_indices.end(), face.mIndices, face.mIndices + face.mNumIndices);
 
-#ifndef OPTIMISE
-  AABB aabb;
-  for (const auto& v : raw_vertices)
-    aabb.grow(v.position);
-
-  return LoadedSubmesh{ std::move(raw_vertices),
-                        std::move(raw_indices),
-                        aabb,
-                        mesh->mMaterialIndex,
-                        transform,
-                        parent_index };
-#else
   std::vector<uint32_t> remap(raw_indices.size());
   const size_t unique_vertex_count =
     meshopt_generateVertexRemap(remap.data(),
@@ -157,7 +145,6 @@ process_mesh_impl(const aiMesh* mesh, glm::mat4 transform, int parent_index)
                         mesh->mMaterialIndex,
                         transform,
                         parent_index };
-#endif
 }
 
 void
@@ -655,35 +642,70 @@ StaticMesh::load_from_file(const Device& device,
   upload_materials(scene, device, registry, directory);
 
   std::vector<std::future<LoadedSubmesh>> futures;
+  std::vector<int> future_to_parent_mapping;
 
   std::function<void(aiNode*, int)> process_node;
   process_node = [&](aiNode* node, int parent_index) {
     const glm::mat4 transform =
       glm::transpose(glm::make_mat4(&node->mTransformation.a1));
+
+    std::vector<int> current_node_future_indices;
+
+    // Process all meshes for this node
     for (const auto mesh_index : std::span(node->mMeshes, node->mNumMeshes)) {
       const aiMesh* mesh = scene->mMeshes[mesh_index];
+
+      int future_index = static_cast<int>(futures.size());
+      current_node_future_indices.push_back(future_index);
+      future_to_parent_mapping.push_back(parent_index);
+
       futures.push_back(thread_pool->submit_task(
         [=] { return process_mesh(mesh, transform, parent_index); }));
     }
+
+    // Determine the parent index for child nodes
+    // Use the first future index of this node as the parent for children
+    const int next_parent = current_node_future_indices.empty()
+                              ? parent_index
+                              : current_node_future_indices.front();
+
+    // Process child nodes with the correct parent
     for (const auto& child : std::span(node->mChildren, node->mNumChildren))
-      process_node(child, parent_index);
+      process_node(child, next_parent);
   };
 
   process_node(scene->mRootNode, -1);
 
-  std::unordered_map<int, std::vector<std::int32_t>> parent_to_children;
+  // Process futures in order to maintain correct indexing
+  std::vector<LoadedSubmesh> results;
+  results.reserve(futures.size());
+
   for (auto& future : futures) {
-    auto result = future.get();
+    results.push_back(future.get());
+  }
+
+  // Now build submeshes with correct parent-child relationships
+  std::unordered_map<int, std::vector<std::int32_t>> future_parent_to_children;
+
+  for (size_t i = 0; i < results.size(); ++i) {
     const auto vertex_offset = static_cast<std::uint32_t>(vertices.size());
     const auto index_offset = static_cast<std::uint32_t>(indices.size());
+
+    auto& result = results[i];
     vertices.insert(
       vertices.end(), result.vertices.begin(), result.vertices.end());
     indices.insert(indices.end(), result.indices.begin(), result.indices.end());
-    const auto submesh_index = static_cast<std::int32_t>(submeshes.size());
 
+    const auto submesh_index = static_cast<std::int32_t>(submeshes.size());
     const auto vertex_count =
       static_cast<std::uint32_t>(result.vertices.size());
     const auto index_count = static_cast<std::uint32_t>(result.indices.size());
+
+    // Map future parent index to actual submesh index
+    int actual_parent_index = -1;
+    if (future_to_parent_mapping[i] >= 0) {
+      actual_parent_index = future_to_parent_mapping[i];
+    }
 
     submeshes.push_back(Submesh{
       .vertex_offset = vertex_offset,
@@ -692,17 +714,24 @@ StaticMesh::load_from_file(const Device& device,
       .index_count = index_count,
       .material_index = result.material_index,
       .child_transform = result.transform,
-      .parent_index = result.parent_index,
+      .parent_index = actual_parent_index,
       .children = {},
       .local_aabb = result.aabb,
     });
 
-    if (result.parent_index >= 0)
-      parent_to_children[result.parent_index].push_back(submesh_index);
+    if (actual_parent_index >= 0) {
+      future_parent_to_children[actual_parent_index].push_back(submesh_index);
+    }
   }
-  for (auto& [parent, children] : parent_to_children)
-    for (int32_t child : children)
-      submeshes[parent].children.insert(child);
+
+  // Apply parent-child relationships
+  for (auto& [future_parent, children] : future_parent_to_children) {
+    if (future_parent < static_cast<int>(submeshes.size())) {
+      for (int32_t child : children) {
+        submeshes[future_parent].children.insert(child);
+      }
+    }
+  }
 
   const auto name = resolved_path.filename().string();
   vertex_buffer =

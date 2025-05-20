@@ -8,6 +8,8 @@ class Scene;
 class Entity
 {
 public:
+  Entity() = default;
+
   template<typename T, typename... Args>
   auto add_component(Args&&... args) -> T&;
 
@@ -15,13 +17,16 @@ public:
   auto get_component() -> T&;
 
   template<typename T>
+  auto try_get() -> T*;
+
+  template<typename T>
   auto has_component() const -> bool;
 
   auto raw() const -> entt::entity { return handle; }
 
 private:
-  entt::entity handle;
-  Scene* scene;
+  entt::entity handle{ entt::null };
+  Scene* scene{ nullptr };
 
   Entity(entt::entity, Scene*);
 
