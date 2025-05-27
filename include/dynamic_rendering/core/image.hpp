@@ -52,8 +52,10 @@ public:
   [[nodiscard]] auto get_view() const -> VkImageView { return default_view; }
   [[nodiscard]] auto get_sampler() const -> const VkSampler&;
   template<typename T>
-  [[nodiscard]] auto get_texture_id() const -> T
+  [[nodiscard]] auto get_texture_id() const -> std::optional<T>
   {
+    if (!texture_implementation_pointer)
+      return std::nullopt;
     return std::bit_cast<T>(texture_implementation_pointer);
   }
   [[nodiscard]] auto get_mip_layer_view(const uint32_t mip,
@@ -67,6 +69,10 @@ public:
   [[nodiscard]] auto height() const -> uint32_t { return extent.height; }
   [[nodiscard]] auto layers() const -> uint32_t { return array_layers; }
   [[nodiscard]] auto mips() const -> uint32_t { return mip_levels; }
+  [[nodiscard]] auto get_aspect_ratio() const
+  {
+    return static_cast<float>(extent.width) / static_cast<float>(extent.height);
+  }
   [[nodiscard]] auto get_descriptor_info() const -> const VkDescriptorImageInfo&
   {
     return image_descriptor_info;

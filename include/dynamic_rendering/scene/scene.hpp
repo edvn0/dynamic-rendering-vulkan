@@ -12,18 +12,19 @@ class TagRegistry
 public:
   auto is_unique(std::string_view name) const -> bool
   {
-    return tag_to_entity.find(name) == tag_to_entity.end();
+    return !tag_to_entity.contains(name);
   }
 
   auto register_tag(std::string_view name, entt::entity e) -> bool
   {
-    const auto [it, inserted] = tag_to_entity.try_emplace(std::string(name), e);
+    auto key = std::string(name);
+    const auto [it, inserted] = tag_to_entity.try_emplace(key, e);
     return inserted;
   }
 
   auto unregister_tag(std::string_view name) -> void
   {
-    tag_to_entity.erase(std::string(name));
+    tag_to_entity.erase(name);
   }
 
   auto get_entity(std::string_view name) const -> std::optional<entt::entity>
@@ -33,7 +34,7 @@ public:
     return std::nullopt;
   }
 
-  auto generate_unique_name(std::string_view base) -> std::string
+  auto generate_unique_name(std::string_view base) const -> std::string
   {
     auto counter = 1;
     std::string candidate;
@@ -51,6 +52,7 @@ class Scene
 {
 public:
   explicit Scene(std::string_view);
+  ~Scene() = default;
 
   auto create_entity(std::string_view) -> Entity;
   auto create_entt_entity() -> entt::entity;
@@ -87,6 +89,9 @@ public:
     selected_entity = entity;
   }
 
+  auto update_viewport_bounds(const DynamicRendering::ViewportBounds& bounds)
+    -> void;
+
 private:
   entt::registry registry;
   std::string scene_name{};
@@ -104,6 +109,9 @@ private:
 
   bool show_components = false;
   bool show_statistics = true;
+
+  glm::vec2 vp_min{};
+  glm::vec2 vp_max{};
 
   auto draw_vector3_slider(const char* label,
                            glm::vec3& value,

@@ -20,7 +20,7 @@ struct TimedSection
   std::uint32_t end_query{ 0 };
   double duration_ms{ 0.0 };
 
-  auto duration_ns() const -> std::uint64_t
+  [[nodiscard]] auto duration_ns() const -> std::uint64_t
   {
     return static_cast<std::uint64_t>(duration_ms * 1e6);
   }
@@ -35,10 +35,10 @@ enum class CommandBufferType : std::uint8_t
 class CommandBuffer
 {
 public:
-  CommandBuffer(const Device& device,
-                VkQueue execution_queue,
-                CommandBufferType command_buffer_type,
-                VkCommandPoolCreateFlags pool_flags = 0);
+  CommandBuffer(const Device&,
+                VkQueue,
+                CommandBufferType,
+                VkCommandPoolCreateFlags = 0);
   ~CommandBuffer();
 
   void begin(std::uint32_t frame_index,
@@ -63,7 +63,7 @@ public:
   auto wait_for_fence(std::uint32_t frame_index) const -> void;
   auto reset_fence(std::uint32_t frame_index) const -> void;
 
-  auto begin_frame(std::uint32_t frame_index) const
+  auto begin_frame(const std::uint32_t frame_index) const
   {
     wait_for_fence(frame_index);
     reset_fence(frame_index);

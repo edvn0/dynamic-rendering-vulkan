@@ -154,6 +154,7 @@ private:
   std::unique_ptr<Image> geometry_depth_image;
   std::unique_ptr<Material> z_prepass_material;
   std::unique_ptr<Material> geometry_material;
+  std::unique_ptr<Material> geometry_wireframe_material;
 
   std::unique_ptr<Material> skybox_material;
   std::unique_ptr<Image> skybox_image;

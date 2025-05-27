@@ -4,6 +4,7 @@
 #include <string_view>
 
 class Scene;
+class ReadonlyEntity;
 
 class Entity
 {
@@ -22,7 +23,7 @@ public:
   template<typename T>
   auto has_component() const -> bool;
 
-  auto raw() const -> entt::entity { return handle; }
+  [[nodiscard]] auto raw() const -> entt::entity { return handle; }
 
 private:
   entt::entity handle{ entt::null };
@@ -31,4 +32,22 @@ private:
   Entity(entt::entity, Scene*);
 
   friend class Scene;
+  friend class ReadonlyEntity;
+};
+
+class ReadonlyEntity
+{
+public:
+  ReadonlyEntity(entt::entity e, Scene* s)
+    : entity(e, s)
+  {
+  }
+
+  template<typename T>
+  [[nodiscard]] auto try_get() const -> const T*;
+
+private:
+  Entity entity{};
+
+  friend class Entity;
 };

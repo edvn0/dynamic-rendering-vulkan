@@ -1,5 +1,6 @@
 #include "scene/scene.hpp"
 
+#include "core/app.hpp"
 #include "renderer/renderer.hpp"
 #include "scene/components.hpp"
 
@@ -289,7 +290,7 @@ Scene::draw_entity_item(entt::entity entity, const std::string_view tag)
     ImGui::Indent();
 
     // Transform component
-    if (auto transform = registry.try_get<Component::Transform>(entity)) {
+    if (auto* transform = registry.try_get<Component::Transform>(entity)) {
       if (ImGui::TreeNode("Transform")) {
 
         // Position
@@ -300,40 +301,14 @@ Scene::draw_entity_item(entt::entity entity, const std::string_view tag)
 
         // Scale
         draw_vector3_slider("Scale", transform->scale, 0.001f, 100.0f);
-
-        // Show computed matrix info
-        ImGui::Separator();
-        ImGui::Text("Transform Matrix:");
-        auto matrix = transform->compute();
-        ImGui::Text("[ %.2f %.2f %.2f %.2f ]",
-                    matrix[0][0],
-                    matrix[1][0],
-                    matrix[2][0],
-                    matrix[3][0]);
-        ImGui::Text("[ %.2f %.2f %.2f %.2f ]",
-                    matrix[0][1],
-                    matrix[1][1],
-                    matrix[2][1],
-                    matrix[3][1]);
-        ImGui::Text("[ %.2f %.2f %.2f %.2f ]",
-                    matrix[0][2],
-                    matrix[1][2],
-                    matrix[2][2],
-                    matrix[3][2]);
-        ImGui::Text("[ %.2f %.2f %.2f %.2f ]",
-                    matrix[0][3],
-                    matrix[1][3],
-                    matrix[2][3],
-                    matrix[3][3]);
-
         ImGui::TreePop();
       }
     }
 
     // Mesh component
-    if (auto mesh = registry.try_get<Component::Mesh>(entity)) {
+    if (auto* mesh = registry.try_get<Component::Mesh>(entity)) {
       if (ImGui::TreeNode("Mesh")) {
-        ImGui::Text("Mesh Asset: %p", (const void*)mesh->mesh);
+        ImGui::Text("Mesh Asset: %p", static_cast<const void*>(mesh->mesh));
         ImGui::Checkbox("Casts Shadows", &mesh->casts_shadows);
         ImGui::TreePop();
       }
@@ -347,13 +322,10 @@ Scene::draw_entity_item(entt::entity entity, const std::string_view tag)
 
     if (ImGui::BeginPopup("AddComponentPopup")) {
       if (ImGui::MenuItem("Mesh")) {
-        // Add mesh component logic
       }
       if (ImGui::MenuItem("Light")) {
-        // Add light component logic
       }
       if (ImGui::MenuItem("Camera")) {
-        // Add camera component logic
       }
       ImGui::EndPopup();
     }
@@ -367,10 +339,8 @@ Scene::draw_entity_item(entt::entity entity, const std::string_view tag)
 auto
 Scene::on_interface() -> void
 {
-  // Main scene window
   ImGui::Begin(scene_name.data(), nullptr, ImGuiWindowFlags_MenuBar);
 
-  // Menu bar
   if (ImGui::BeginMenuBar()) {
     if (ImGui::BeginMenu("Entity")) {
       if (ImGui::MenuItem("Create Entity", "Ctrl+N")) {
@@ -395,39 +365,34 @@ Scene::on_interface() -> void
     ImGui::EndMenuBar();
   }
 
-  // Scene statistics
   if (show_statistics) {
-    auto entity_count = registry.view<Component::Tag>().size();
-    auto mesh_count = registry.view<Component::Mesh>().size();
+    auto entity_count = registry.view<const Component::Tag>().size();
+    auto mesh_count = registry.view<const Component::Mesh>().size();
 
     ImGui::Text("Entities: %zu | Meshes: %zu", entity_count, mesh_count);
     ImGui::Separator();
   }
 
-  // Entity list
   ImGui::Text("🏷️ Entities");
   ImGui::Separator();
 
-  // Search filter
-  static char search_buffer[256] = "";
+  static std::array<char, 256> search_buffer{};
   ImGui::SetNextItemWidth(-1);
-  ImGui::InputTextWithHint(
-    "##search", "🔍 Search entities...", search_buffer, sizeof(search_buffer));
+  ImGui::InputTextWithHint("##search",
+                           "🔍 Search entities...",
+                           search_buffer.data(),
+                           sizeof(search_buffer));
 
-  // Entity list with filtering
-  std::string search_term = search_buffer;
-  std::transform(
-    search_term.begin(), search_term.end(), search_term.begin(), ::tolower);
+  std::string search_term = search_buffer.data();
+  std::ranges::transform(search_term, search_term.begin(), ::tolower);
 
   ImGui::BeginChild("EntityList", ImVec2(0, 0), true);
 
   for (auto&& [entity, tag] : registry.view<Component::Tag>().each()) {
-    // Filter entities based on search
     if (!search_term.empty()) {
       std::string entity_name = tag.name;
-      std::transform(
-        entity_name.begin(), entity_name.end(), entity_name.begin(), ::tolower);
-      if (entity_name.find(search_term) == std::string::npos) {
+      std::ranges::transform(entity_name, entity_name.begin(), ::tolower);
+      if (!entity_name.contains(search_term)) {
         continue;
       }
     }
@@ -441,18 +406,17 @@ Scene::on_interface() -> void
 
   if (selected_entity != entt::null) {
     auto* transform = registry.try_get<Component::Transform>(selected_entity);
-    auto* scene_camera = scene_camera_entity.try_get<SceneCameraComponent>();
-    if (transform) {
+    if (auto* scene_camera =
+          scene_camera_entity.try_get<SceneCameraComponent>();
+        transform && scene_camera) {
       ImGuizmo::SetOrthographic(false);
-      ImGuizmo::SetDrawlist();
+      ImGuizmo::SetDrawlist(ImGui::GetForegroundDrawList());
 
-      auto window_pos = ImGui::GetMainViewport()->Pos;
-      auto window_size = ImGui::GetMainViewport()->Size;
-      ImGuizmo::SetRect(
-        window_pos.x, window_pos.y, window_size.x, window_size.y);
+      ImGuizmo::SetRect(vp_min.x, vp_min.y, vp_max.x, vp_max.y);
 
       glm::mat4 view = scene_camera->view;
       glm::mat4 proj = scene_camera->projection;
+      proj[1][1] *= -1.0f;
       glm::mat4 model = transform->compute();
 
       ImGuizmo::Manipulate(glm::value_ptr(view),
@@ -468,7 +432,7 @@ Scene::on_interface() -> void
 
         if (glm::decompose(
               model, scale, rotation, translation, skew, perspective)) {
-          const float scale_min = 0.001f;
+          constexpr float scale_min = 0.001f;
           scale.x = glm::max(glm::abs(scale.x), scale_min) * glm::sign(scale.x);
           scale.y = glm::max(glm::abs(scale.y), scale_min) * glm::sign(scale.y);
           scale.z = glm::max(glm::abs(scale.z), scale_min) * glm::sign(scale.z);
@@ -505,9 +469,9 @@ Scene::on_interface() -> void
 auto
 Scene::on_render(Renderer& renderer) -> void
 {
-  // Find all meshes+transforms in the scene
-  auto view = registry.view<Component::Mesh, Component::Transform>();
-  for (auto [entity, mesh, transform] : view.each()) {
+  for (const auto view =
+         registry.view<Component::Mesh, const Component::Transform>();
+       auto&& [entity, mesh, transform] : view.each()) {
     renderer.submit(
       {
         .mesh = mesh.mesh,
@@ -521,11 +485,19 @@ auto
 Scene::on_resize(const EditorCamera& camera, std::uint32_t, std::uint32_t)
   -> void
 {
-  auto& scene_camera =
+  auto& [position, view, projection] =
     scene_camera_entity.get_component<SceneCameraComponent>();
-  scene_camera.projection = camera.get_projection();
-  scene_camera.view = camera.get_view();
-  scene_camera.position = camera.get_position();
+  projection = camera.get_projection();
+  view = camera.get_view();
+  position = camera.get_position();
+}
+
+auto
+Scene::update_viewport_bounds(const DynamicRendering::ViewportBounds& bounds)
+  -> void
+{
+  vp_min = bounds.min;
+  vp_max = bounds.max;
 }
 
 auto

@@ -17,10 +17,10 @@ layout(location = 2) out vec4 v_light_space_pos;
 layout(location = 3) out vec2 v_uv;
 
 const mat4 shadow_bias_matrix = mat4(
-0.5, 0.0, 0.0, 0.0,
-0.0, -0.5, 0.0, 0.0,
-0.0, 0.0, 1.0, 0.0,
-0.5, 0.5, 0.0, 1.0);
+    0.5, 0.0, 0.0, 0.0,
+    0.0, -0.5, 0.0, 0.0,
+    0.0, 0.0, 1.0, 0.0,
+    0.5, 0.5, 0.0, 1.0);
 
 void main()
 {

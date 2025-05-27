@@ -6,6 +6,7 @@ class Instance;
 
 namespace DynamicRendering {
 class App;
+struct ViewportBounds;
 }
 
 class Event;

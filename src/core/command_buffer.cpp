@@ -11,9 +11,9 @@ CommandBuffer::create(const Device& device, VkCommandPoolCreateFlags pool_flags)
 }
 
 CommandBuffer::CommandBuffer(const Device& dev,
-                             VkQueue q,
-                             CommandBufferType command_buffer_type,
-                             VkCommandPoolCreateFlags pool_flags)
+                             const VkQueue q,
+                             const CommandBufferType command_buffer_type,
+                             const VkCommandPoolCreateFlags pool_flags)
   : timestamp_period(dev.get_timestamp_period())
   , execution_queue(q)
   , device(&dev)
@@ -38,13 +38,13 @@ CommandBuffer::~CommandBuffer()
 }
 
 auto
-CommandBuffer::read_timestamps(uint32_t frame_index,
-                               uint32_t first_query,
-                               uint32_t query_count) const
+CommandBuffer::read_timestamps(const uint32_t frame_index,
+                               const uint32_t first_query,
+                               const uint32_t query_count) const
   -> std::optional<std::vector<double>>
 {
   std::vector<std::uint64_t> timestamps(query_count);
-  auto result =
+  const auto result =
     vkGetQueryPoolResults(device->get_device(),
                           query_pools[frame_index],
                           first_query,
@@ -69,7 +69,7 @@ CommandBuffer::read_timestamps(uint32_t frame_index,
 }
 
 void
-CommandBuffer::create_command_pool(VkCommandPoolCreateFlags flags)
+CommandBuffer::create_command_pool(const VkCommandPoolCreateFlags flags)
 {
   VkCommandPoolCreateInfo info{
     .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
@@ -124,8 +124,8 @@ CommandBuffer::create_query_pools()
 }
 
 void
-CommandBuffer::begin(uint32_t frame_index,
-                     VkCommandBufferUsageFlags usage) const
+CommandBuffer::begin(const uint32_t frame_index,
+                     const VkCommandBufferUsageFlags usage) const
 {
   VkCommandBufferBeginInfo info{
     .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
@@ -137,16 +137,16 @@ CommandBuffer::begin(uint32_t frame_index,
 }
 
 void
-CommandBuffer::end(uint32_t frame_index) const
+CommandBuffer::end(const uint32_t frame_index) const
 {
   vkEndCommandBuffer(command_buffers[frame_index]);
 }
 
 void
-CommandBuffer::submit(uint32_t frame_index,
-                      VkSemaphore wait_semaphore,
-                      VkSemaphore signal_semaphore,
-                      VkFence fence) const
+CommandBuffer::submit(const uint32_t frame_index,
+                      const VkSemaphore wait_semaphore,
+                      const VkSemaphore signal_semaphore,
+                      const VkFence fence) const
 {
   VkSubmitInfo submit_info;
   std::memset(&submit_info, 0, sizeof(submit_info));
@@ -174,30 +174,30 @@ CommandBuffer::submit(uint32_t frame_index,
 }
 
 void
-CommandBuffer::submit_and_end(uint32_t frame_index,
-                              VkSemaphore wait_semaphore,
-                              VkSemaphore signal_semaphore,
-                              VkFence fence) const
+CommandBuffer::submit_and_end(const uint32_t frame_index,
+                              const VkSemaphore wait_semaphore,
+                              const VkSemaphore signal_semaphore,
+                              const VkFence fence) const
 {
   end(frame_index);
   submit(frame_index, wait_semaphore, signal_semaphore, fence);
 }
 
 void
-CommandBuffer::reset_query_pool(uint32_t frame_index) const
+CommandBuffer::reset_query_pool(const uint32_t frame_index) const
 {
   vkCmdResetQueryPool(
     command_buffers[frame_index], query_pools[frame_index], 0, 64);
 }
 
 VkCommandBuffer
-CommandBuffer::get(uint32_t frame_index) const
+CommandBuffer::get(const uint32_t frame_index) const
 {
   return command_buffers[frame_index];
 }
 
 VkQueryPool
-CommandBuffer::get_query_pool(uint32_t frame_index) const
+CommandBuffer::get_query_pool(const uint32_t frame_index) const
 {
   return query_pools[frame_index];
 }
@@ -209,26 +209,26 @@ CommandBuffer::reset_pool() const
 }
 
 VkFence
-CommandBuffer::get_fence(uint32_t frame_index) const
+CommandBuffer::get_fence(const uint32_t frame_index) const
 {
   return fences[frame_index];
 }
 
 void
-CommandBuffer::wait_for_fence(uint32_t frame_index) const
+CommandBuffer::wait_for_fence(const uint32_t frame_index) const
 {
   vkWaitForFences(
     device->get_device(), 1, &fences[frame_index], VK_TRUE, UINT64_MAX);
 }
 
 void
-CommandBuffer::reset_fence(uint32_t frame_index) const
+CommandBuffer::reset_fence(const uint32_t frame_index) const
 {
   vkResetFences(device->get_device(), 1, &fences[frame_index]);
 }
 
 auto
-CommandBuffer::resolve_timers(uint32_t frame_index) const
+CommandBuffer::resolve_timers(const uint32_t frame_index) const
   -> std::vector<TimedSection>
 {
   constexpr uint32_t delay_frames = 2;
@@ -268,7 +268,8 @@ CommandBuffer::resolve_timers(uint32_t frame_index) const
 }
 
 void
-CommandBuffer::write_timestamp(uint32_t frame_index, uint32_t query_index) const
+CommandBuffer::write_timestamp(const uint32_t frame_index,
+                               const uint32_t query_index) const
 {
   VkPipelineStageFlagBits stage =
     command_buffer_type == CommandBufferType::Compute
@@ -280,7 +281,8 @@ CommandBuffer::write_timestamp(uint32_t frame_index, uint32_t query_index) const
 }
 
 void
-CommandBuffer::begin_timer(uint32_t frame_index, std::string_view name)
+CommandBuffer::begin_timer(const uint32_t frame_index,
+                           const std::string_view name)
 {
   auto& index = next_query_index[frame_index];
   auto begin_idx = index++;
@@ -293,7 +295,8 @@ CommandBuffer::begin_timer(uint32_t frame_index, std::string_view name)
 }
 
 void
-CommandBuffer::end_timer(uint32_t frame_index, std::string_view name)
+CommandBuffer::end_timer(const uint32_t frame_index,
+                         const std::string_view name)
 {
   auto& index = next_query_index[frame_index];
   auto end_idx = index++;

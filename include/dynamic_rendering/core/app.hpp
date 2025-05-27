@@ -30,6 +30,20 @@ struct IRayPickListener
     -> void = 0;
 };
 
+struct ViewportBounds
+{
+  glm::vec2 min{ 0.0f, 0.0f };
+  glm::vec2 max{ 0.0f, 0.0f };
+  [[nodiscard]] auto size() const -> glm::vec2 { return max - min; }
+  [[nodiscard]] auto center() const -> glm::vec2 { return (min + max) * 0.5f; }
+};
+struct ViewportBoundsListener
+{
+  virtual ~ViewportBoundsListener() = default;
+  virtual auto on_viewport_bounds_changed(const ViewportBounds& bounds)
+    -> void = 0;
+};
+
 auto
 parse_command_line_args(int, char**)
   -> std::expected<ApplicationArguments, std::error_code>;
@@ -106,6 +120,9 @@ private:
 
   std::vector<std::unique_ptr<ILayer>> layers;
   bool running = true;
+
+  ViewportBounds viewport_bounds;
+  auto notify_viewport_bounds_if_needed() -> void;
 
   std::unique_ptr<AssetFileWatcher> file_watcher;
   std::vector<IRayPickListener*> ray_pick_listeners;

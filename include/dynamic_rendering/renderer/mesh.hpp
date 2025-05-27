@@ -134,17 +134,18 @@ public:
   StaticMesh() = default;
   ~StaticMesh();
 
-  auto load_from_file(const Device&,
-                      const BlueprintRegistry&,
-                      const std::string& path) -> bool;
-  auto load_from_file(const Device&,
-                      const BlueprintRegistry&,
-                      BS::priority_thread_pool*,
-                      const std::string& path) -> bool;
-  static auto load_from_memory(const Device&,
-                               const BlueprintRegistry&,
-                               std::unique_ptr<VertexBuffer>&& vertex_buffer,
-                               std::unique_ptr<IndexBuffer>&& index_buffer);
+  [[nodiscard]] auto load_from_file(const Device&,
+                                    const BlueprintRegistry&,
+                                    const std::string& path) -> bool;
+  [[nodiscard]] auto load_from_file(const Device&,
+                                    const BlueprintRegistry&,
+                                    BS::priority_thread_pool*,
+                                    const std::string& path) -> bool;
+  [[nodiscard]] static auto load_from_memory(
+    const Device&,
+    const BlueprintRegistry&,
+    std::unique_ptr<VertexBuffer>&& vertex_buffer,
+    std::unique_ptr<IndexBuffer>&& index_buffer);
 
   [[nodiscard]] auto get_vertex_buffer() const -> VertexBuffer*
   {

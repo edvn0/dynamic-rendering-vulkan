@@ -30,3 +30,11 @@ Entity::try_get() -> T*
   }
   return nullptr;
 }
+
+template<typename T>
+auto
+ReadonlyEntity::try_get() const -> const T*
+{
+  auto* component = entity.scene->get_registry().try_get<const T>(entity.raw());
+  return component;
+}

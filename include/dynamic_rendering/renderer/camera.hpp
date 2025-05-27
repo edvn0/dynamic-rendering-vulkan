@@ -10,9 +10,9 @@
 #include <variant>
 
 namespace camera_constants {
-constexpr glm::vec3 WORLD_FORWARD = glm::vec3(0.0f, 0.0f, -1.0f);
-constexpr glm::vec3 WORLD_RIGHT = glm::vec3(1.0f, 0.0f, 0.0f);
-constexpr glm::vec3 WORLD_UP = glm::vec3(0.0f, 1.0f, 0.0f);
+constexpr auto WORLD_FORWARD = glm::vec3(0.0f, 0.0f, -1.0f);
+constexpr auto WORLD_RIGHT = glm::vec3(1.0f, 0.0f, 0.0f);
+constexpr auto WORLD_UP = glm::vec3(0.0f, 1.0f, 0.0f);
 }
 
 class Camera
@@ -41,7 +41,7 @@ public:
 
   virtual auto on_update(double delta_time) -> void
   {
-    float dt = static_cast<float>(delta_time);
+    auto dt = static_cast<float>(delta_time);
     glm::vec3 move_dir{ 0.0f };
 
     using enum KeyCode;
@@ -76,8 +76,8 @@ public:
         first_mouse = false;
       }
 
-      float x_offset = static_cast<float>(x - last_mouse_x);
-      float y_offset = static_cast<float>(last_mouse_y - y);
+      auto x_offset = static_cast<float>(x - last_mouse_x);
+      auto y_offset = static_cast<float>(last_mouse_y - y);
 
       last_mouse_x = x;
       last_mouse_y = y;

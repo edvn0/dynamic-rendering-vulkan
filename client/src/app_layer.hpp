@@ -2,9 +2,10 @@
 
 #include <dynamic_rendering/dynamic_rendering.hpp>
 
-class AppLayer
+class AppLayer final
   : public ILayer
   , public DynamicRendering::IRayPickListener
+  , public DynamicRendering::ViewportBoundsListener
 {
 public:
   explicit AppLayer(const Device&,
@@ -20,6 +21,12 @@ public:
   auto on_resize(std::uint32_t w, std::uint32_t h) -> void override;
   auto on_initialise(const InitialisationParameters&) -> void override;
 
+  auto on_viewport_bounds_changed(
+    const DynamicRendering::ViewportBounds& new_viewport_bounds)
+    -> void override
+  {
+    active_scene->update_viewport_bounds(new_viewport_bounds);
+  }
   auto on_ray_pick(const glm::vec3& origin, const glm::vec3& direction)
     -> void override;
 

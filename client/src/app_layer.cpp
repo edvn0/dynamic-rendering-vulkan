@@ -31,12 +31,12 @@ AppLayer::AppLayer(const Device& dev,
   // assert(mesh->load_from_file(dev, *blueprint_registry,
   // "cerberus/scene.gltf"));
 
-  tokyo_mesh->load_from_file(
-    dev, *blueprint_registry, pool, "little_tokyo/scene.gltf");
+  // tokyo_mesh->load_from_file(
+  //   dev, *blueprint_registry, pool, "little_tokyo/scene.gltf");
   tokyo_entity.add_component<Component::Mesh>(tokyo_mesh.get(), false);
-  armour_mesh->load_from_file(
+  (void)armour_mesh->load_from_file(
     dev, *blueprint_registry, "battle_armour/scene.gltf");
-  hunter_mesh->load_from_file(
+  (void)hunter_mesh->load_from_file(
     dev, *blueprint_registry, "astro_hunter_special/scene.gltf");
 
   generate_scene();
@@ -90,14 +90,8 @@ AppLayer::on_update(double ts) -> void
   angle_deg += static_cast<float>(ts) * rotation_speed;
   angle_deg = fmod(angle_deg, 360.f);
 
-  bool first = true;
   active_scene->each<const CubeComponent, Component::Transform>(
     [&](auto, const auto&, Component::Transform& transform) {
-      if (first) {
-        first = false;
-        return;
-      }
-
       transform.rotation =
         glm::angleAxis(glm::radians(angle_deg), glm::vec3(0.f, 1.f, 0.f));
     });
@@ -192,40 +186,56 @@ AppLayer::on_ray_pick(const glm::vec3& origin, const glm::vec3& direction)
   float closest_distance = std::numeric_limits<float>::max();
   entt::entity closest_entity = entt::null;
 
-  active_scene->each<const CubeComponent, Component::Transform>(
-    [&](entt::entity entity,
+  active_scene->each<const CubeComponent, const Component::Transform>(
+    [&](const entt::entity entity,
         const CubeComponent&,
         const Component::Transform& transform) {
       const glm::mat4 model = transform.compute();
-      const glm::vec3 aabb_min(-0.5f), aabb_max(0.5f);
-
       const glm::mat4 inv_model = glm::inverse(model);
-      glm::vec3 ray_origin_local =
+
+      const auto ray_origin_local =
         glm::vec3(inv_model * glm::vec4(origin, 1.0f));
-      glm::vec3 ray_dir_local =
+      const auto ray_dir_local =
         glm::normalize(glm::vec3(inv_model * glm::vec4(direction, 0.0f)));
 
-      float tmin = 0.0f, tmax = 10000.0f;
+      constexpr glm::vec3 aabb_min(-0.5f), aabb_max(0.5f);
+      float tmin = -std::numeric_limits<float>::max();
+      float tmax = std::numeric_limits<float>::max();
 
       for (int i = 0; i < 3; ++i) {
-        float inv_d = 1.0f / ray_dir_local[i];
-        float t0 = (aabb_min[i] - ray_origin_local[i]) * inv_d;
-        float t1 = (aabb_max[i] - ray_origin_local[i]) * inv_d;
+        const float dir_component = ray_dir_local[i];
+        const float orig_component = ray_origin_local[i];
+
+        if (std::abs(dir_component) < 1e-6f) {
+          if (orig_component < aabb_min[i] || orig_component > aabb_max[i])
+            return; // Parallel and outside slab
+          continue;
+        }
+
+        const float inv_d = 1.0f / dir_component;
+        float t0 = (aabb_min[i] - orig_component) * inv_d;
+        float t1 = (aabb_max[i] - orig_component) * inv_d;
+
         if (inv_d < 0.0f)
           std::swap(t0, t1);
+
         tmin = std::max(tmin, t0);
         tmax = std::min(tmax, t1);
         if (tmax < tmin)
-          return; // correct: just skip this entity
+          return;
       }
 
-      if (tmin < closest_distance) {
+      if (tmin < closest_distance && tmax >= 0.0f) {
         closest_distance = tmin;
         closest_entity = entity;
       }
     });
 
   if (closest_entity != entt::null) {
-    active_scene->set_selected_entity(closest_entity);
+    ReadonlyEntity entity{ closest_entity, active_scene.get() };
+    if (auto* tag = entity.try_get<const Component::Tag>()) {
+      Logger::log_info("{}", tag->name);
+      active_scene->set_selected_entity(closest_entity);
+    }
   }
 }

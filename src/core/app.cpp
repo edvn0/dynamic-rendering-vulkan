@@ -15,48 +15,32 @@
 #include <thread>
 
 #include <GLFW/glfw3.h>
+#include <glm/gtx/string_cast.hpp>
 #include <imgui.h>
 #include <implot.h>
 #include <lyra/lyra.hpp>
 #include <tracy/Tracy.hpp>
 
 auto
-generate_world_ray(const glm::vec2& mouse_pos,
-                   const glm::vec2& viewport_pos,
+generate_world_ray(const glm::vec2& local_mouse,
                    const glm::vec2& viewport_size,
                    const glm::vec3& camera_pos,
                    const glm::mat4& view,
                    const glm::mat4& projection)
   -> std::pair<glm::vec3, glm::vec3>
 {
-  glm::vec2 local_mouse = mouse_pos - viewport_pos;
+  const auto x_ndc = (2.0f * local_mouse.x) / viewport_size.x - 1.0f;
+  const auto y_ndc = 1.0f - (2.0f * local_mouse.y) / viewport_size.y;
 
-  Logger::log_info("Mouse screen: ({}, {})", mouse_pos.x, mouse_pos.y);
-  Logger::log_info("Viewport pos: ({}, {})", viewport_pos.x, viewport_pos.y);
-  Logger::log_info("Viewport size: ({}, {})", viewport_size.x, viewport_size.y);
-  Logger::log_info("Mouse local: ({}, {})", local_mouse.x, local_mouse.y);
+  const auto ray_clip =
+    glm::vec4(x_ndc, y_ndc, 0.0f, 1.0f); // Z = 0.0f for near plane
+  auto ray_view = glm::inverse(projection) * ray_clip;
+  ray_view /= ray_view.w;
 
-  float x_ndc = (2.0f * local_mouse.x) / viewport_size.x - 1.0f;
-  float y_ndc = 1.0f - (2.0f * local_mouse.y) / viewport_size.y;
+  const auto ray_world = glm::inverse(view) * ray_view;
+  const auto ray_direction = glm::normalize(glm::vec3(ray_world) - camera_pos);
 
-  Logger::log_info("Mouse NDC: ({}, {})", x_ndc, y_ndc);
-
-  glm::vec4 ray_clip = glm::vec4(x_ndc, y_ndc, -1.0f, 1.0f);
-  glm::vec4 ray_eye = glm::inverse(projection) * ray_clip;
-  ray_eye = glm::vec4(ray_eye.x, ray_eye.y, -1.0f, 0.0f);
-
-  glm::vec3 ray_origin = camera_pos;
-  glm::vec3 ray_direction =
-    glm::normalize(glm::vec3(glm::inverse(view) * ray_eye));
-
-  Logger::log_info(
-    "Ray Origin: ({}, {}, {})", ray_origin.x, ray_origin.y, ray_origin.z);
-  Logger::log_info("Ray Direction: ({}, {}, {})",
-                   ray_direction.x,
-                   ray_direction.y,
-                   ray_direction.z);
-
-  return { ray_origin, ray_direction };
+  return { camera_pos, ray_direction };
 }
 
 namespace DynamicRendering {
@@ -151,10 +135,27 @@ private:
   clock::time_point start_time{ clock::now() };
 };
 
+static constexpr auto update_viewport_bounds = [](const auto& bounds,
+                                                  auto& layers) {
+  for (const auto& layer : layers) {
+    if (auto* vp_listener =
+          dynamic_cast<DynamicRendering::ViewportBoundsListener*>(
+            layer.get())) {
+      vp_listener->on_viewport_bounds_changed(bounds);
+    }
+  }
+};
+
+auto
+App::notify_viewport_bounds_if_needed() -> void
+{
+  update_viewport_bounds(viewport_bounds, layers);
+}
+
 App::App(const ApplicationArguments& args)
   : thread_pool(std::thread::hardware_concurrency())
 {
-  Logger::init_logger();
+  TracySetProgramName("Dynamic Rendering Vulkan") Logger::init_logger();
 
   {
     ZoneScopedN("Create instance");
@@ -219,7 +220,7 @@ App::add_layer(std::unique_ptr<ILayer> layer)
 auto
 App::run() -> std::error_code
 {
-  InitialisationParameters params{
+  const InitialisationParameters params{
     .app = *this,
     .device = *device,
     .window = *window,
@@ -267,7 +268,6 @@ App::run() -> std::error_code
       device->wait_idle();
       asset_reloader->handle_dirty_files(dirty_files);
     }
-
     FrameMark;
   }
 
@@ -309,28 +309,52 @@ App::interface() -> void
   if (ImGui::Begin("Renderer Output", nullptr, flags)) {
     ZoneScopedN("Renderer Output");
 
-    auto window_pos = ImGui::GetCursorScreenPos(); // Top-left of content
-    auto window_size = ImGui::GetWindowSize();
+    const auto available = ImGui::GetContentRegionAvail();
+    ImVec2 region = ImGui::GetContentRegionAvail();
+    auto& image = renderer->get_output_image();
+    float render_aspect = image.get_aspect_ratio();
+    float region_aspect = region.x / region.y;
 
-    ImGui::Image(renderer->get_output_image().get_texture_id<ImTextureID>(),
-                 window_size);
+    glm::vec2 image_size;
+    if (region_aspect > render_aspect) {
+      image_size.y = region.y;
+      image_size.x = render_aspect * image_size.y;
+    } else {
+      image_size.x = region.x;
+      image_size.y = image_size.x / render_aspect;
+    }
+    ImVec2 cursor = ImGui::GetCursorPos();
+    ImGui::SetCursorPos(ImVec2(cursor.x + (region.x - image_size.x) * 0.5f,
+                               cursor.y + (region.y - image_size.y) * 0.5f));
+    auto texture_id = image.get_texture_id<ImTextureID>();
+    if (texture_id) {
+      ImGui::Image(*texture_id, ImVec2(image_size.x, image_size.y));
+    }
 
-    bool hovered = ImGui::IsItemHovered();
-    bool clicked = ImGui::IsItemClicked(ImGuiMouseButton_Left);
+    const auto image_top_left =
+      glm::vec2(ImGui::GetItemRectMin().x, ImGui::GetItemRectMin().y);
+    const auto image_bottom_right =
+      glm::vec2(ImGui::GetItemRectMax().x, ImGui::GetItemRectMax().y);
 
-    if (hovered && clicked) {
-      ImVec2 mouse = ImGui::GetMousePos();
-      glm::vec2 mouse_screen(mouse.x, mouse.y);
-      glm::vec2 viewport_pos(window_pos.x, window_pos.y);
-      glm::vec2 viewport_size(window_size.x, window_size.y);
+    viewport_bounds.min = glm::vec2(image_top_left.x, image_top_left.y);
+    viewport_bounds.max = glm::vec2(image_bottom_right.x, image_bottom_right.y);
+    notify_viewport_bounds_if_needed();
 
-      [[maybe_unused]] auto&& [ray_origin, ray_dir] =
-        generate_world_ray(mouse_screen,
-                           viewport_pos,
-                           viewport_size,
+    const bool hovered = ImGui::IsItemHovered();
+
+    if (const bool clicked = ImGui::IsItemClicked(ImGuiMouseButton_Left);
+        hovered && clicked) {
+      const ImVec2 mouse = ImGui::GetMousePos();
+      const glm::vec2 mouse_screen(mouse.x, mouse.y);
+      const glm::vec2 relative_mouse_pos = mouse_screen - image_top_left;
+
+      auto proj = camera->get_projection();
+      auto&& [ray_origin, ray_dir] =
+        generate_world_ray(relative_mouse_pos,
+                           glm::vec2(image_size.x, image_size.y),
                            camera->get_position(),
                            camera->get_view(),
-                           camera->get_projection());
+                           proj);
 
       for (auto* listener : ray_pick_listeners)
         listener->on_ray_pick(ray_origin, ray_dir);
@@ -342,8 +366,11 @@ App::interface() -> void
   if (ImGui::Begin("Shadow Output", nullptr, flags)) {
     ZoneScopedN("Shadow Output");
     auto size = ImGui::GetWindowSize();
-    ImGui::Image(renderer->get_shadow_image().get_texture_id<ImTextureID>(),
-                 size);
+    auto texture_id =
+      renderer->get_shadow_image().get_texture_id<ImTextureID>();
+    if (texture_id) {
+      ImGui::Image(*texture_id, size);
+    }
     ImGui::End();
   }
 
@@ -357,6 +384,7 @@ App::interface() -> void
   }
 
   if (ImGui::Begin("GPU Timers")) {
+#define PERFORMANCE
 #ifdef PERFORMANCE
     ZoneScopedN("GPU Timers");
     const auto& command_buffer = renderer->get_command_buffer();
@@ -397,6 +425,8 @@ App::interface() -> void
 #endif
     ImGui::End();
   }
+
+  notify_viewport_bounds_if_needed();
 }
 
 void
@@ -405,6 +435,7 @@ App::process_events(Event& event)
   EventDispatcher dispatcher(event);
   dispatcher.dispatch<WindowResizeEvent>([this](auto&) {
     window->set_resize_flag(true);
+    update_viewport_bounds(viewport_bounds, layers);
     return true;
   });
   dispatcher.dispatch<WindowCloseEvent>([this](auto&) {
