@@ -200,23 +200,22 @@ public:
       .local_aabb.transformed(get_world_transform(submesh_index));
   }
 
-  auto upload_materials(const aiScene*,
-                        const Device&,
-                        const BlueprintRegistry&,
-                        const std::string&) -> void;
-  auto process_mesh(const aiMesh*, glm::mat4, std::int32_t) -> LoadedSubmesh;
-
 private:
   std::vector<Vertex> vertices;
   std::vector<std::uint32_t> indices;
   std::vector<Submesh> submeshes;
   std::vector<std::unique_ptr<Material>> materials;
-  string_hash_map<std::unique_ptr<Image>> loaded_textures;
+  string_hash_map<Assets::Pointer<Image>> loaded_textures;
 
   std::unique_ptr<VertexBuffer> vertex_buffer;
   std::unique_ptr<IndexBuffer> index_buffer;
 
   glm::mat4 transform{ 1.0f };
+
+  auto upload_materials(const aiScene*,
+                        const Device&,
+                        const BlueprintRegistry&,
+                        const std::string&) -> void;
 
   friend class MeshCache;
 };

@@ -82,7 +82,7 @@ public:
 
   auto invalidate(const Image* image) -> void
   {
-    invalidate(std::span<const Image*>{ &image, 1 });
+    invalidate(std::span{ &image, 1 });
   }
   auto invalidate(std::span<const Image*> images) -> void;
   auto reload(const PipelineBlueprint&) -> void;

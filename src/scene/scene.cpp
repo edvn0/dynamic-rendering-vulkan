@@ -9,6 +9,9 @@
 #include <ImGuizmo.h>
 // clang-format on
 
+#include "assets/manager.hpp"
+#include "renderer/mesh.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <glm/glm.hpp>
@@ -34,7 +37,7 @@ Scene::create_entity(std::string_view n)
   tag_registry.register_tag(final_name, handle);
   registry.emplace<Component::Tag>(handle, final_name);
   registry.emplace<Component::Transform>(handle);
-  return Entity(handle, this);
+  return { handle, this };
 }
 
 auto
@@ -308,7 +311,7 @@ Scene::draw_entity_item(entt::entity entity, const std::string_view tag)
     // Mesh component
     if (auto* mesh = registry.try_get<Component::Mesh>(entity)) {
       if (ImGui::TreeNode("Mesh")) {
-        ImGui::Text("Mesh Asset: %p", static_cast<const void*>(mesh->mesh));
+        // ImGui::Text("Mesh Asset: %p", static_cast<const void*>(mesh->mesh));
         ImGui::Checkbox("Casts Shadows", &mesh->casts_shadows);
         ImGui::TreePop();
       }
@@ -472,9 +475,11 @@ Scene::on_render(Renderer& renderer) -> void
   for (const auto view =
          registry.view<Component::Mesh, const Component::Transform>();
        auto&& [entity, mesh, transform] : view.each()) {
+
+    const auto actual_mesh = Assets::Manager::the().get(mesh.mesh);
     renderer.submit(
       {
-        .mesh = mesh.mesh,
+        .mesh = actual_mesh,
         .casts_shadows = mesh.casts_shadows,
       },
       transform.compute());

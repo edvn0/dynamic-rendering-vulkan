@@ -2,6 +2,8 @@
 
 #include "core/forward.hpp"
 
+#include "assets/handle.hpp"
+
 #include <entt/entt.hpp>
 #include <glm/glm.hpp>
 #include <string>
@@ -35,7 +37,7 @@ struct Hierarchy
 
 struct Mesh
 {
-  StaticMesh* mesh;
+  Assets::Handle<StaticMesh> mesh;
   bool casts_shadows{ true };
 };
 

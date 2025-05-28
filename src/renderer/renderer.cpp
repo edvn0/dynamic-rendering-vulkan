@@ -19,6 +19,7 @@
 #include "renderer/descriptor_manager.hpp"
 
 #include "core/vulkan_util.hpp"
+#include "renderer/camera.hpp"
 #include "renderer/mesh.hpp"
 #include "window/window.hpp"
 
@@ -488,6 +489,23 @@ Renderer::Renderer(const Device& dev,
     0xff, 0xff, 0xff, 0xff
   };
   white_texture->upload_rgba(white_pixel);
+
+  black_texture = Image::create(*device,
+                                {
+                                  .extent = { 1, 1 },
+                                  .format = VK_FORMAT_R8G8B8A8_SRGB,
+                                  .usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
+                                           VK_IMAGE_USAGE_SAMPLED_BIT |
+                                           VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                                  .sample_count = VK_SAMPLE_COUNT_1_BIT,
+                                  .allow_in_ui = false,
+                                  .debug_name = "black_texture",
+                                });
+
+  static constexpr std::array<unsigned char, 4> black_pixel = {
+    0x0, 0x0, 0x0, 0x0
+  };
+  black_texture->upload_rgba(white_pixel);
 }
 
 auto
@@ -501,6 +519,7 @@ auto
 Renderer::destroy() -> void
 {
   white_texture.reset();
+  black_texture.reset();
 }
 
 Renderer::~Renderer()
@@ -542,6 +561,28 @@ Renderer::submit_lines(const glm::vec3& start,
     (static_cast<std::uint32_t>(colour.r * 255.0f) << 0);
 
   line_instances.emplace_back(start, width, end, packed_color);
+}
+
+auto
+Renderer::submit_aabb(const glm::vec3& min,
+                      const glm::vec3& max,
+                      const glm::vec4& color,
+                      float width) -> void
+{
+  const std::array<glm::vec3, 8> corners = {
+    glm::vec3{ min.x, min.y, min.z }, { max.x, min.y, min.z },
+    { max.x, max.y, min.z },          { min.x, max.y, min.z },
+    { min.x, min.y, max.z },          { max.x, min.y, max.z },
+    { max.x, max.y, max.z },          { min.x, max.y, max.z },
+  };
+
+  constexpr std::array<std::pair<int, int>, 12> edges = {
+    std::pair{ 0, 1 }, { 1, 2 }, { 2, 3 }, { 3, 0 }, { 4, 5 }, { 5, 6 },
+    { 6, 7 },          { 7, 4 }, { 0, 4 }, { 1, 5 }, { 2, 6 }, { 3, 7 },
+  };
+
+  for (const auto& [start, end] : edges)
+    submit_lines(corners[start], corners[end], width, color);
 }
 
 static auto
@@ -634,29 +675,42 @@ Renderer::upload_line_instance_data() -> void
 auto
 Renderer::update_shadow_buffers(std::uint32_t frame_index) -> void
 {
-  static constexpr auto calculate_light_view_projection =
-    [](const glm::vec3& light_pos) {
-      constexpr glm::vec3 center{ 0.f, 0.f, 0.f };
-      constexpr glm::vec3 up{ 0.f, 1.f, 0.f };
+  constexpr glm::vec3 up{ camera_constants::WORLD_UP };
 
-      const auto view = glm::lookAtRH(light_pos, center, up);
+  glm::mat4 view;
+  switch (light_environment.view_mode) {
+    case ShadowViewMode::LookAtRH:
+      view = glm::lookAtRH(
+        light_environment.light_position, light_environment.target, up);
+      break;
+    case ShadowViewMode::LookAtLH:
+      view = glm::lookAtLH(
+        light_environment.light_position, light_environment.target, up);
+      break;
+  }
 
-      constexpr float ortho_size = 50.f;
-      constexpr float near_plane = 0.1f;
-      constexpr float far_plane = 100.f;
+  const float s = light_environment.ortho_size;
+  const float n = light_environment.near_plane;
+  const float f = light_environment.far_plane;
 
-      const glm::mat4 proj = glm::orthoRH_ZO(-ortho_size,
-                                             ortho_size,
-                                             -ortho_size,
-                                             ortho_size,
-                                             far_plane,
-                                             near_plane);
+  glm::mat4 proj;
+  switch (light_environment.projection_mode) {
+    case ShadowProjectionMode::OrthoRH_ZO:
+      proj = glm::orthoRH_ZO(-s, s, -s, s, n, f);
+      break;
+    case ShadowProjectionMode::OrthoRH_NO:
+      proj = glm::orthoRH_NO(-s, s, -s, s, n, f);
+      break;
+    case ShadowProjectionMode::OrthoLH_ZO:
+      proj = glm::orthoLH_ZO(-s, s, -s, s, n, f);
+      break;
+    case ShadowProjectionMode::OrthoLH_NO:
+      proj = glm::orthoLH_NO(-s, s, -s, s, n, f);
+      break;
+  }
 
-      return proj * view;
-    };
+  const glm::mat4 vp = proj * view;
 
-  const glm::mat4 vp =
-    calculate_light_view_projection(light_environment.light_position);
   ShadowBuffer shadow_data{
     .light_vp = vp,
     .light_position = glm::vec4{ light_environment.light_position, 1.0F },
@@ -1141,7 +1195,9 @@ Renderer::run_geometry_pass(std::uint32_t frame_index,
 
     auto& material = cmd_info.override_material ? *cmd_info.override_material
                                                 : *submesh_material;
-    auto& pipeline = material.get_pipeline();
+
+    // The pipeline should still come from the geometry main material.
+    auto& pipeline = geometry_material->get_pipeline();
 
     const auto& material_set = material.prepare_for_rendering(frame_index);
 

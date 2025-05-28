@@ -21,6 +21,7 @@ enum class MeshType : std::uint8_t
   Cylinder,
   Cone,
   Torus,
+  MaxCount,
 };
 
 struct MeshCacheError
@@ -51,9 +52,15 @@ public:
   }
 
   template<MeshType T>
-  auto get_mesh() const -> std::expected<StaticMesh*, MeshCacheError>
+  [[nodiscard]] auto get_mesh() const
+    -> std::expected<StaticMesh*, MeshCacheError>
   {
-    auto it = meshes.find(T);
+    return get_mesh(T);
+  }
+  [[nodiscard]] auto get_mesh(MeshType type) const
+    -> std::expected<StaticMesh*, MeshCacheError>
+  {
+    const auto it = meshes.find(type);
     if (it == meshes.end()) {
       return std::unexpected{ MeshCacheError{ "Mesh not found" } };
     }

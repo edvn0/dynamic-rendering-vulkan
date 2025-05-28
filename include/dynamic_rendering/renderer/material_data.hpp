@@ -65,7 +65,7 @@ struct MaterialData
     return flags & FLAG_EMISSIVE_MAP;
   }
 
-  constexpr auto set_alpha_testing(bool val) -> void
+  constexpr auto set_alpha_testing(const bool val) -> void
   {
     if (val)
       flags |= FLAG_ALPHA_TEST;
@@ -73,7 +73,7 @@ struct MaterialData
       flags &= ~FLAG_ALPHA_TEST;
   }
 
-  constexpr auto set_double_sided(bool val) -> void
+  constexpr auto set_double_sided(const bool val) -> void
   {
     if (val)
       flags |= FLAG_DOUBLE_SIDED;
@@ -81,7 +81,7 @@ struct MaterialData
       flags &= ~FLAG_DOUBLE_SIDED;
   }
 
-  constexpr auto set_emissive(bool val) -> void
+  constexpr auto set_emissive(const bool val) -> void
   {
     if (val)
       flags |= FLAG_EMISSIVE;
@@ -89,7 +89,7 @@ struct MaterialData
       flags &= ~FLAG_EMISSIVE;
   }
 
-  constexpr auto set_has_albedo_texture(bool val) -> void
+  constexpr auto set_has_albedo_texture(const bool val) -> void
   {
     if (val)
       flags |= FLAG_ALBEDO_TEXTURE;
@@ -97,7 +97,7 @@ struct MaterialData
       flags &= ~FLAG_ALBEDO_TEXTURE;
   }
 
-  constexpr auto set_has_normal_map(bool val) -> void
+  constexpr auto set_has_normal_map(const bool val) -> void
   {
     if (val)
       flags |= FLAG_NORMAL_MAP;
@@ -105,7 +105,7 @@ struct MaterialData
       flags &= ~FLAG_NORMAL_MAP;
   }
 
-  constexpr auto set_has_roughness_map(bool val) -> void
+  constexpr auto set_has_roughness_map(const bool val) -> void
   {
     if (val)
       flags |= FLAG_ROUGHNESS_MAP;
@@ -113,7 +113,7 @@ struct MaterialData
       flags &= ~FLAG_ROUGHNESS_MAP;
   }
 
-  constexpr auto set_has_metallic_map(bool val) -> void
+  constexpr auto set_has_metallic_map(const bool val) -> void
   {
     if (val)
       flags |= FLAG_METALLIC_MAP;
@@ -121,7 +121,7 @@ struct MaterialData
       flags &= ~FLAG_METALLIC_MAP;
   }
 
-  constexpr auto set_has_ao_map(bool val) -> void
+  constexpr auto set_has_ao_map(const bool val) -> void
   {
     if (val)
       flags |= FLAG_AO_MAP;
@@ -129,7 +129,7 @@ struct MaterialData
       flags &= ~FLAG_AO_MAP;
   }
 
-  constexpr auto set_has_emissive_map(bool val) -> void
+  constexpr auto set_has_emissive_map(const bool val) -> void
   {
     if (val)
       flags |= FLAG_EMISSIVE_MAP;

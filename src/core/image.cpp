@@ -346,7 +346,7 @@ Image::upload_rgba(const std::span<const unsigned char> data) -> void
 auto
 Image::load_from_file(const Device& device,
                       const std::string& path,
-                      bool flip_y) -> std::unique_ptr<Image>
+                      bool flip_y) -> Assets::Pointer<Image>
 {
   stbi_set_flip_vertically_on_load(flip_y ? 1 : 0);
 
@@ -362,13 +362,14 @@ Image::load_from_file(const Device& device,
     return nullptr;
   }
 
-  uint32_t mip_levels =
-    1 + static_cast<uint32_t>(std::floor(std::log2(std::max(width, height))));
+  auto current_mip_levels =
+    1 +
+    static_cast<std::uint32_t>(std::floor(std::log2(std::max(width, height))));
 
   const auto img_config = ImageConfiguration{
     .extent = { static_cast<uint32_t>(width), static_cast<uint32_t>(height) },
     .format = VK_FORMAT_R8G8B8A8_SRGB,
-    .mip_levels = mip_levels,
+    .mip_levels = current_mip_levels,
     .array_layers = 1,
     .usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT |
              VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
@@ -390,7 +391,7 @@ Image::load_from_file(const Device& device,
 
 auto
 Image::load_cubemap(const Device& device, const std::string& path)
-  -> std::unique_ptr<Image>
+  -> std::unique_ptr<Image, std::function<void(Image*)>>
 {
   const auto image_path = assets_path() / "environment" / path;
 
@@ -699,6 +700,27 @@ Image::load_from_file_with_staging(const Device& dev,
     .image = std::move(img),
     .staging = std::move(staging),
   };
+}
+
+auto
+Image::is_cubemap_externally(const std::string& path)
+  -> std::expected<bool, std::string>
+{
+  const auto image_path = assets_path() / "environment" / path;
+  ktxTexture2* texture = nullptr;
+  const ktxResult result = ktxTexture2_CreateFromNamedFile(
+    image_path.string().c_str(), KTX_TEXTURE_CREATE_NO_FLAGS, &texture);
+
+  if (result != KTX_SUCCESS || !texture) {
+    return std::unexpected(
+      std::format("Failed to open KTX: {}", ktxErrorString(result)));
+  }
+
+  bool valid = texture->numFaces == 6 && texture->numLayers == 1 &&
+               texture->numLevels >= 1;
+
+  ktxTexture_Destroy(ktxTexture(texture));
+  return valid;
 }
 
 auto

@@ -1,5 +1,7 @@
 #include "app_layer.hpp"
 
+#include "dynamic_rendering/assets/manager.hpp"
+
 #include <array>
 #include <execution>
 #include <glm/gtc/matrix_transform.hpp>
@@ -18,7 +20,7 @@ struct CubeComponent
   bool is_active{ true };
 };
 
-AppLayer::AppLayer(const Device& dev,
+AppLayer::AppLayer(const Device&,
                    BS::priority_thread_pool* pool,
                    BlueprintRegistry* registry)
   : thread_pool(pool)
@@ -28,16 +30,10 @@ AppLayer::AppLayer(const Device& dev,
 
   auto tokyo_entity = active_scene->create_entity("Tokyo");
 
-  // assert(mesh->load_from_file(dev, *blueprint_registry,
-  // "cerberus/scene.gltf"));
-
-  // tokyo_mesh->load_from_file(
-  //   dev, *blueprint_registry, pool, "little_tokyo/scene.gltf");
-  tokyo_entity.add_component<Component::Mesh>(tokyo_mesh.get(), false);
-  (void)armour_mesh->load_from_file(
-    dev, *blueprint_registry, "battle_armour/scene.gltf");
-  (void)hunter_mesh->load_from_file(
-    dev, *blueprint_registry, "astro_hunter_special/scene.gltf");
+  Assets::Manager::the().load<Image>("sf.ktx2");
+  auto handle =
+    Assets::Manager::the().load<StaticMesh>("little_tokyo/scene.gltf");
+  tokyo_entity.add_component<Component::Mesh>(handle, false);
 
   generate_scene();
 }
@@ -71,12 +67,42 @@ AppLayer::on_interface() -> void
 
   active_scene->on_interface();
 
-  window("Controls", [&rs = rotation_speed, this]() {
-    ImGui::Text("Adjust settings:");
-    ImGui::SliderFloat("Rotation Speed", &rs, 0.1f, 150.0f);
-    ImGui::ColorEdit4("Light Color", std::bit_cast<float*>(&light_color));
-    ImGui::SliderFloat3(
-      "Light Position", std::bit_cast<float*>(&light_position), -100.f, 100.f);
+  window("Controls", [&, this]() {
+    ImGui::SliderFloat("Rotation Speed", &rotation_speed, 0.1f, 150.0f);
+
+    ImGui::DragFloat3(
+      "Light Position", &light_environment.light_position[0], 0.5f);
+    ImGui::DragFloat3("Light Target", &light_environment.target[0], 0.5f);
+    ImGui::ColorEdit3("Light Color", &light_environment.light_color[0]);
+    ImGui::ColorEdit3("Ambient Color", &light_environment.ambient_color[0]);
+
+    ImGui::DragFloat(
+      "Ortho Size", &light_environment.ortho_size, 0.5f, 1.f, 200.f);
+    ImGui::DragFloat(
+      "Near Plane", &light_environment.near_plane, 0.01f, 0.01f, 10.f);
+    ImGui::DragFloat(
+      "Far Plane", &light_environment.far_plane, 0.1f, 1.f, 500.f);
+
+    static const char* view_mode_names[] = { "LookAtRH", "LookAtLH" };
+    static const char* projection_names[] = {
+      "OrthoRH_ZO", "OrthoRH_NO", "OrthoLH_ZO", "OrthoLH_NO"
+    };
+    int proj_index = static_cast<int>(light_environment.projection_mode);
+    if (ImGui::Combo("Projection Mode",
+                     &proj_index,
+                     projection_names,
+                     IM_ARRAYSIZE(projection_names))) {
+      light_environment.projection_mode =
+        static_cast<ShadowProjectionMode>(proj_index);
+    }
+
+    int view_index = static_cast<int>(light_environment.view_mode);
+    if (ImGui::Combo("View Mode",
+                     &view_index,
+                     view_mode_names,
+                     IM_ARRAYSIZE(view_mode_names))) {
+      light_environment.view_mode = static_cast<ShadowViewMode>(view_index);
+    }
   });
 }
 
@@ -103,15 +129,7 @@ AppLayer::on_render(Renderer& renderer) -> void
   ZoneScopedN("App on_render");
   active_scene->on_render(renderer);
 
-  auto& light_env = renderer.get_light_environment();
-  light_env.light_position = light_position;
-  light_env.light_color = light_color;
-
-  renderer.submit(
-    {
-      .mesh = mesh.get(),
-    },
-    glm::mat4(1.f));
+  renderer.get_light_environment() = light_environment;
 
   static constexpr float line_width = 1.2f;
   static constexpr float line_length = 50.f;
@@ -149,17 +167,10 @@ AppLayer::on_initialise(const InitialisationParameters& params) -> void
 auto
 AppLayer::generate_scene() -> void
 {
-  auto maybe_cube_mesh = MeshCache::the().get_mesh<MeshType::Cube>();
-  if (!maybe_cube_mesh.has_value()) {
-    return;
-  }
-
-  auto cube_mesh = maybe_cube_mesh.value();
-
   {
     auto entity = active_scene->create_entity("Ground");
     auto& transform = entity.get_component<Component::Transform>();
-    entity.add_component<Component::Mesh>(cube_mesh, true);
+    entity.add_component<Component::Mesh>(Assets::builtin_cube(), true);
     transform.position = glm::vec3(6.0f, -1.0f, 6.0f);
     transform.scale = glm::vec3(24.0f, 1.0f, 24.0f);
   }
@@ -168,7 +179,7 @@ AppLayer::generate_scene() -> void
     for (int x = 0; x < 4; ++x) {
       auto entity =
         active_scene->create_entity(std::format("Cube_{}_{}", x, z));
-      entity.add_component<Component::Mesh>(cube_mesh, true);
+      entity.add_component<Component::Mesh>(Assets::builtin_cube(), true);
       entity.add_component<CubeComponent>();
       auto& transform = entity.get_component<Component::Transform>();
       transform.position = glm::vec3(x * 4.0f, 1.0f, z * 4.0f);
@@ -232,7 +243,7 @@ AppLayer::on_ray_pick(const glm::vec3& origin, const glm::vec3& direction)
     });
 
   if (closest_entity != entt::null) {
-    ReadonlyEntity entity{ closest_entity, active_scene.get() };
+    const ReadonlyEntity entity{ closest_entity, active_scene.get() };
     if (auto* tag = entity.try_get<const Component::Tag>()) {
       Logger::log_info("{}", tag->name);
       active_scene->set_selected_entity(closest_entity);

@@ -38,11 +38,32 @@ enum class RenderPass : std::uint8_t
 auto
 to_renderpass(std::string_view name) -> RenderPass;
 
+enum class ShadowViewMode
+{
+  LookAtRH,
+  LookAtLH
+};
+enum class ShadowProjectionMode
+{
+  OrthoRH_ZO,
+  OrthoRH_NO,
+  OrthoLH_ZO,
+  OrthoLH_NO
+};
+
 struct LightEnvironment
 {
   glm::vec3 light_position{ 40.f, -40.f, 40.f };
   glm::vec4 light_color{ 1.f, 1.f, 1.f, 1.f };
   glm::vec4 ambient_color{ 0.1F, 0.1F, 0.1F, 1.0F };
+
+  float ortho_size{ 50.f };
+  float near_plane{ 0.1f };
+  float far_plane{ 100.f };
+  glm::vec3 target{ 0.F };
+
+  ShadowProjectionMode projection_mode{ ShadowProjectionMode::OrthoRH_ZO };
+  ShadowViewMode view_mode{ ShadowViewMode::LookAtRH };
 };
 
 struct LineInstanceData
@@ -67,6 +88,10 @@ public:
   auto submit(const DrawCommand&, const glm::mat4& = glm::mat4{ 1.0F }) -> void;
   auto submit_lines(const glm::vec3&, const glm::vec3&, float, const glm::vec4&)
     -> void;
+  auto submit_aabb(const glm::vec3& min,
+                   const glm::vec3& max,
+                   const glm::vec4& color = { 1.f, 1.f, 0.f, 1.f },
+                   float width = 1.f) -> void;
   struct VP
   {
     const glm::mat4& projection;
@@ -132,6 +157,7 @@ public:
   [[nodiscard]] auto get_renderer_descriptor_set_layout(
     Badge<AssetReloader>) const -> VkDescriptorSetLayout;
   static auto get_white_texture() { return white_texture.get(); }
+  static auto get_black_texture() { return black_texture.get(); }
 
 private:
   const Device* device{ nullptr };
@@ -149,24 +175,24 @@ private:
 
   std::unique_ptr<CommandBuffer> compute_command_buffer;
 
-  std::unique_ptr<Image> geometry_image;
-  std::unique_ptr<Image> geometry_msaa_image;
-  std::unique_ptr<Image> geometry_depth_image;
+  Assets::Pointer<Image> geometry_image;
+  Assets::Pointer<Image> geometry_msaa_image;
+  Assets::Pointer<Image> geometry_depth_image;
   std::unique_ptr<Material> z_prepass_material;
   std::unique_ptr<Material> geometry_material;
   std::unique_ptr<Material> geometry_wireframe_material;
 
   std::unique_ptr<Material> skybox_material;
-  std::unique_ptr<Image> skybox_image;
-  std::unique_ptr<Image> skybox_attachment_texture;
+  Assets::Pointer<Image> skybox_image;
+  Assets::Pointer<Image> skybox_attachment_texture;
 
-  std::unique_ptr<Image> colour_corrected_image;
+  Assets::Pointer<Image> colour_corrected_image;
   std::unique_ptr<Material> colour_corrected_material;
 
-  std::unique_ptr<Image> composite_attachment_texture;
+  Assets::Pointer<Image> composite_attachment_texture;
   std::unique_ptr<Material> composite_attachment_material;
 
-  std::unique_ptr<Image> shadow_depth_image;
+  Assets::Pointer<Image> shadow_depth_image;
   std::unique_ptr<Material> shadow_material;
 
   std::unique_ptr<Material> line_material;
@@ -216,5 +242,6 @@ private:
 
   auto destroy() -> void;
 
-  static inline std::unique_ptr<Image> white_texture{ nullptr };
+  static inline Assets::Pointer<Image> white_texture{ nullptr };
+  static inline Assets::Pointer<Image> black_texture{ nullptr };
 };

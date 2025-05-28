@@ -28,10 +28,10 @@ public:
     std::function<void(BlueprintChangeType, const PipelineBlueprint&)>;
 
   auto load_from_directory(const std::filesystem::path&) -> void;
-  auto get(const std::string&) const -> const PipelineBlueprint&;
+  [[nodiscard]] auto get(const std::string&) const -> const PipelineBlueprint&;
   [[nodiscard]] auto update(const std::filesystem::path&)
     -> std::expected<void, PipelineLoadError>;
-  auto get_all() const -> const auto& { return blueprints; }
+  [[nodiscard]] auto get_all() const -> const auto& { return blueprints; }
   auto register_callback(BlueprintChangeCallback callback) -> void
   {
     callbacks.push_back(std::move(callback));
@@ -44,7 +44,7 @@ private:
     -> bool;
 
   std::vector<BlueprintChangeCallback> callbacks;
-  auto notify_callbacks(BlueprintChangeType type,
+  auto notify_callbacks(const BlueprintChangeType type,
                         const PipelineBlueprint& blueprint) const -> void
   {
     for (const auto& callback : callbacks) {

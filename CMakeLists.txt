@@ -192,18 +192,40 @@ target_link_libraries(DynamicRendering_Scene
 
 target_precompile_headers(DynamicRendering_Scene REUSE_FROM DynamicRendering_Core)
 
+# === Assets Library ===
+add_library(DynamicRendering_Assets STATIC
+        src/assets/manager.cpp
+)
+
+target_include_directories(DynamicRendering_Assets PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/include>
+        PRIVATE
+        $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/include/dynamic_rendering>
+)
+
+target_link_libraries(DynamicRendering_Assets
+        PUBLIC
+        EnTT::EnTT
+        PRIVATE
+        DynamicRendering_Core
+)
+
+target_precompile_headers(DynamicRendering_Assets REUSE_FROM DynamicRendering_Core)
+
 # === ALIAS Targets ===
 add_library(DynamicRendering::Core ALIAS DynamicRendering_Core)
 add_library(DynamicRendering::Pipeline ALIAS DynamicRendering_Pipeline)
 add_library(DynamicRendering::Renderer ALIAS DynamicRendering_Renderer)
 add_library(DynamicRendering::Window ALIAS DynamicRendering_Window)
 add_library(DynamicRendering::Scene ALIAS DynamicRendering_Scene)
+add_library(DynamicRendering::Assets ALIAS DynamicRendering_Assets)
 
 dynamic_rendering_set_target_options(DynamicRendering_Core)
 dynamic_rendering_set_target_options(DynamicRendering_Pipeline)
 dynamic_rendering_set_target_options(DynamicRendering_Renderer)
 dynamic_rendering_set_target_options(DynamicRendering_Window)
 dynamic_rendering_set_target_options(DynamicRendering_Scene)
+dynamic_rendering_set_target_options(DynamicRendering_Assets)
 
 function(generate_shaders target)
         add_custom_command(

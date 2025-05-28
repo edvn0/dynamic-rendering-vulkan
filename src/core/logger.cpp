@@ -59,4 +59,10 @@ log_debug_impl(const std::string_view msg) -> void
   spdlog::debug(msg);
 }
 
+auto
+log_trace_impl(const std::string_view msg) -> void
+{
+  spdlog::trace(msg);
+}
+
 }

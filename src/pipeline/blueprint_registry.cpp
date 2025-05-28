@@ -90,7 +90,7 @@ auto
 BlueprintRegistry::load_one(const std::filesystem::path& file_path,
                             PipelineBlueprint& output_blueprint) -> bool
 {
-  std::cout << "Loading blueprint " << file_path.string() << std::endl;
+  Logger::log_info("Loading blueprint from file: {}", file_path.string());
   if (const auto node = YAML::LoadFile(file_path.string());
       !YAML::convert<PipelineBlueprint>::decode(node, output_blueprint)) {
     return false;
@@ -98,6 +98,6 @@ BlueprintRegistry::load_one(const std::filesystem::path& file_path,
 
   output_blueprint.full_path = file_path;
   output_blueprint.name = file_path.stem().string();
-  std::cout << "Done loading blueprint\n";
+  Logger::log_info("Done!");
   return true;
 }

@@ -21,6 +21,7 @@ target_link_libraries(Client PRIVATE
   DynamicRendering::Renderer
   DynamicRendering::Window
   DynamicRendering::Scene
+  DynamicRendering::Assets
   glfw
   imgui
   implot
@@ -35,4 +36,8 @@ if(MSVC)
   target_compile_options(Client PRIVATE /W4 /WX)
 else()
   target_compile_options(Client PRIVATE -Wall -Wextra -Werror)
+endif()
+
+if(CMAKE_BUILD_TYPE STREQUAL "Debug" OR CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo")
+  target_compile_definitions(${PROJECT_NAME} PRIVATE IS_DEBUG)
 endif()

@@ -40,8 +40,7 @@ struct descriptor_binding_equal
   auto operator()(const VkDescriptorSetLayoutBinding& a,
                   const VkDescriptorSetLayoutBinding& b) const noexcept -> bool
   {
-    return a.binding == b.binding && a.descriptorType == b.descriptorType &&
-           a.descriptorCount == b.descriptorCount;
+    return equal(a, b);
   }
 };
 
@@ -69,9 +68,9 @@ static auto
 merge_push_constant_range(std::vector<VkPushConstantRange>& dst,
                           VkPushConstantRange const& range) -> void
 {
-  for (auto& ex : dst) {
-    if (ex.offset == range.offset && ex.size == range.size) {
-      ex.stageFlags |= range.stageFlags;
+  for (auto& [stageFlags, offset, size] : dst) {
+    if (offset == range.offset && size == range.size) {
+      stageFlags |= range.stageFlags;
       return;
     }
   }
@@ -309,9 +308,9 @@ Material::create(const Device& device, const PipelineBlueprint& blueprint)
 }
 
 auto
-Material::invalidate(const std::span<const Image*> image_span) -> void
+Material::invalidate(const std::span<const Image*> images) -> void
 {
-  for (auto* img : image_span) {
+  for (auto* img : images) {
     for (const auto& [key, binding] : bindings) {
       const auto* img_binding = dynamic_cast<ImageBinding*>(binding.get());
       if (!img_binding) {
@@ -353,7 +352,7 @@ Material::Material(
   const Device& dev,
   frame_array<VkDescriptorSet>&& sets,
   std::vector<VkDescriptorSetLayout>&& set_layouts,
-  VkDescriptorPool pool,
+  const VkDescriptorPool pool,
   std::unique_ptr<CompiledPipeline> pipe,
   string_hash_map<std::tuple<std::uint32_t, std::uint32_t>>&& binds)
   : binding_info(std::move(binds))
@@ -386,7 +385,7 @@ Material::rebuild_pipeline(const PipelineBlueprint& blueprint)
   std::vector<VkDescriptorSetLayout> new_layouts;
 
   std::size_t i = 0;
-  for (auto& [set, b] : binds) {
+  for (auto& b : binds | std::views::values) {
     std::vector<VkDescriptorSetLayoutBinding> new_bindings{ b.begin(),
                                                             b.end() };
 
@@ -429,7 +428,7 @@ Material::rebuild_pipeline(const PipelineBlueprint& blueprint)
                                          });
 
   if (!result) {
-    for (auto layout : new_layouts) {
+    for (const auto layout : new_layouts) {
       vkDestroyDescriptorSetLayout(device->get_device(), layout, nullptr);
     }
 
@@ -584,7 +583,7 @@ Material::destroy() -> void
   destroyed = true;
 
   vkDestroyDescriptorPool(device->get_device(), descriptor_pool, nullptr);
-  for (auto& layout : descriptor_set_layouts)
+  for (const auto& layout : descriptor_set_layouts)
     vkDestroyDescriptorSetLayout(device->get_device(), layout, nullptr);
   descriptor_sets.fill(VK_NULL_HANDLE);
 

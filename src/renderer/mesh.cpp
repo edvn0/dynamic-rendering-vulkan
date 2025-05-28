@@ -12,12 +12,87 @@
 
 namespace {
 
+struct SubmeshPerformanceStats
+{
+  size_t total_submeshes{ 0 };
+  size_t total_triangles{ 0 };
+  size_t total_vertices_in{ 0 };
+  size_t total_vertices_out{ 0 };
+  float total_acmr_before{ 0.f };
+  float total_acmr_after{ 0.f };
+  size_t total_fetch_before{ 0 };
+  size_t total_fetch_after{ 0 };
+
+  unsigned int cache_size{ 32 };
+  unsigned int warp_size{ 0 };
+  unsigned int primgroup_size{ 0 };
+
+  void accumulate(const std::vector<Vertex>& raw_vertices,
+                  const std::vector<Vertex>& optimized_vertices,
+                  const std::vector<uint32_t>& raw_indices,
+                  const std::vector<uint32_t>& optimized_indices)
+  {
+    static std::mutex mutex;
+    std::unique_lock lock(mutex);
+
+    ++total_submeshes;
+    total_triangles += optimized_indices.size() / 3;
+    total_vertices_in += raw_vertices.size();
+    total_vertices_out += optimized_vertices.size();
+
+    const auto stats_before = meshopt_analyzeVertexCache(raw_indices.data(),
+                                                         raw_indices.size(),
+                                                         raw_vertices.size(),
+                                                         cache_size,
+                                                         warp_size,
+                                                         primgroup_size);
+
+    const auto stats_after =
+      meshopt_analyzeVertexCache(optimized_indices.data(),
+                                 optimized_indices.size(),
+                                 optimized_vertices.size(),
+                                 cache_size,
+                                 warp_size,
+                                 primgroup_size);
+
+    total_acmr_before += stats_before.acmr;
+    total_acmr_after += stats_after.acmr;
+
+    const auto fetch_before = meshopt_analyzeVertexFetch(raw_indices.data(),
+                                                         raw_indices.size(),
+                                                         raw_vertices.size(),
+                                                         sizeof(Vertex));
+    const auto fetch_after =
+      meshopt_analyzeVertexFetch(optimized_indices.data(),
+                                 optimized_indices.size(),
+                                 optimized_vertices.size(),
+                                 sizeof(Vertex));
+
+    total_fetch_before += fetch_before.bytes_fetched;
+    total_fetch_after += fetch_after.bytes_fetched;
+  }
+
+  void log_summary() const
+  {
+    Logger::log_info("Submesh optimization summary:");
+    Logger::log_info("  Total: {} submeshes", total_submeshes);
+    Logger::log_info("  Triangles: {}", total_triangles);
+    Logger::log_info(
+      "  Vertices (in - out): {} → {}", total_vertices_in, total_vertices_out);
+    Logger::log_info("  ACMR avg: {:.2f} to {:.2f}",
+                     total_acmr_before / total_submeshes,
+                     total_acmr_after / total_submeshes);
+    Logger::log_info(
+      "  Fetch total: {} to {} bytes", total_fetch_before, total_fetch_after);
+  }
+};
+
 struct texture_context
 {
   aiMaterial* ai_mat;
   const std::string& directory;
   const Device& device;
-  string_hash_map<std::unique_ptr<Image>>& cache;
+  string_hash_map<Assets::Pointer<Image>>& cache;
   Material& mat;
 };
 
@@ -52,7 +127,10 @@ try_upload_texture(texture_context ctx,
 }
 
 LoadedSubmesh
-process_mesh_impl(const aiMesh* mesh, glm::mat4 transform, int parent_index)
+process_mesh_impl(const aiMesh* mesh,
+                  glm::mat4 transform,
+                  int parent_index,
+                  SubmeshPerformanceStats& stats)
 {
   std::vector<Vertex> raw_vertices(mesh->mNumVertices);
   for (uint32_t i = 0; i < mesh->mNumVertices; ++i) {
@@ -128,16 +206,8 @@ process_mesh_impl(const aiMesh* mesh, glm::mat4 transform, int parent_index)
   for (const auto& v : optimized_vertices)
     aabb.grow(v.position);
 
-  Logger::log_info(
-    "Optimized submesh: triangles={}, verts_in={}, verts_out={}, fetch: {}",
-    optimized_indices.size() / 3,
-    raw_vertices.size(),
-    optimized_vertices.size(),
-    meshopt_analyzeVertexFetch(optimized_indices.data(),
-                               optimized_indices.size(),
-                               optimized_vertices.size(),
-                               sizeof(Vertex))
-      .bytes_fetched);
+  stats.accumulate(
+    raw_vertices, optimized_vertices, raw_indices, optimized_indices);
 
   return LoadedSubmesh{ std::move(optimized_vertices),
                         std::move(optimized_indices),
@@ -153,15 +223,15 @@ upload_materials_impl_secondary(
   const Device& device,
   const BlueprintRegistry& registry,
   const std::string& directory,
-  string_hash_map<std::unique_ptr<Image>>& loaded_textures,
+  string_hash_map<Assets::Pointer<Image>>& loaded_textures,
   std::vector<std::unique_ptr<Material>>& materials)
 {
   struct ThreadResult
   {
-    VkCommandPool pool;
-    VkCommandBuffer cmd;
-    std::unique_ptr<Material> mat;
-    std::unique_ptr<GPUBuffer> staging;
+    VkCommandPool pool{ nullptr };
+    VkCommandBuffer cmd{ nullptr };
+    std::unique_ptr<Material> mat{ nullptr };
+    std::unique_ptr<GPUBuffer> staging{ nullptr };
   };
 
   std::mutex cache_mutex;
@@ -198,7 +268,7 @@ upload_materials_impl_secondary(
         if (vkBeginCommandBuffer(result.cmd, &begin_info) != VK_SUCCESS)
           return {};
 
-        auto thread_safe_try_upload = [&](aiTextureType type,
+        auto thread_safe_try_upload = [&](const aiTextureType type,
                                           const std::string& slot,
                                           auto&& setter) {
           aiString tex_path;
@@ -210,22 +280,25 @@ upload_materials_impl_secondary(
 
           {
             std::scoped_lock lock(cache_mutex);
-            if (auto it = ctx.cache.find(full_path); it != ctx.cache.end()) {
+            if (const auto it = ctx.cache.find(full_path);
+                it != ctx.cache.end()) {
               image = it->second.get();
             } else {
-              auto result_with_staging = Image::load_from_file_with_staging(
+              auto [image_result, staging] = Image::load_from_file_with_staging(
                 ctx.device, full_path, false, true, result.cmd);
-              if (!result_with_staging.image)
+              if (!image_result)
                 return;
 
-              image = result_with_staging.image.get();
-              result.staging = std::move(result_with_staging.staging);
-              ctx.cache[full_path] = std::move(result_with_staging.image);
+              image = image_result.get();
+              result.staging = std::move(staging);
+              ctx.cache[full_path] = std::move(image_result);
             }
           }
 
           ctx.mat.upload(slot, image);
-          setter(ctx.mat);
+          if (image != nullptr) {
+            setter(ctx.mat);
+          }
         };
 
         thread_safe_try_upload(aiTextureType_DIFFUSE,
@@ -260,12 +333,11 @@ upload_materials_impl_secondary(
   }
 
   if (!completed.empty()) {
-    const VkDevice vk_device = device.get_device();
-    const VkQueue queue = device.graphics_queue();
+    const auto vk_device = device.get_device();
+    const auto queue = device.graphics_queue();
 
-    const VkCommandPool primary_pool = device.create_resettable_command_pool();
-    const VkCommandBuffer primary_cmd =
-      device.allocate_primary_command_buffer(primary_pool);
+    const auto primary_pool = device.create_resettable_command_pool();
+    auto primary_cmd = device.allocate_primary_command_buffer(primary_pool);
 
     VkCommandBufferBeginInfo begin_info{};
     begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
@@ -492,48 +564,6 @@ StaticMesh::load_from_file(const Device& device,
       for (const auto& v : optimized_vertices)
         aabb.grow(v.position);
 
-      const unsigned int cache_size = 32;
-      const unsigned int warp_size = 0;
-      const unsigned int primgroup_size = 0;
-
-      auto stats_before = meshopt_analyzeVertexCache(raw_indices.data(),
-                                                     raw_indices.size(),
-                                                     raw_vertices.size(),
-                                                     cache_size,
-                                                     warp_size,
-                                                     primgroup_size);
-
-      auto stats_after = meshopt_analyzeVertexCache(optimized_indices.data(),
-                                                    optimized_indices.size(),
-                                                    optimized_vertices.size(),
-                                                    cache_size,
-                                                    warp_size,
-                                                    primgroup_size);
-
-      const auto fetch_before = meshopt_analyzeVertexFetch(raw_indices.data(),
-                                                           raw_indices.size(),
-                                                           raw_vertices.size(),
-                                                           sizeof(Vertex))
-                                  .bytes_fetched;
-
-      const auto fetch_after =
-        meshopt_analyzeVertexFetch(optimized_indices.data(),
-                                   optimized_indices.size(),
-                                   optimized_vertices.size(),
-                                   sizeof(Vertex))
-          .bytes_fetched;
-
-      Logger::log_info(
-        "Optimized submesh: triangles={}, verts_in={}, verts_out={}, "
-        "ACMR={:.2f} → {:.2f}, fetch={} to {} bytes",
-        optimized_indices.size() / 3,
-        raw_vertices.size(),
-        optimized_vertices.size(),
-        stats_before.acmr,
-        stats_after.acmr,
-        fetch_before,
-        fetch_after);
-
       const auto vertex_offset = static_cast<std::uint32_t>(vertices.size());
       const auto index_offset = static_cast<std::uint32_t>(indices.size());
 
@@ -644,6 +674,8 @@ StaticMesh::load_from_file(const Device& device,
   std::vector<std::future<LoadedSubmesh>> futures;
   std::vector<int> future_to_parent_mapping;
 
+  SubmeshPerformanceStats perf_stats;
+
   std::function<void(aiNode*, int)> process_node;
   process_node = [&](aiNode* node, int parent_index) {
     const glm::mat4 transform =
@@ -659,8 +691,9 @@ StaticMesh::load_from_file(const Device& device,
       current_node_future_indices.push_back(future_index);
       future_to_parent_mapping.push_back(parent_index);
 
-      futures.push_back(thread_pool->submit_task(
-        [=] { return process_mesh(mesh, transform, parent_index); }));
+      futures.push_back(thread_pool->submit_task([=, &perf_stats] {
+        return process_mesh_impl(mesh, transform, parent_index, perf_stats);
+      }));
     }
 
     // Determine the parent index for child nodes
@@ -684,7 +717,6 @@ StaticMesh::load_from_file(const Device& device,
     results.push_back(future.get());
   }
 
-  // Now build submeshes with correct parent-child relationships
   std::unordered_map<int, std::vector<std::int32_t>> future_parent_to_children;
 
   for (size_t i = 0; i < results.size(); ++i) {
@@ -741,6 +773,8 @@ StaticMesh::load_from_file(const Device& device,
   vertex_buffer->upload_vertices(std::span(vertices.data(), vertices.size()));
   index_buffer->upload_indices(std::span(indices.data(), indices.size()));
 
+  perf_stats.log_summary();
+
   return true;
 }
 
@@ -752,12 +786,4 @@ StaticMesh::upload_materials(const aiScene* scene,
 {
   upload_materials_impl_secondary(
     scene, device, registry, directory, loaded_textures, materials);
-}
-
-auto
-StaticMesh::process_mesh(const aiMesh* mesh,
-                         glm::mat4 current_transform,
-                         int parent_index) -> LoadedSubmesh
-{
-  return process_mesh_impl(mesh, current_transform, parent_index);
 }

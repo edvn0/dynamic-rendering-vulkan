@@ -1,5 +1,6 @@
 #pragma once
 
+#include "assets/asset_allocator.hpp"
 #include "core/config.hpp"
 #include "core/device.hpp"
 #include "core/image_configuration.hpp"
@@ -26,18 +27,18 @@ public:
   static auto destroy_samplers() -> void { sampler_manager.destroy_all(); }
 
   static auto create(const Device& device, const ImageConfiguration& config)
-    -> std::unique_ptr<Image>
+    -> Assets::Pointer<Image>
   {
-    auto img = std::unique_ptr<Image>(new Image(device,
-                                                config.format,
-                                                config.extent,
-                                                config.mip_levels,
-                                                config.array_layers,
-                                                config.usage,
-                                                config.aspect,
-                                                config.allow_in_ui,
-                                                config.sample_count,
-                                                config.is_cubemap));
+    auto img = Assets::make_tracked<Image>(device,
+                                           config.format,
+                                           config.extent,
+                                           config.mip_levels,
+                                           config.array_layers,
+                                           config.usage,
+                                           config.aspect,
+                                           config.allow_in_ui,
+                                           config.sample_count,
+                                           config.is_cubemap);
 
     if (!config.debug_name.empty()) {
       img->set_debug_name(config.debug_name);
@@ -47,6 +48,7 @@ public:
     return img;
   }
 
+  Image() = default;
   ~Image() { destroy(); }
 
   [[nodiscard]] auto get_view() const -> VkImageView { return default_view; }
@@ -100,13 +102,13 @@ public:
 
   static auto load_from_file(const Device&,
                              const std::string&,
-                             bool flip_y = true) -> std::unique_ptr<Image>;
+                             bool flip_y = true) -> Assets::Pointer<Image>;
   static auto load_cubemap(const Device&, const std::string&)
-    -> std::unique_ptr<Image>;
+    -> Assets::Pointer<Image>;
 
   struct ImageWithStaging
   {
-    std::unique_ptr<Image> image;
+    Assets::Pointer<Image> image;
     std::unique_ptr<GPUBuffer> staging;
   };
   static auto load_from_file_with_staging(const Device& dev,
@@ -115,8 +117,9 @@ public:
                                           bool ui_allow,
                                           VkCommandBuffer cmd)
     -> ImageWithStaging;
+  static auto is_cubemap_externally(const std::string& path)
+    -> std::expected<bool, std::string>;
 
-private:
   Image(const Device& dev,
         const VkFormat fmt,
         const Extent2D ext,
@@ -140,6 +143,7 @@ private:
   {
   }
 
+private:
   auto recreate() -> void;
   auto destroy() -> void;
 

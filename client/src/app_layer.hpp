@@ -37,18 +37,12 @@ private:
 
   void generate_scene();
 
-  float rotation_speed = 90.f;
   glm::vec2 bounds{};
 
   std::shared_ptr<Scene> active_scene;
 
-  std::unique_ptr<StaticMesh> mesh{ std::make_unique<StaticMesh>() };
-  std::unique_ptr<StaticMesh> tokyo_mesh{ std::make_unique<StaticMesh>() };
-  std::unique_ptr<StaticMesh> hunter_mesh{ std::make_unique<StaticMesh>() };
-  std::unique_ptr<StaticMesh> armour_mesh{ std::make_unique<StaticMesh>() };
-
-  glm::vec3 light_position{ 28.f, 23.f, 1.f };
-  glm::vec4 light_color{ 1.F, 0.5F, 0.F, 1.F };
+  float rotation_speed{ 3.0F };
+  LightEnvironment light_environment;
 
   std::vector<glm::mat4> transforms;
   std::vector<Material> materials;

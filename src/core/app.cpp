@@ -2,6 +2,7 @@
 
 #include "renderer/mesh.hpp"
 
+#include <dynamic_rendering/assets/manager.hpp>
 #include <dynamic_rendering/core/asset_file_watcher.hpp>
 #include <dynamic_rendering/core/asset_reloader.hpp>
 #include <dynamic_rendering/core/fs.hpp>
@@ -207,6 +208,7 @@ App::App(const ApplicationArguments& args)
     std::make_unique<AssetReloader>(*blueprint_registry, *renderer);
 
   MeshCache::initialise(*device, *blueprint_registry);
+  Assets::Manager::initialise(*device, &thread_pool, *blueprint_registry);
 }
 
 App::~App() = default;
@@ -272,6 +274,7 @@ App::run() -> std::error_code
   }
 
   vkDeviceWaitIdle(device->get_device());
+  Assets::Manager::the().clear_all<StaticMesh, Image>();
   MeshCache::destroy();
   Image::destroy_samplers();
   for (const auto& layer : layers)

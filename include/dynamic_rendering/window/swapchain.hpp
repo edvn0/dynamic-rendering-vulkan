@@ -18,7 +18,7 @@ public:
   auto request_recreate() -> void;
   auto draw_frame(const GUISystem&) -> void;
   [[nodiscard]] auto get_frame_index() const -> std::uint32_t;
-  auto get_image_count() const { return swapchain_image_count; }
+  [[nodiscard]] auto get_image_count() const { return swapchain_image_count; }
 
 private:
   void recreate_swapchain();

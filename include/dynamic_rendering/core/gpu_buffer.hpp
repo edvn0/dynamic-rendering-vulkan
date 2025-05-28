@@ -49,9 +49,12 @@ public:
 
   ~GPUBuffer();
 
-  auto get_usage_flags() const -> VkBufferUsageFlags { return usage_flags; }
-  auto get() const -> const VkBuffer& { return buffer; }
-  auto get_size() const -> const auto& { return current_size; }
+  [[nodiscard]] auto get_usage_flags() const -> VkBufferUsageFlags
+  {
+    return usage_flags;
+  }
+  [[nodiscard]] auto get() const -> const VkBuffer& { return buffer; }
+  [[nodiscard]] auto get_size() const -> const auto& { return current_size; }
 
   auto set_name(const std::string_view name) -> void
   {
@@ -60,7 +63,7 @@ public:
       set_debug_name(debug_name);
     }
   }
-  auto get_name() const -> const auto& { return debug_name; }
+  [[nodiscard]] auto get_name() const -> const auto& { return debug_name; }
 
   template<AdmitsGPUBuffer T, std::size_t N = std::dynamic_extent>
   auto upload(std::span<const T, N> data) -> void
@@ -206,10 +209,13 @@ public:
     buffer.upload(std::span<const T, N>{ data });
   }
 
-  auto get_buffer() const -> const GPUBuffer& { return buffer; }
-  auto get_count() const -> std::size_t { return count; }
-  auto get_index_type() const -> VkIndexType { return index_type; }
-  auto get() const -> const VkBuffer& { return buffer.get(); }
+  [[nodiscard]] auto get_buffer() const -> const GPUBuffer& { return buffer; }
+  [[nodiscard]] auto get_count() const -> std::size_t { return count; }
+  [[nodiscard]] auto get_index_type() const -> VkIndexType
+  {
+    return index_type;
+  }
+  [[nodiscard]] auto get() const -> const VkBuffer& { return buffer.get(); }
 
 private:
   GPUBuffer buffer;
@@ -239,8 +245,8 @@ public:
     buffer.upload(std::span<const T, N>{ data });
   }
 
-  auto get_buffer() const -> const GPUBuffer& { return buffer; }
-  auto get() const -> const VkBuffer& { return buffer.get(); }
+  [[nodiscard]] auto get_buffer() const -> const GPUBuffer& { return buffer; }
+  [[nodiscard]] auto get() const -> const VkBuffer& { return buffer.get(); }
 
 private:
   GPUBuffer buffer;
