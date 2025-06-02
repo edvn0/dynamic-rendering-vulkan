@@ -7,6 +7,7 @@
 #include <entt/entt.hpp>
 #include <glm/glm.hpp>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace Component {
@@ -17,7 +18,7 @@ struct Transform
   glm::quat rotation{ 1.f, 0.f, 0.f, 0.f };
   glm::vec3 scale{ 1.f };
 
-  auto compute() const -> glm::mat4
+  [[nodiscard]] auto compute() const -> glm::mat4
   {
     return glm::translate(glm::mat4(1.f), position) * glm::mat4_cast(rotation) *
            glm::scale(glm::mat4(1.f), scale);
@@ -39,6 +40,11 @@ struct Mesh
 {
   Assets::Handle<StaticMesh> mesh;
   bool casts_shadows{ true };
+  bool draw_aabb{ false };
+
+  Mesh() = default;
+  explicit Mesh(Assets::Handle<StaticMesh>);
+  explicit Mesh(std::string_view path);
 };
 
 } // namespace Component

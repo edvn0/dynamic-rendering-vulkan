@@ -25,3 +25,9 @@ Input::mouse_pressed(MouseCode key) -> bool
   auto state = glfwGetMouseButton(glfw_window, std::to_underlying(key));
   return state == GLFW_PRESS;
 }
+
+auto
+Input::time() -> float
+{
+  return static_cast<float>(glfwGetTime());
+}

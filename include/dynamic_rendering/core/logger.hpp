@@ -15,35 +15,35 @@ auto log_debug_impl(std::string_view) -> void;
 auto log_trace_impl(std::string_view) -> void;
 
 template<typename... Args>
-inline auto
+auto
 log_info(const std::format_string<Args...>& fmt, Args&&... args) -> void
 {
   log_info_impl(std::format(fmt, std::forward<Args>(args)...));
 }
 
 template<typename... Args>
-inline auto
+auto
 log_error(const std::format_string<Args...>& fmt, Args&&... args) -> void
 {
   log_error_impl(std::format(fmt, std::forward<Args>(args)...));
 }
 
 template<typename... Args>
-inline auto
+auto
 log_warning(const std::format_string<Args...>& fmt, Args&&... args) -> void
 {
   log_warning_impl(std::format(fmt, std::forward<Args>(args)...));
 }
 
 template<typename... Args>
-inline auto
+auto
 log_debug(const std::format_string<Args...>& fmt, Args&&... args) -> void
 {
   log_debug_impl(std::format(fmt, std::forward<Args>(args)...));
 }
 
 template<typename... Args>
-inline auto
+auto
 log_trace(const std::format_string<Args...>& fmt, Args&&... args) -> void
 {
   log_trace_impl(std::format(fmt, std::forward<Args>(args)...));

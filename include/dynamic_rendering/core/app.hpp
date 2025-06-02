@@ -3,6 +3,8 @@
 #include "core/extent.hpp"
 #include "core/forward.hpp"
 
+#include "renderer/layer.hpp"
+
 #include <BS_thread_pool.hpp>
 #include <expected>
 #include <filesystem>
@@ -85,12 +87,16 @@ public:
                     "[BS::thread_pool*], Args...)");
     }
 
-    return layers.back().get();
-  }
+    if (auto* back = dynamic_cast<IRayPickListener*>(layers.back().get())) {
+      ray_pick_listeners.push_back(back);
+    }
 
-  auto add_ray_pick_listener(IRayPickListener* listener) -> void
-  {
-    ray_pick_listeners.push_back(listener);
+    if (auto* vp_listener =
+          dynamic_cast<ViewportBoundsListener*>(layers.back().get())) {
+      viewport_bounds_listeners.push_back(vp_listener);
+    }
+
+    return layers.back().get();
   }
 
   auto run() -> std::error_code;
@@ -126,6 +132,7 @@ private:
 
   std::unique_ptr<AssetFileWatcher> file_watcher;
   std::vector<IRayPickListener*> ray_pick_listeners;
+  std::vector<ViewportBoundsListener*> viewport_bounds_listeners;
 };
 
 }

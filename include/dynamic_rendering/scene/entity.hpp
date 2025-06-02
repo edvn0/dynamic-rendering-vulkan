@@ -42,6 +42,10 @@ public:
     : entity(e, s)
   {
   }
+  explicit ReadonlyEntity(const Entity& e)
+    : entity(e)
+  {
+  }
 
   template<typename T>
   [[nodiscard]] auto try_get() const -> const T*;

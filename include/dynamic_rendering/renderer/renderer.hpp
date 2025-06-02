@@ -1,5 +1,7 @@
 #pragma once
 
+#include "mesh.hpp"
+
 #include <concepts>
 #include <glm/glm.hpp>
 #include <memory>
@@ -92,6 +94,13 @@ public:
                    const glm::vec3& max,
                    const glm::vec4& color = { 1.f, 1.f, 0.f, 1.f },
                    float width = 1.f) -> void;
+  auto submit_aabb(const AABB& aabb,
+                   const glm::vec4& color = { 1.f, 1.f, 0.f, 1.f },
+                   float width = 1.f)
+  {
+    submit_aabb(aabb.min(), aabb.max(), color, width);
+  }
+
   struct VP
   {
     const glm::mat4& projection;

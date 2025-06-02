@@ -607,6 +607,10 @@ StaticMesh::load_from_file(const Device& device,
   vertex_buffer->upload_vertices(std::span(vertices.data(), vertices.size()));
   index_buffer->upload_indices(std::span(indices.data(), indices.size()));
 
+  for (auto i = 0; i < submeshes.size(); ++i) {
+    submesh_back_pointers[&submeshes.at(i)] = i;
+  }
+
   return true;
 }
 
@@ -774,6 +778,10 @@ StaticMesh::load_from_file(const Device& device,
   index_buffer->upload_indices(std::span(indices.data(), indices.size()));
 
   perf_stats.log_summary();
+
+  for (auto i = 0; i < submeshes.size(); ++i) {
+    submesh_back_pointers[&submeshes.at(i)] = i;
+  }
 
   return true;
 }

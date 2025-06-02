@@ -18,13 +18,6 @@ constexpr auto WORLD_UP = glm::vec3(0.0f, 1.0f, 0.0f);
 class Camera
 {
 public:
-  struct InfiniteProjection
-  {
-    float fov;
-    float aspect;
-    float znear;
-  };
-
   struct FloatFarProjection
   {
     float fov;
@@ -33,7 +26,7 @@ public:
     float zfar;
   };
 
-  using ProjectionConfig = std::variant<InfiniteProjection, FloatFarProjection>;
+  using ProjectionConfig = FloatFarProjection;
 
   virtual ~Camera() = default;
 
@@ -99,20 +92,9 @@ public:
 
   virtual auto resize(std::uint32_t width, std::uint32_t height) -> void
   {
-    if (std::holds_alternative<InfiniteProjection>(projection_config)) {
-      auto& inf = std::get<InfiniteProjection>(projection_config);
-      set_perspective(inf.fov, static_cast<float>(width) / height, inf.znear);
-    } else if (std::holds_alternative<FloatFarProjection>(projection_config)) {
-      auto& ff = std::get<FloatFarProjection>(projection_config);
-      set_perspective_float_far(
-        ff.fov, static_cast<float>(width) / height, ff.znear, ff.zfar);
-    }
-  }
-
-  auto set_perspective(float fovy_degrees, float aspect, float znear) -> void
-  {
-    projection_config = InfiniteProjection{ fovy_degrees, aspect, znear };
-    update_projection_matrix();
+    auto& ff = projection_config;
+    set_perspective_float_far(
+      ff.fov, static_cast<float>(width) / height, ff.znear, ff.zfar);
   }
 
   auto set_perspective_float_far(float fovy_degrees,
@@ -169,9 +151,7 @@ protected:
   glm::mat4 projection{ 1.0f };
   glm::mat4 inverse_projection{ 1.0f };
 
-  ProjectionConfig projection_config{
-    InfiniteProjection{ 60.0f, 16.0f / 9.0f, 0.1f }
-  };
+  ProjectionConfig projection_config{};
 
   glm::vec3 position{ 0.0f, 3.0f, -2.0f };
   glm::vec3 front{ camera_constants::WORLD_FORWARD };
@@ -216,20 +196,11 @@ protected:
 
   auto update_projection_matrix() -> void
   {
-    std::visit(
-      [this](auto&& config) {
-        using T = std::decay_t<decltype(config)>;
-        if constexpr (std::is_same_v<T, InfiniteProjection>) {
-          projection = make_infinite_reverse_z_proj(
-            config.fov, config.aspect, config.znear);
-        } else if constexpr (std::is_same_v<T, FloatFarProjection>) {
-          projection = make_float_far_proj(
-            config.fov, config.aspect, config.znear, config.zfar);
-          inverse_projection = make_float_far_proj(
-            config.fov, config.aspect, config.zfar, config.znear);
-        }
-      },
-      projection_config);
+    auto& config = projection_config;
+    projection =
+      make_float_far_proj(config.fov, config.aspect, config.znear, config.zfar);
+    inverse_projection =
+      make_float_far_proj(config.fov, config.aspect, config.zfar, config.znear);
   }
 
   auto update_camera_vectors() -> void

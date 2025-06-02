@@ -39,6 +39,12 @@ public:
   {
   }
 
+  explicit AABB(const glm::vec3& min, const glm::vec3& max)
+    : minimum(min)
+    , maximum(max)
+  {
+  }
+
   [[nodiscard]] auto min() const noexcept -> const glm::vec3&
   {
     return minimum;
@@ -92,6 +98,11 @@ public:
     for (const auto& c : corners)
       result.grow(glm::vec3(m * glm::vec4(c, 1.0f)));
     return result;
+  }
+
+  [[nodiscard]] auto uniform_scale(const glm::vec3& scaling_factors)
+  {
+    return AABB(minimum * scaling_factors, maximum * scaling_factors);
   }
 };
 
@@ -172,7 +183,8 @@ public:
       return -1;
     return static_cast<std::int32_t>(std::distance(submeshes.begin(), it));
   }
-  auto get_submesh(const std::uint32_t index) const -> const Submesh*
+  [[nodiscard]] auto get_submesh(const std::uint32_t index) const
+    -> const Submesh*
   {
     if (index >= submeshes.size())
       return nullptr;
@@ -194,16 +206,31 @@ public:
 
     return get_world_transform(submesh.parent_index) * submesh.child_transform;
   }
+  [[nodiscard]] auto get_world_transform(const Submesh& submesh) const
+    -> glm::mat4
+  {
+    if (submesh.parent_index < 0)
+      return submesh.child_transform;
+
+    return get_world_transform(submesh.parent_index) * submesh.child_transform;
+  }
   [[nodiscard]] auto get_world_aabb(std::size_t submesh_index) const -> AABB
   {
     return submeshes.at(submesh_index)
       .local_aabb.transformed(get_world_transform(submesh_index));
+  }
+  [[nodiscard]] auto get_world_aabb(const Submesh& sm) const -> AABB
+  {
+    auto& submesh = submeshes.at(submesh_back_pointers.at(&sm));
+    return submesh.local_aabb.transformed(get_world_transform(submesh));
   }
 
 private:
   std::vector<Vertex> vertices;
   std::vector<std::uint32_t> indices;
   std::vector<Submesh> submeshes;
+  std::unordered_map<const Submesh*, std::uint32_t> submesh_back_pointers;
+
   std::vector<std::unique_ptr<Material>> materials;
   string_hash_map<Assets::Pointer<Image>> loaded_textures;
 

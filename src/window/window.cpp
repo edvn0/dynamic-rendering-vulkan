@@ -100,11 +100,7 @@ Window::Window(const WindowConfiguration& config)
 #endif
 
   glfw_window =
-    glfwCreateWindow(width,
-                     height,
-                     "Vulkan Window",
-                     selected_monitor == nullptr ? nullptr : selected_monitor,
-                     nullptr);
+    glfwCreateWindow(width, height, "Vulkan Window", selected_monitor, nullptr);
   if (!glfw_window) {
     glfwTerminate();
     assert(false && "Failed to create GLFW window");
@@ -163,7 +159,7 @@ Window::close() -> void
 }
 
 auto
-Window::set_resize_flag(bool flag) -> void
+Window::set_resize_flag(const bool flag) -> void
 {
   user_data->framebuffer_resized = flag;
 }

@@ -31,7 +31,7 @@ public:
     auto bytes = n * sizeof(T);
     total_tracked_bytes += bytes;
     Logger::log_debug("Allocating {} bytes for {}", bytes, typeid(T).name());
-    return std::allocator<T>{}.allocate(n);
+    return current_allocator.allocate(n);
   }
 
   void deallocate(T* p, std::size_t n) noexcept
@@ -39,7 +39,7 @@ public:
     auto bytes = n * sizeof(T);
     total_tracked_bytes -= bytes;
     Logger::log_debug("Deallocating {} bytes for {}", bytes, typeid(T).name());
-    std::allocator<T>{}.deallocate(p, n);
+    current_allocator.deallocate(p, n);
   }
 
   template<typename U>
@@ -50,6 +50,7 @@ public:
 
 private:
   static inline std::atomic<std::size_t> total_tracked_bytes = 0;
+  static inline std::allocator<T> current_allocator{};
 };
 
 template<typename T, typename U>

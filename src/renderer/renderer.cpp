@@ -1257,10 +1257,8 @@ Renderer::run_geometry_pass(std::uint32_t frame_index,
                             0,
                             nullptr);
 
-    const std::array<VkDeviceSize, 1> line_offsets = { 0 };
-    const std::array<VkBuffer, 1> line_buffers = {
-      line_instance_buffer->get()
-    };
+    constexpr std::array line_offsets = { VkDeviceSize{ 0 } };
+    const std::array line_buffers = { line_instance_buffer->get() };
     vkCmdBindVertexBuffers(cmd, 0, 1, line_buffers.data(), line_offsets.data());
 
     vkCmdDraw(cmd, 4, line_instance_count_this_frame, 0, 0);

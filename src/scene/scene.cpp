@@ -20,6 +20,7 @@
 #include <glm/gtc/type_ptr.hpp>
 #include <glm/gtx/euler_angles.hpp>
 #include <glm/gtx/matrix_decompose.hpp>
+#include <utility>
 
 #include "renderer/editor_camera.hpp"
 #include "renderer/layer.hpp"
@@ -313,6 +314,7 @@ Scene::draw_entity_item(entt::entity entity, const std::string_view tag)
       if (ImGui::TreeNode("Mesh")) {
         // ImGui::Text("Mesh Asset: %p", static_cast<const void*>(mesh->mesh));
         ImGui::Checkbox("Casts Shadows", &mesh->casts_shadows);
+        ImGui::Checkbox("Draw AABBs", &mesh->draw_aabb);
         ImGui::TreePop();
       }
     }
@@ -429,9 +431,11 @@ Scene::on_interface() -> void
                            glm::value_ptr(model));
 
       if (ImGuizmo::IsUsing()) {
-        glm::vec3 skew, translation, scale;
-        glm::vec4 perspective;
-        glm::quat rotation;
+        glm::vec3 skew{};
+        glm::vec3 translation{};
+        glm::vec3 scale{};
+        glm::vec4 perspective{};
+        glm::quat rotation{};
 
         if (glm::decompose(
               model, scale, rotation, translation, skew, perspective)) {
@@ -459,7 +463,7 @@ Scene::on_interface() -> void
 
     if (auto tag = registry.try_get<Component::Tag>(selected_entity)) {
       ImGui::Text("Entity: %s", tag->name.c_str());
-      ImGui::Text("ID: %u", static_cast<uint32_t>(selected_entity));
+      ImGui::Text("ID: %u", std::to_underlying(selected_entity));
       ImGui::Separator();
 
       draw_entity_item(selected_entity, tag->name);
@@ -475,7 +479,6 @@ Scene::on_render(Renderer& renderer) -> void
   for (const auto view =
          registry.view<Component::Mesh, const Component::Transform>();
        auto&& [entity, mesh, transform] : view.each()) {
-
     const auto actual_mesh = Assets::Manager::the().get(mesh.mesh);
     renderer.submit(
       {
@@ -483,6 +486,13 @@ Scene::on_render(Renderer& renderer) -> void
         .casts_shadows = mesh.casts_shadows,
       },
       transform.compute());
+
+    if (mesh.draw_aabb) {
+      std::ranges::for_each(
+        actual_mesh->get_submeshes(),
+        [&scale = transform.scale, &m = actual_mesh, &r = renderer](
+          const auto& submesh) { r.submit_aabb(m->get_world_aabb(submesh)); });
+    }
   }
 }
 

@@ -173,6 +173,7 @@ target_precompile_headers(DynamicRendering_Window REUSE_FROM DynamicRendering_Co
 add_library(DynamicRendering_Scene STATIC
         src/scene/scene.cpp
         src/scene/entity.cpp
+        src/scene/components.cpp
 )
 
 target_include_directories(DynamicRendering_Scene PUBLIC

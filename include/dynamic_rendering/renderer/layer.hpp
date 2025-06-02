@@ -1,11 +1,6 @@
 #pragma once
 
-#include "core/event_system.hpp"
 #include "core/forward.hpp"
-#include "core/gpu_buffer.hpp"
-#include "renderer/renderer.hpp"
-
-#include <glm/glm.hpp>
 
 struct InitialisationParameters
 {

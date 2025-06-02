@@ -16,6 +16,21 @@
 #include <stb_image.h>
 
 auto
+Image::resize(const uint32_t new_width, const uint32_t new_height) -> void
+{
+  extent.width = new_width;
+  extent.height = new_height;
+  Logger::log_info(
+    "Resizing image '{}' to: {}x{}", get_name(), new_width, new_height);
+  recreate();
+
+  // Reapply debug name after recreation
+  if (!debug_name.empty()) {
+    set_debug_name(debug_name);
+  }
+}
+
+auto
 Image::set_debug_name(const std::string_view name) -> void
 {
   debug_name = name;
@@ -170,7 +185,7 @@ Image::recreate() -> void
     .unnormalizedCoordinates = VK_FALSE,
   };
 
-  if (Attachment attachment{ format }; attachment.is_depth()) {
+  if (const Attachment attachment{ format }; attachment.is_depth()) {
     sampler_info.compareEnable = VK_TRUE;
     sampler_info.compareOp = VK_COMPARE_OP_GREATER_OR_EQUAL;
     sampler_info.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE;
@@ -192,6 +207,29 @@ Image::recreate() -> void
 }
 
 auto
+Image::create(const Device& device, const ImageConfiguration& config)
+  -> Assets::Pointer<Image>
+{
+  auto img = Assets::make_tracked<Image>(device,
+                                         config.format,
+                                         config.extent,
+                                         config.mip_levels,
+                                         config.array_layers,
+                                         config.usage,
+                                         config.aspect,
+                                         config.allow_in_ui,
+                                         config.sample_count,
+                                         config.is_cubemap);
+
+  if (!config.debug_name.empty()) {
+    img->set_debug_name(config.debug_name);
+  }
+
+  img->recreate();
+  return img;
+}
+
+auto
 Image::get_sampler() const -> const VkSampler&
 {
   return sampler;
@@ -206,7 +244,7 @@ Image::destroy() -> void
     texture_implementation_pointer = 0;
   }
 
-  for (auto view : mip_layer_views)
+  for (const auto& view : mip_layer_views)
     if (view)
       vkDestroyImageView(device->get_device(), view, nullptr);
   mip_layer_views.clear();
@@ -362,14 +400,11 @@ Image::load_from_file(const Device& device,
     return nullptr;
   }
 
-  auto current_mip_levels =
-    1 +
-    static_cast<std::uint32_t>(std::floor(std::log2(std::max(width, height))));
-
   const auto img_config = ImageConfiguration{
     .extent = { static_cast<uint32_t>(width), static_cast<uint32_t>(height) },
     .format = VK_FORMAT_R8G8B8A8_SRGB,
-    .mip_levels = current_mip_levels,
+    .mip_levels = 1 + static_cast<std::uint32_t>(
+                        std::floor(std::log2(std::max(width, height)))),
     .array_layers = 1,
     .usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT |
              VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
@@ -391,7 +426,7 @@ Image::load_from_file(const Device& device,
 
 auto
 Image::load_cubemap(const Device& device, const std::string& path)
-  -> std::unique_ptr<Image, std::function<void(Image*)>>
+  -> Assets::Pointer<Image>
 {
   const auto image_path = assets_path() / "environment" / path;
 
@@ -448,10 +483,10 @@ Image::load_cubemap(const Device& device, const std::string& path)
   for (uint32_t level = 0; level < mip_levels; ++level) {
     for (uint32_t face = 0; face < 6; ++face) {
       ktx_size_t offset;
-      auto r =
+      const auto r =
         ktxTexture_GetImageOffset(ktxTexture(texture), level, 0, face, &offset);
       if (r == KTX_SUCCESS) {
-        std::size_t face_size =
+        const auto face_size =
           ktxTexture_GetImageSize(ktxTexture(texture), level);
         total_size = std::max(total_size, offset + face_size);
       }
@@ -466,7 +501,7 @@ Image::load_cubemap(const Device& device, const std::string& path)
   for (uint32_t level = 0; level < mip_levels; ++level) {
     for (uint32_t face = 0; face < 6; ++face) {
       ktx_size_t offset;
-      auto ret =
+      const auto ret =
         ktxTexture_GetImageOffset(ktxTexture(texture), level, 0, face, &offset);
       if (ret == KTX_SUCCESS) {
         regions.push_back({
@@ -721,6 +756,16 @@ Image::is_cubemap_externally(const std::string& path)
 
   ktxTexture_Destroy(ktxTexture(texture));
   return valid;
+}
+auto
+Image::init_sampler_cache(const Device& device) -> void
+{
+  sampler_manager.initialize(device);
+}
+auto
+Image::destroy_samplers() -> void
+{
+  sampler_manager.destroy_all();
 }
 
 auto

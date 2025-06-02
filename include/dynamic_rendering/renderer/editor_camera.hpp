@@ -22,12 +22,6 @@ enum class CameraMode
 class EditorCamera : public Camera
 {
 public:
-  EditorCamera(float fovy_degrees, float aspect, float znear)
-  {
-    set_perspective(fovy_degrees, aspect, znear);
-    init();
-  }
-
   EditorCamera(float fovy_degrees, float aspect, float znear, float zfar)
   {
     set_perspective_float_far(fovy_degrees, aspect, znear, zfar);

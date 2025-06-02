@@ -20,35 +20,29 @@ class Image
   static inline SamplerManager sampler_manager;
 
 public:
-  static auto init_sampler_cache(const Device& device) -> void
-  {
-    sampler_manager.initialize(device);
-  }
-  static auto destroy_samplers() -> void { sampler_manager.destroy_all(); }
-
-  static auto create(const Device& device, const ImageConfiguration& config)
-    -> Assets::Pointer<Image>
-  {
-    auto img = Assets::make_tracked<Image>(device,
-                                           config.format,
-                                           config.extent,
-                                           config.mip_levels,
-                                           config.array_layers,
-                                           config.usage,
-                                           config.aspect,
-                                           config.allow_in_ui,
-                                           config.sample_count,
-                                           config.is_cubemap);
-
-    if (!config.debug_name.empty()) {
-      img->set_debug_name(config.debug_name);
-    }
-
-    img->recreate();
-    return img;
-  }
-
   Image() = default;
+  Image(const Device& dev,
+        const VkFormat fmt,
+        const Extent2D ext,
+        const std::uint32_t mips,
+        const std::uint32_t layers,
+        const VkImageUsageFlags usage_flags,
+        const VkImageAspectFlags aspect_flags,
+        const bool allow,
+        const VkSampleCountFlags sc,
+        const bool cube)
+    : extent(ext)
+    , mip_levels(mips)
+    , array_layers(layers)
+    , device(&dev)
+    , format(fmt)
+    , usage(usage_flags)
+    , aspect(aspect_flags)
+    , sample_count(sc)
+    , is_cubemap(cube)
+    , allow_in_ui(allow)
+  {
+  }
   ~Image() { destroy(); }
 
   [[nodiscard]] auto get_view() const -> VkImageView { return default_view; }
@@ -60,17 +54,17 @@ public:
       return std::nullopt;
     return std::bit_cast<T>(texture_implementation_pointer);
   }
-  [[nodiscard]] auto get_mip_layer_view(const uint32_t mip,
-                                        const uint32_t layer) const
+  [[nodiscard]] auto get_mip_layer_view(const std::uint32_t mip,
+                                        const std::uint32_t layer) const
     -> VkImageView
   {
     return mip_layer_views[layer * mip_levels + mip];
   }
   [[nodiscard]] auto get_image() const -> VkImage { return image; }
-  [[nodiscard]] auto width() const -> uint32_t { return extent.width; }
-  [[nodiscard]] auto height() const -> uint32_t { return extent.height; }
-  [[nodiscard]] auto layers() const -> uint32_t { return array_layers; }
-  [[nodiscard]] auto mips() const -> uint32_t { return mip_levels; }
+  [[nodiscard]] auto width() const -> std::uint32_t { return extent.width; }
+  [[nodiscard]] auto height() const -> std::uint32_t { return extent.height; }
+  [[nodiscard]] auto layers() const -> std::uint32_t { return array_layers; }
+  [[nodiscard]] auto mips() const -> std::uint32_t { return mip_levels; }
   [[nodiscard]] auto get_aspect_ratio() const
   {
     return static_cast<float>(extent.width) / static_cast<float>(extent.height);
@@ -79,25 +73,13 @@ public:
   {
     return image_descriptor_info;
   }
-
-  auto resize(const uint32_t new_width, const uint32_t new_height)
-  {
-    extent.width = new_width;
-    extent.height = new_height;
-    Logger::log_info("Resizing image to: {}x{}", new_width, new_height);
-    recreate();
-
-    // Reapply debug name after recreation
-    if (!debug_name.empty()) {
-      set_debug_name(debug_name);
-    }
-  }
-  auto set_debug_name(std::string_view name) -> void;
   [[nodiscard]] auto get_name() const -> const std::string&
   {
     return debug_name;
   }
 
+  auto resize(std::uint32_t new_width, std::uint32_t new_height) -> void;
+  auto set_debug_name(std::string_view name) -> void;
   auto upload_rgba(std::span<const unsigned char>) -> void;
 
   static auto load_from_file(const Device&,
@@ -119,29 +101,10 @@ public:
     -> ImageWithStaging;
   static auto is_cubemap_externally(const std::string& path)
     -> std::expected<bool, std::string>;
-
-  Image(const Device& dev,
-        const VkFormat fmt,
-        const Extent2D ext,
-        const uint32_t mips,
-        const uint32_t layers,
-        const VkImageUsageFlags usage_flags,
-        const VkImageAspectFlags aspect_flags,
-        const bool allow,
-        const VkSampleCountFlags sc,
-        const bool cube)
-    : extent(ext)
-    , mip_levels(mips)
-    , array_layers(layers)
-    , device(&dev)
-    , format(fmt)
-    , usage(usage_flags)
-    , aspect(aspect_flags)
-    , sample_count(sc)
-    , is_cubemap(cube)
-    , allow_in_ui(allow)
-  {
-  }
+  static auto init_sampler_cache(const Device& device) -> void;
+  static auto destroy_samplers() -> void;
+  static auto create(const Device& device, const ImageConfiguration& config)
+    -> Assets::Pointer<Image>;
 
 private:
   auto recreate() -> void;
@@ -153,8 +116,8 @@ private:
   std::vector<VkImageView> mip_layer_views{};
   VmaAllocation allocation{};
   Extent2D extent{};
-  uint32_t mip_levels{};
-  uint32_t array_layers{};
+  std::uint32_t mip_levels{};
+  std::uint32_t array_layers{};
   const Device* device{};
   VkFormat format{};
   VkImageUsageFlags usage{};
@@ -172,6 +135,6 @@ private:
                                        VkCommandBuffer) -> void;
   auto record_upload_rgba_with_staging(VkCommandBuffer cmd,
                                        const GPUBuffer& staging,
-                                       uint32_t width,
-                                       uint32_t height) const -> void;
+                                       std::uint32_t width,
+                                       std::uint32_t height) const -> void;
 };

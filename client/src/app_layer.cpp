@@ -31,10 +31,11 @@ AppLayer::AppLayer(const Device&,
   auto tokyo_entity = active_scene->create_entity("Tokyo");
 
   Assets::Manager::the().load<Image>("sf.ktx2");
-  auto handle =
-    Assets::Manager::the().load<StaticMesh>("little_tokyo/scene.gltf");
-  tokyo_entity.add_component<Component::Mesh>(handle, false);
-
+  tokyo_entity.add_component<Component::Mesh>("little_tokyo/scene.gltf")
+    .casts_shadows = true;
+  tokyo_entity.get_component<Component::Transform>().scale = { 0.05,
+                                                               0.05,
+                                                               0.05 };
   generate_scene();
 }
 
@@ -83,24 +84,28 @@ AppLayer::on_interface() -> void
     ImGui::DragFloat(
       "Far Plane", &light_environment.far_plane, 0.1f, 1.f, 500.f);
 
-    static const char* view_mode_names[] = { "LookAtRH", "LookAtLH" };
-    static const char* projection_names[] = {
+    static constexpr std::array<const char*, 2> view_mode_names = {
+      "LookAtRH", "LookAtLH"
+    };
+    static constexpr std::array<const char*, 4> projection_names = {
       "OrthoRH_ZO", "OrthoRH_NO", "OrthoLH_ZO", "OrthoLH_NO"
     };
     int proj_index = static_cast<int>(light_environment.projection_mode);
+    assert(proj_index >= 0 && proj_index < 4);
     if (ImGui::Combo("Projection Mode",
                      &proj_index,
-                     projection_names,
-                     IM_ARRAYSIZE(projection_names))) {
+                     projection_names.data(),
+                     static_cast<int>(projection_names.size()))) {
       light_environment.projection_mode =
         static_cast<ShadowProjectionMode>(proj_index);
     }
 
     int view_index = static_cast<int>(light_environment.view_mode);
+    assert(view_index >= 0 && view_index < 2);
     if (ImGui::Combo("View Mode",
                      &view_index,
-                     view_mode_names,
-                     IM_ARRAYSIZE(view_mode_names))) {
+                     view_mode_names.data(),
+                     static_cast<int>(view_mode_names.size()))) {
       light_environment.view_mode = static_cast<ShadowViewMode>(view_index);
     }
   });
@@ -170,7 +175,7 @@ AppLayer::generate_scene() -> void
   {
     auto entity = active_scene->create_entity("Ground");
     auto& transform = entity.get_component<Component::Transform>();
-    entity.add_component<Component::Mesh>(Assets::builtin_cube(), true);
+    entity.add_component<Component::Mesh>(Assets::builtin_cube());
     transform.position = glm::vec3(6.0f, -1.0f, 6.0f);
     transform.scale = glm::vec3(24.0f, 1.0f, 24.0f);
   }
@@ -179,7 +184,7 @@ AppLayer::generate_scene() -> void
     for (int x = 0; x < 4; ++x) {
       auto entity =
         active_scene->create_entity(std::format("Cube_{}_{}", x, z));
-      entity.add_component<Component::Mesh>(Assets::builtin_cube(), true);
+      entity.add_component<Component::Mesh>(Assets::builtin_cube());
       entity.add_component<CubeComponent>();
       auto& transform = entity.get_component<Component::Transform>();
       transform.position = glm::vec3(x * 4.0f, 1.0f, z * 4.0f);

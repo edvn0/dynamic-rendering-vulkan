@@ -55,7 +55,7 @@ struct FrameTimePlotter
 
   static constexpr float target_frametime_ms = 16.6667f; // 60 FPS = 16.66ms
 
-  auto add_sample(double frame_time_seconds) -> void
+  auto add_sample(const double frame_time_seconds) -> void
   {
     history[index] = static_cast<float>(frame_time_seconds * 1000.0);
     index = (index + 1) % history_size;
@@ -90,8 +90,8 @@ struct FrameTimePlotter
                        0,
                        ImPlotLineFlags_None);
 
-      const std::array target_line = { target_frametime_ms,
-                                       target_frametime_ms };
+      constexpr std::array target_line = { target_frametime_ms,
+                                           target_frametime_ms };
       const std::array x_positions = { 0.0f, static_cast<float>(count - 1) };
 
       ImPlot::PushStyleColor(ImPlotCol_Line, ImVec4(1.0f, 1.0f, 0.0f, 0.5f));
@@ -109,7 +109,7 @@ struct FrametimeSmoother
   double smoothed_dt = 0.0;
   static constexpr double alpha = 0.1;
 
-  auto add_sample(double frame_time) -> void
+  auto add_sample(const double frame_time) -> void
   {
     if (smoothed_dt == 0.0)
       smoothed_dt = frame_time;
@@ -137,26 +137,24 @@ private:
 };
 
 static constexpr auto update_viewport_bounds = [](const auto& bounds,
-                                                  auto& layers) {
-  for (const auto& layer : layers) {
-    if (auto* vp_listener =
-          dynamic_cast<DynamicRendering::ViewportBoundsListener*>(
-            layer.get())) {
-      vp_listener->on_viewport_bounds_changed(bounds);
-    }
+                                                  auto& listeners) {
+  for (const auto& vp_listener : listeners) {
+    vp_listener->on_viewport_bounds_changed(bounds);
   }
 };
 
 auto
 App::notify_viewport_bounds_if_needed() -> void
 {
-  update_viewport_bounds(viewport_bounds, layers);
+  update_viewport_bounds(viewport_bounds, viewport_bounds_listeners);
 }
 
 App::App(const ApplicationArguments& args)
   : thread_pool(std::thread::hardware_concurrency())
 {
-  TracySetProgramName("Dynamic Rendering Vulkan") Logger::init_logger();
+  ZoneScopedN("App::App");
+  TracySetProgramName("Dynamic Rendering Vulkan");
+  Logger::init_logger();
 
   {
     ZoneScopedN("Create instance");
@@ -179,36 +177,64 @@ App::App(const ApplicationArguments& args)
       std::make_unique<Device>(Device::create(*instance, window->surface()));
   }
 
-  Image::init_sampler_cache(*device);
+  {
+    ZoneScopedN("Init image sampler cache");
+    Image::init_sampler_cache(*device);
+  }
 
-  blueprint_registry = std::make_unique<BlueprintRegistry>();
-  blueprint_registry->load_from_directory("blueprints");
+  {
+    ZoneScopedN("Load blueprints");
+    blueprint_registry = std::make_unique<BlueprintRegistry>();
+    blueprint_registry->load_from_directory("blueprints");
+  }
 
-  swapchain = std::make_unique<Swapchain>(*device, *window);
-  gui_system =
-    std::make_unique<GUISystem>(*instance, *device, *window, *swapchain);
-  renderer = std::make_unique<Renderer>(
-    *device, *blueprint_registry, *window, thread_pool);
+  {
+    ZoneScopedN("Create swapchain and GUI system");
+    swapchain = std::make_unique<Swapchain>(*device, *window);
+    gui_system =
+      std::make_unique<GUISystem>(*instance, *device, *window, *swapchain);
+  }
 
-  auto&& [w, h] = window->framebuffer_size();
-  camera = std::make_unique<EditorCamera>(
-    90.0F, static_cast<float>(w) / static_cast<float>(h), 0.1F, 1000.0F);
-  renderer->update_frustum(camera->get_projection() * camera->get_view());
+  {
+    ZoneScopedN("Create renderer");
+    renderer = std::make_unique<Renderer>(
+      *device, *blueprint_registry, *window, thread_pool);
+  }
 
-  window->set_event_callback([this](Event& event) { process_events(event); });
+  {
+    ZoneScopedN("Init camera and frustum");
+    auto&& [w, h] = window->framebuffer_size();
+    camera = std::make_unique<EditorCamera>(
+      90.0F, static_cast<float>(w) / static_cast<float>(h), 0.1F, 1000.0F);
+    renderer->update_frustum(camera->get_projection() * camera->get_view());
+  }
 
-  smoother = std::make_unique<FrametimeSmoother>();
-  plotter = std::make_unique<FrameTimePlotter>();
-  timer = std::make_unique<FrametimeCalculator>();
+  {
+    ZoneScopedN("Set event callback");
+    window->set_event_callback([this](Event& event) { process_events(event); });
+  }
 
-  file_watcher = std::make_unique<AssetFileWatcher>();
-  file_watcher->start_monitoring();
+  {
+    ZoneScopedN("Create tools");
+    smoother = std::make_unique<FrametimeSmoother>();
+    plotter = std::make_unique<FrameTimePlotter>();
+    timer = std::make_unique<FrametimeCalculator>();
+  }
 
-  asset_reloader =
-    std::make_unique<AssetReloader>(*blueprint_registry, *renderer);
+  {
+    ZoneScopedN("Init file watcher and asset reloader");
+    file_watcher = std::make_unique<AssetFileWatcher>();
+    file_watcher->start_monitoring();
 
-  MeshCache::initialise(*device, *blueprint_registry);
-  Assets::Manager::initialise(*device, &thread_pool, *blueprint_registry);
+    asset_reloader =
+      std::make_unique<AssetReloader>(*blueprint_registry, *renderer);
+  }
+
+  {
+    ZoneScopedN("Init MeshCache and Asset Manager");
+    MeshCache::initialise(*device, *blueprint_registry);
+    Assets::Manager::initialise(*device, &thread_pool, *blueprint_registry);
+  }
 }
 
 App::~App() = default;
@@ -303,34 +329,41 @@ App::interface() -> void
   for (const auto& layer : layers)
     layer->on_interface();
 
-  constexpr auto flags =
-    ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
-    ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
-    ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoCollapse |
-    ImGuiWindowFlags_NoBackground;
+  static bool choice = false;
+  int flags = 0;
+  if (choice) {
+    static constexpr auto default_flags =
+      ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+      ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
+      ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoCollapse |
+      ImGuiWindowFlags_NoBackground;
+    flags = default_flags;
+  }
+
+  if (debounce_toggle(KeyCode::F7, 0.2F)) {
+    choice = !choice;
+  }
 
   if (ImGui::Begin("Renderer Output", nullptr, flags)) {
     ZoneScopedN("Renderer Output");
 
     const auto available = ImGui::GetContentRegionAvail();
-    ImVec2 region = ImGui::GetContentRegionAvail();
     auto& image = renderer->get_output_image();
     float render_aspect = image.get_aspect_ratio();
-    float region_aspect = region.x / region.y;
+    float region_aspect = available.x / available.y;
 
     glm::vec2 image_size;
     if (region_aspect > render_aspect) {
-      image_size.y = region.y;
+      image_size.y = available.y;
       image_size.x = render_aspect * image_size.y;
     } else {
-      image_size.x = region.x;
+      image_size.x = available.x;
       image_size.y = image_size.x / render_aspect;
     }
     ImVec2 cursor = ImGui::GetCursorPos();
-    ImGui::SetCursorPos(ImVec2(cursor.x + (region.x - image_size.x) * 0.5f,
-                               cursor.y + (region.y - image_size.y) * 0.5f));
-    auto texture_id = image.get_texture_id<ImTextureID>();
-    if (texture_id) {
+    ImGui::SetCursorPos(ImVec2(cursor.x + (available.x - image_size.x) * 0.5f,
+                               cursor.y + (available.y - image_size.y) * 0.5f));
+    if (auto texture_id = image.get_texture_id<ImTextureID>()) {
       ImGui::Image(*texture_id, ImVec2(image_size.x, image_size.y));
     }
 
@@ -380,6 +413,8 @@ App::interface() -> void
   if (ImGui::Begin("Performance Metrics")) {
     ZoneScopedN("Performance Metrics");
     plotter->plot();
+    auto& io = ImGui::GetIO();
+    ImGui::Text("ImGui FPS: %.2f", io.Framerate);
     ImGui::Text("Smoothed FPS: %.2f", 1.0 / smoother->get_smoothed());
     ImGui::Text("Smoothed Frame Time: %.2f ms",
                 smoother->get_smoothed() * 1000.0);
@@ -438,7 +473,7 @@ App::process_events(Event& event)
   EventDispatcher dispatcher(event);
   dispatcher.dispatch<WindowResizeEvent>([this](auto&) {
     window->set_resize_flag(true);
-    update_viewport_bounds(viewport_bounds, layers);
+    update_viewport_bounds(viewport_bounds, viewport_bounds_listeners);
     return true;
   });
   dispatcher.dispatch<WindowCloseEvent>([this](auto&) {
@@ -448,18 +483,6 @@ App::process_events(Event& event)
   dispatcher.dispatch<KeyReleasedEvent>([this](auto& e) {
     if (e.key == KeyCode::Escape)
       running = false;
-    if (e.key == KeyCode::L) {
-      auto&& [width, height] = window->framebuffer_size();
-      const float aspect_ratio =
-        static_cast<float>(width) / static_cast<float>(height);
-
-      if (std::holds_alternative<Camera::InfiniteProjection>(
-            camera->get_projection_config())) {
-        camera->set_perspective_float_far(90.f, aspect_ratio, 0.1f, 500.f);
-      } else {
-        camera->set_perspective(90.f, aspect_ratio, 0.1f);
-      }
-    }
     return true;
   });
 
