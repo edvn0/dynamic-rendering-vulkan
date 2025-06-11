@@ -1,0 +1,3 @@
+shaders:
+  - stage: compute
+    path: bloom_extract.comp

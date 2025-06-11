@@ -25,6 +25,8 @@ struct Handle
 
   auto get() -> T*;
   auto get() const -> const T*;
+
+  auto operator<=>(const Handle& other) const = default;
 };
 
 }

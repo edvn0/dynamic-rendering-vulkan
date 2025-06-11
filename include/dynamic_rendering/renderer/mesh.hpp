@@ -111,6 +111,7 @@ struct Vertex
   glm::vec3 position;
   glm::vec3 normal;
   glm::vec2 texcoord;
+  glm::vec4 tangent;
 };
 static_assert(std::is_trivially_copyable_v<Vertex>);
 
@@ -145,19 +146,11 @@ public:
   StaticMesh() = default;
   ~StaticMesh();
 
+  [[nodiscard]] auto load_from_file(const Device&, const std::string& path)
+    -> bool;
   [[nodiscard]] auto load_from_file(const Device&,
-                                    const BlueprintRegistry&,
-                                    const std::string& path) -> bool;
-  [[nodiscard]] auto load_from_file(const Device&,
-                                    const BlueprintRegistry&,
                                     BS::priority_thread_pool*,
                                     const std::string& path) -> bool;
-  [[nodiscard]] static auto load_from_memory(
-    const Device&,
-    const BlueprintRegistry&,
-    std::unique_ptr<VertexBuffer>&& vertex_buffer,
-    std::unique_ptr<IndexBuffer>&& index_buffer);
-
   [[nodiscard]] auto get_vertex_buffer() const -> VertexBuffer*
   {
     return vertex_buffer.get();
@@ -231,7 +224,13 @@ private:
   std::vector<Submesh> submeshes;
   std::unordered_map<const Submesh*, std::uint32_t> submesh_back_pointers;
 
-  std::vector<std::unique_ptr<Material>> materials;
+  auto add_submesh_at_index(std::uint32_t index, const Submesh& submesh)
+  {
+    submeshes.emplace_back(submesh);
+    submesh_back_pointers[&submeshes.back()] = index;
+  }
+
+  std::vector<Assets::Pointer<Material>> materials;
   string_hash_map<Assets::Pointer<Image>> loaded_textures;
 
   std::unique_ptr<VertexBuffer> vertex_buffer;
@@ -239,10 +238,8 @@ private:
 
   glm::mat4 transform{ 1.0f };
 
-  auto upload_materials(const aiScene*,
-                        const Device&,
-                        const BlueprintRegistry&,
-                        const std::string&) -> void;
+  auto upload_materials(const aiScene*, const Device&, const std::string&)
+    -> void;
 
   friend class MeshCache;
 };

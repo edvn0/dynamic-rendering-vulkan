@@ -1,5 +1,6 @@
 #include "pipeline/pipeline_factory.hpp"
 
+#include "core/debug_utils.hpp"
 #include "pipeline/compiled_pipeline.hpp"
 
 #include "core/device.hpp"
@@ -72,6 +73,7 @@ PipelineFactory::create_pipeline(const PipelineBlueprint& blueprint,
 
   auto shader = std::move(shader_result.value());
   std::vector<VkPipelineShaderStageCreateInfo> shader_infos;
+  shader_infos.reserve(blueprint.shader_stages.size());
   for (const auto& info : blueprint.shader_stages) {
     shader_infos.push_back({
       .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
@@ -85,21 +87,23 @@ PipelineFactory::create_pipeline(const PipelineBlueprint& blueprint,
   }
 
   std::vector<VkVertexInputBindingDescription> bindings;
-  for (const auto& b : blueprint.bindings) {
+  bindings.reserve(blueprint.bindings.size());
+  for (const auto& [binding, stride, input_rate] : blueprint.bindings) {
     bindings.push_back({
-      .binding = b.binding,
-      .stride = b.stride,
-      .inputRate = b.input_rate,
+      .binding = binding,
+      .stride = stride,
+      .inputRate = input_rate,
     });
   }
 
   std::vector<VkVertexInputAttributeDescription> attributes;
-  for (const auto& a : blueprint.attributes) {
+  attributes.reserve(blueprint.attributes.size());
+  for (const auto& [location, binding, format, offset] : blueprint.attributes) {
     attributes.push_back({
-      .location = a.location,
-      .binding = a.binding,
-      .format = a.format,
-      .offset = a.offset,
+      .location = location,
+      .binding = binding,
+      .format = format,
+      .offset = offset,
     });
   }
 
@@ -304,6 +308,11 @@ PipelineFactory::create_pipeline(const PipelineBlueprint& blueprint,
       PipelineError{ .message = "Failed to create graphics pipeline",
                      .code = PipelineError::Code::pipeline_creation_failed });
   }
+
+  ::set_debug_name(*device,
+                   std::bit_cast<std::uint64_t>(pipeline),
+                   VK_OBJECT_TYPE_PIPELINE,
+                   blueprint.name);
 
   return std::make_unique<CompiledPipeline>(pipeline,
                                             layout,

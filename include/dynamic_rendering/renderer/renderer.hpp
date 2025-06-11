@@ -15,6 +15,7 @@
 #include "core/device.hpp"
 #include "core/gpu_buffer.hpp"
 #include "core/image.hpp"
+#include "passes/bloom_pass.hpp"
 #include "pipeline/blueprint_registry.hpp"
 #include "renderer/draw_command.hpp"
 #include "renderer/frustum.hpp"
@@ -81,10 +82,7 @@ static_assert(sizeof(LineInstanceData) == 32,
 class Renderer
 {
 public:
-  Renderer(const Device&,
-           const BlueprintRegistry&,
-           const Window&,
-           BS::priority_thread_pool&);
+  Renderer(const Device&, const Window&, BS::priority_thread_pool&);
   ~Renderer();
 
   auto submit(const DrawCommand&, const glm::mat4& = glm::mat4{ 1.0F }) -> void;
@@ -170,7 +168,6 @@ public:
 
 private:
   const Device* device{ nullptr };
-  const BlueprintRegistry* blueprint_registry{ nullptr };
   BS::priority_thread_pool* thread_pool{ nullptr };
   std::unique_ptr<DescriptorSetManager> descriptor_set_manager;
 
@@ -187,24 +184,24 @@ private:
   Assets::Pointer<Image> geometry_image;
   Assets::Pointer<Image> geometry_msaa_image;
   Assets::Pointer<Image> geometry_depth_image;
-  std::unique_ptr<Material> z_prepass_material;
-  std::unique_ptr<Material> geometry_material;
-  std::unique_ptr<Material> geometry_wireframe_material;
+  Assets::Pointer<Material> z_prepass_material;
+  Assets::Pointer<Material> geometry_material;
+  Assets::Pointer<Material> geometry_wireframe_material;
 
-  std::unique_ptr<Material> skybox_material;
+  Assets::Pointer<Material> skybox_material;
   Assets::Pointer<Image> skybox_image;
   Assets::Pointer<Image> skybox_attachment_texture;
 
   Assets::Pointer<Image> colour_corrected_image;
-  std::unique_ptr<Material> colour_corrected_material;
+  Assets::Pointer<Material> colour_corrected_material;
 
   Assets::Pointer<Image> composite_attachment_texture;
-  std::unique_ptr<Material> composite_attachment_material;
+  Assets::Pointer<Material> composite_attachment_material;
 
   Assets::Pointer<Image> shadow_depth_image;
-  std::unique_ptr<Material> shadow_material;
+  Assets::Pointer<Material> shadow_material;
 
-  std::unique_ptr<Material> line_material;
+  Assets::Pointer<Material> line_material;
 
   std::uint32_t instance_count_this_frame{ 0 };
   std::unique_ptr<GPUBuffer> culled_instance_vertex_buffer;
@@ -213,16 +210,19 @@ private:
   std::unique_ptr<GPUBuffer> workgroup_sum_buffer;
   std::unique_ptr<GPUBuffer> workgroup_sum_prefix_buffer;
   std::unique_ptr<GPUBuffer> prefix_sum_buffer;
-  std::unique_ptr<Material> cull_visibility_material;
-  std::unique_ptr<Material> cull_scatter_material;
-  std::unique_ptr<Material> cull_prefix_sum_material_first;
-  std::unique_ptr<Material> cull_prefix_sum_material_second;
-  std::unique_ptr<Material> cull_prefix_sum_material_distribute;
+  Assets::Pointer<Material> cull_visibility_material;
+  Assets::Pointer<Material> cull_scatter_material;
+  Assets::Pointer<Material> cull_prefix_sum_material_first;
+  Assets::Pointer<Material> cull_prefix_sum_material_second;
+  Assets::Pointer<Material> cull_prefix_sum_material_distribute;
 
   std::vector<LineInstanceData> line_instances{};
   std::unique_ptr<GPUBuffer> line_instance_buffer{};
   std::uint32_t line_instance_count_this_frame{};
   auto upload_line_instance_data() -> void;
+
+  std::unique_ptr<BloomPass> bloom_pass;
+  auto run_bloom_pass(uint32_t uint32) -> void;
 
   DrawCommandMap draw_commands{};
   DrawCommandMap shadow_draw_commands{};

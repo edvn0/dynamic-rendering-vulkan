@@ -1,5 +1,6 @@
 #include "core/app.hpp"
 
+#include "core/vulkan_util.hpp"
 #include "renderer/mesh.hpp"
 
 #include <dynamic_rendering/assets/manager.hpp>
@@ -175,17 +176,12 @@ App::App(const ApplicationArguments& args)
     ZoneScopedN("Create device");
     device =
       std::make_unique<Device>(Device::create(*instance, window->surface()));
+    Util::Vulkan::initialise_debug_label(device->get_device());
   }
 
   {
     ZoneScopedN("Init image sampler cache");
     Image::init_sampler_cache(*device);
-  }
-
-  {
-    ZoneScopedN("Load blueprints");
-    blueprint_registry = std::make_unique<BlueprintRegistry>();
-    blueprint_registry->load_from_directory("blueprints");
   }
 
   {
@@ -197,8 +193,7 @@ App::App(const ApplicationArguments& args)
 
   {
     ZoneScopedN("Create renderer");
-    renderer = std::make_unique<Renderer>(
-      *device, *blueprint_registry, *window, thread_pool);
+    renderer = std::make_unique<Renderer>(*device, *window, thread_pool);
   }
 
   {
@@ -226,14 +221,13 @@ App::App(const ApplicationArguments& args)
     file_watcher = std::make_unique<AssetFileWatcher>();
     file_watcher->start_monitoring();
 
-    asset_reloader =
-      std::make_unique<AssetReloader>(*blueprint_registry, *renderer);
+    asset_reloader = std::make_unique<AssetReloader>(*device, *renderer);
   }
 
   {
     ZoneScopedN("Init MeshCache and Asset Manager");
-    MeshCache::initialise(*device, *blueprint_registry);
-    Assets::Manager::initialise(*device, &thread_pool, *blueprint_registry);
+    MeshCache::initialise(*device);
+    Assets::Manager::initialise(*device, &thread_pool);
   }
 }
 
@@ -300,7 +294,7 @@ App::run() -> std::error_code
   }
 
   vkDeviceWaitIdle(device->get_device());
-  Assets::Manager::the().clear_all<StaticMesh, Image>();
+  Assets::Manager::the().clear_all<StaticMesh, Image, Material>();
   MeshCache::destroy();
   Image::destroy_samplers();
   for (const auto& layer : layers)

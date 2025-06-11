@@ -29,6 +29,7 @@ public:
 
   auto load_from_directory(const std::filesystem::path&) -> void;
   [[nodiscard]] auto get(const std::string&) const -> const PipelineBlueprint&;
+  [[nodiscard]] auto get(std::string_view) const -> const PipelineBlueprint&;
   [[nodiscard]] auto update(const std::filesystem::path&)
     -> std::expected<void, PipelineLoadError>;
   [[nodiscard]] auto get_all() const -> const auto& { return blueprints; }

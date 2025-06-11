@@ -73,24 +73,18 @@ public:
     (clear<Ts>(), ...);
   }
 
-  static auto initialise(const Device&,
-                         BS::priority_thread_pool*,
-                         const BlueprintRegistry&) -> void;
+  static auto initialise(const Device&, BS::priority_thread_pool*) -> void;
   static auto the() -> Manager&;
 
 private:
-  Manager(const Device& device,
-          BS::priority_thread_pool* pool,
-          const BlueprintRegistry& registry)
+  Manager(const Device& device, BS::priority_thread_pool* pool)
     : device(device)
     , thread_pool(pool)
-    , registry(registry)
   {
   }
 
   const Device& device;
   BS::priority_thread_pool* thread_pool;
-  const BlueprintRegistry& registry;
   static inline Manager* singleton;
 
   template<typename T>
@@ -184,6 +178,20 @@ Manager::get(Handle<StaticMesh> handle) const -> const StaticMesh*
 
 template<>
 inline auto
+Manager::get(Handle<Material> handle) -> Material*
+{
+  return get_impl<Material>(handle);
+}
+
+template<>
+inline auto
+Manager::get(Handle<Material> handle) const -> const Material*
+{
+  return get_impl<Material>(handle);
+}
+
+template<>
+inline auto
 Manager::get(Handle<Image> handle) -> Image*
 {
   if (handle.id < builtin_max_id) {
@@ -232,8 +240,7 @@ Manager::load(const std::string_view path) -> Handle<T>
 {
   auto id = get_next_id<T>();
 
-  auto asset = Loader<T>::load({ device, thread_pool, registry },
-                               std::filesystem::path(path));
+  auto asset = Loader<T>::load({ device, thread_pool }, path);
   if (!asset)
     return Handle<T>{}; // invalid handle
 
@@ -243,5 +250,6 @@ Manager::load(const std::string_view path) -> Handle<T>
 }
 
 #include <dynamic_rendering/assets/handle.inl>
+#include <dynamic_rendering/assets/loaders/material_loader.inl>
 #include <dynamic_rendering/assets/loaders/static_mesh_loader.inl>
 #include <dynamic_rendering/assets/loaders/texture_loader.inl>

@@ -20,22 +20,16 @@ struct CubeComponent
   bool is_active{ true };
 };
 
-AppLayer::AppLayer(const Device&,
-                   BS::priority_thread_pool* pool,
-                   BlueprintRegistry* registry)
+AppLayer::AppLayer(const Device&, BS::priority_thread_pool* pool)
   : thread_pool(pool)
-  , blueprint_registry(registry)
 {
   active_scene = std::make_shared<Scene>("Basic");
 
-  auto tokyo_entity = active_scene->create_entity("Tokyo");
+  auto cerberus = active_scene->create_entity("Cerberus");
 
   Assets::Manager::the().load<Image>("sf.ktx2");
-  tokyo_entity.add_component<Component::Mesh>("little_tokyo/scene.gltf")
-    .casts_shadows = true;
-  tokyo_entity.get_component<Component::Transform>().scale = { 0.05,
-                                                               0.05,
-                                                               0.05 };
+  cerberus.add_component<Component::Mesh>("cerberus/cerberus.gltf");
+  cerberus.get_component<Component::Transform>().scale = { 0.05, 0.05, 0.05 };
   generate_scene();
 }
 
@@ -188,6 +182,13 @@ AppLayer::generate_scene() -> void
       entity.add_component<CubeComponent>();
       auto& transform = entity.get_component<Component::Transform>();
       transform.position = glm::vec3(x * 4.0f, 1.0f, z * 4.0f);
+
+      if (z + x == 3) {
+        auto& mat = entity.add_component<Component::Material>("main_geometry");
+        auto& mat_data = mat.material.get()->get_material_data();
+        mat_data.emissive_strength = 20.0F;
+        mat_data.emissive_color = glm::vec4(0.5F, 0.0F, 0.5F, 1.0f);
+      }
     }
   }
 }

@@ -87,6 +87,10 @@ Image::recreate() -> void
     .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
   };
 
+  if ((usage & VK_IMAGE_USAGE_STORAGE_BIT) != 0) {
+    is_storage_image = true;
+  }
+
   VmaAllocationCreateInfo alloc_info{};
   alloc_info.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
 
@@ -204,6 +208,14 @@ Image::recreate() -> void
     .imageView = default_view,
     .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
   };
+
+  if (is_storage_image) {
+    image_descriptor_info = VkDescriptorImageInfo{
+      .sampler = VK_NULL_HANDLE,
+      .imageView = default_view,
+      .imageLayout = VK_IMAGE_LAYOUT_GENERAL,
+    };
+  }
 }
 
 auto

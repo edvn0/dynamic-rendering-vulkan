@@ -2,9 +2,11 @@
 
 #include "core/allocator.hpp"
 #include "core/instance.hpp"
+#include "pipeline/blueprint_registry.hpp"
 
 #include <VkBootstrap.h>
 #include <cassert>
+#include <tracy/Tracy.hpp>
 
 Device::Device(const Core::Instance& instance, const vkb::Device& dev)
   : device(dev)
@@ -23,12 +25,19 @@ Device::Device(const Core::Instance& instance, const vkb::Device& dev)
   props = VkPhysicalDeviceProperties{};
   vkGetPhysicalDeviceProperties(device.physical_device.physical_device,
                                 &props.value());
+
+  {
+    ZoneScopedN("Load blueprints");
+    blueprint_registry = std::make_unique<BlueprintRegistry>();
+    blueprint_registry->load_from_directory("blueprints");
+  }
 }
 
 auto
 Device::create(const Core::Instance& instance, const VkSurfaceKHR& surface)
   -> Device
 {
+
   vkb::PhysicalDeviceSelector selector{ instance.vkb() };
   VkPhysicalDeviceFeatures features{
     .depthClamp = VK_TRUE,

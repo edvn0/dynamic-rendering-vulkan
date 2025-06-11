@@ -23,4 +23,9 @@ Mesh::Mesh(const Assets::Handle<StaticMesh> m)
 {
 }
 
+Material::Material(const std::string_view path)
+  : material(Assets::Manager::the().load<::Material>(path))
+{
+}
+
 }

@@ -38,34 +38,40 @@ struct MaterialData
   static constexpr std::uint32_t FLAG_AO_MAP = 1 << 7;
   static constexpr std::uint32_t FLAG_EMISSIVE_MAP = 1 << 8;
 
-  constexpr auto is_alpha_testing() const -> bool
+  [[nodiscard]] constexpr auto is_alpha_testing() const -> bool
   {
     return flags & FLAG_ALPHA_TEST;
   }
-  constexpr auto is_emissive() const -> bool { return flags & FLAG_EMISSIVE; }
-  constexpr auto has_albedo_texture() const -> bool
+  [[nodiscard]] constexpr auto is_emissive() const -> bool
+  {
+    return flags & FLAG_EMISSIVE;
+  }
+  [[nodiscard]] constexpr auto has_albedo_texture() const -> bool
   {
     return flags & FLAG_ALBEDO_TEXTURE;
   }
-  constexpr auto has_normal_map() const -> bool
+  [[nodiscard]] constexpr auto has_normal_map() const -> bool
   {
     return flags & FLAG_NORMAL_MAP;
   }
-  constexpr auto has_roughness_map() const -> bool
+  [[nodiscard]] constexpr auto has_roughness_map() const -> bool
   {
     return flags & FLAG_ROUGHNESS_MAP;
   }
-  constexpr auto has_metallic_map() const -> bool
+  [[nodiscard]] constexpr auto has_metallic_map() const -> bool
   {
     return flags & FLAG_METALLIC_MAP;
   }
-  constexpr auto has_ao_map() const -> bool { return flags & FLAG_AO_MAP; }
-  constexpr auto has_emissive_map() const -> bool
+  [[nodiscard]] constexpr auto has_ao_map() const -> bool
+  {
+    return flags & FLAG_AO_MAP;
+  }
+  [[nodiscard]] constexpr auto has_emissive_map() const -> bool
   {
     return flags & FLAG_EMISSIVE_MAP;
   }
 
-  constexpr auto set_alpha_testing(const bool val) -> void
+  [[nodiscard]] constexpr auto set_alpha_testing(const bool val) -> void
   {
     if (val)
       flags |= FLAG_ALPHA_TEST;
@@ -73,7 +79,7 @@ struct MaterialData
       flags &= ~FLAG_ALPHA_TEST;
   }
 
-  constexpr auto set_double_sided(const bool val) -> void
+  [[nodiscard]] constexpr auto set_double_sided(const bool val) -> void
   {
     if (val)
       flags |= FLAG_DOUBLE_SIDED;
@@ -81,7 +87,7 @@ struct MaterialData
       flags &= ~FLAG_DOUBLE_SIDED;
   }
 
-  constexpr auto set_emissive(const bool val) -> void
+  [[nodiscard]] constexpr auto set_emissive(const bool val) -> void
   {
     if (val)
       flags |= FLAG_EMISSIVE;
@@ -89,7 +95,7 @@ struct MaterialData
       flags &= ~FLAG_EMISSIVE;
   }
 
-  constexpr auto set_has_albedo_texture(const bool val) -> void
+  [[nodiscard]] constexpr auto set_has_albedo_texture(const bool val) -> void
   {
     if (val)
       flags |= FLAG_ALBEDO_TEXTURE;
@@ -97,7 +103,7 @@ struct MaterialData
       flags &= ~FLAG_ALBEDO_TEXTURE;
   }
 
-  constexpr auto set_has_normal_map(const bool val) -> void
+  [[nodiscard]] constexpr auto set_has_normal_map(const bool val) -> void
   {
     if (val)
       flags |= FLAG_NORMAL_MAP;
@@ -105,7 +111,7 @@ struct MaterialData
       flags &= ~FLAG_NORMAL_MAP;
   }
 
-  constexpr auto set_has_roughness_map(const bool val) -> void
+  [[nodiscard]] constexpr auto set_has_roughness_map(const bool val) -> void
   {
     if (val)
       flags |= FLAG_ROUGHNESS_MAP;
@@ -113,7 +119,7 @@ struct MaterialData
       flags &= ~FLAG_ROUGHNESS_MAP;
   }
 
-  constexpr auto set_has_metallic_map(const bool val) -> void
+  [[nodiscard]] constexpr auto set_has_metallic_map(const bool val) -> void
   {
     if (val)
       flags |= FLAG_METALLIC_MAP;
@@ -121,7 +127,7 @@ struct MaterialData
       flags &= ~FLAG_METALLIC_MAP;
   }
 
-  constexpr auto set_has_ao_map(const bool val) -> void
+  [[nodiscard]] constexpr auto set_has_ao_map(const bool val) -> void
   {
     if (val)
       flags |= FLAG_AO_MAP;
@@ -129,7 +135,7 @@ struct MaterialData
       flags &= ~FLAG_AO_MAP;
   }
 
-  constexpr auto set_has_emissive_map(const bool val) -> void
+  [[nodiscard]] constexpr auto set_has_emissive_map(const bool val) -> void
   {
     if (val)
       flags |= FLAG_EMISSIVE_MAP;

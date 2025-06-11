@@ -8,16 +8,17 @@
 #include <filesystem>
 #include <iostream>
 
-AssetReloader::AssetReloader(BlueprintRegistry& registry, Renderer& renderer)
-  : blueprint_registry(registry)
-  , renderer(renderer)
+AssetReloader::AssetReloader(Device& d, Renderer& r)
+  : device(&d)
+  , renderer(&r)
 {
   // Seed the shader_to_pipeline map with the current blueprints
-  for (const auto& [name, blueprint] : blueprint_registry.get_all()) {
+  for (const auto& blueprint :
+       device->get_all_blueprints() | std::views::values) {
     track_shader_dependencies(blueprint);
   }
 
-  blueprint_registry.register_callback(
+  device->register_blueprint_callback(
     [this](BlueprintRegistry::BlueprintChangeType,
            const PipelineBlueprint& blueprint) {
       track_shader_dependencies(blueprint);
@@ -66,7 +67,7 @@ AssetReloader::reload_blueprint_and_material(
 {
   const auto abs_path = blueprint_path.lexically_normal();
 
-  if (auto result = blueprint_registry.update(abs_path); !result.has_value()) {
+  if (auto result = device->update_blueprint(abs_path); !result.has_value()) {
     Logger::log_error("Failed to reload blueprint: {}. Error: {}",
                       abs_path.string(),
                       result.error().message);
@@ -81,8 +82,8 @@ AssetReloader::reload_blueprint_and_material(
     return;
   }
 
-  const auto& blueprint = blueprint_registry.get(it->second);
-  auto* mat = renderer.get_material_by_name(blueprint.name);
+  const auto& blueprint = device->get_blueprint(it->second);
+  auto* mat = renderer->get_material_by_name(blueprint.name);
 
   if (!mat) {
     Logger::log_error(

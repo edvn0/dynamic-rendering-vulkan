@@ -319,6 +319,29 @@ Scene::draw_entity_item(entt::entity entity, const std::string_view tag)
       }
     }
 
+    if (auto* material = registry.try_get<Component::Material>(entity)) {
+      auto& mat_data = material->material.get()->get_material_data();
+      if (ImGui::TreeNode("Material")) {
+        draw_vector4_slider("Albedo", mat_data.albedo, 0.0f, 1.0f);
+        ImGui::SliderFloat("Roughness", &mat_data.roughness, 0.0f, 1.0f);
+        ImGui::SliderFloat("Metallic", &mat_data.metallic, 0.0f, 1.0f);
+        ImGui::SliderFloat("AO", &mat_data.ao, 0.0f, 1.0f);
+
+        ImGui::SliderFloat(
+          "Emissive Strength", &mat_data.emissive_strength, 0.0f, 10.0f);
+        draw_vector3_slider(
+          "Emissive Color", mat_data.emissive_color, 0.0f, 10.0f);
+
+        ImGui::SliderFloat("Clearcoat", &mat_data.clearcoat, 0.0f, 1.0f);
+        ImGui::SliderFloat(
+          "Clearcoat Roughness", &mat_data.clearcoat_roughness, 0.0f, 1.0f);
+        ImGui::SliderFloat("Anisotropy", &mat_data.anisotropy, 0.0f, 1.0f);
+        ImGui::SliderFloat("Alpha Cutoff", &mat_data.alpha_cutoff, 0.0f, 1.0f);
+
+        ImGui::TreePop();
+      }
+    }
+
     // Add component button
     ImGui::Separator();
     if (ImGui::Button("Add Component")) {
@@ -326,11 +349,17 @@ Scene::draw_entity_item(entt::entity entity, const std::string_view tag)
     }
 
     if (ImGui::BeginPopup("AddComponentPopup")) {
+      Entity e{ entity, this };
       if (ImGui::MenuItem("Mesh")) {
       }
       if (ImGui::MenuItem("Light")) {
       }
       if (ImGui::MenuItem("Camera")) {
+      }
+      if (ImGui::MenuItem("Material")) {
+        auto material =
+          Assets::Manager::the().load<::Material>("main_geometry");
+        e.add_component<Component::Material>(material);
       }
       ImGui::EndPopup();
     }
@@ -421,7 +450,6 @@ Scene::on_interface() -> void
 
       glm::mat4 view = scene_camera->view;
       glm::mat4 proj = scene_camera->projection;
-      proj[1][1] *= -1.0f;
       glm::mat4 model = transform->compute();
 
       ImGuizmo::Manipulate(glm::value_ptr(view),
@@ -479,10 +507,18 @@ Scene::on_render(Renderer& renderer) -> void
   for (const auto view =
          registry.view<Component::Mesh, const Component::Transform>();
        auto&& [entity, mesh, transform] : view.each()) {
-    const auto actual_mesh = Assets::Manager::the().get(mesh.mesh);
+    const auto* material_component =
+      registry.try_get<Component::Material>(entity);
+    Assets::Handle<Material> mat{};
+    if (material_component) {
+      mat = material_component->material;
+    }
+
+    const auto actual_mesh = mesh.mesh.get();
     renderer.submit(
       {
         .mesh = actual_mesh,
+        .override_material = mat,
         .casts_shadows = mesh.casts_shadows,
       },
       transform.compute());
@@ -490,8 +526,9 @@ Scene::on_render(Renderer& renderer) -> void
     if (mesh.draw_aabb) {
       std::ranges::for_each(
         actual_mesh->get_submeshes(),
-        [&scale = transform.scale, &m = actual_mesh, &r = renderer](
-          const auto& submesh) { r.submit_aabb(m->get_world_aabb(submesh)); });
+        [&m = actual_mesh, &r = renderer](const auto& submesh) {
+          r.submit_aabb(m->get_world_aabb(submesh));
+        });
     }
   }
 }
@@ -505,6 +542,9 @@ Scene::on_resize(const EditorCamera& camera, std::uint32_t, std::uint32_t)
   projection = camera.get_projection();
   view = camera.get_view();
   position = camera.get_position();
+
+  scene_camera_entity.get_component<Component::Transform>().position =
+    camera.get_position();
 }
 
 auto

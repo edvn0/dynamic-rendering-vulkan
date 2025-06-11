@@ -14,9 +14,9 @@ public:
   ~PipelineFactory() override = default;
   explicit PipelineFactory(const Device& device);
 
-  auto create_pipeline(const PipelineBlueprint&,
-                       const PipelineLayoutInfo&) const
-    -> std::expected<std::unique_ptr<CompiledPipeline>, PipelineError>;
+  [[nodiscard]] auto create_pipeline(const PipelineBlueprint&,
+                                     const PipelineLayoutInfo&) const
+    -> std::expected<std::unique_ptr<CompiledPipeline>, PipelineError> override;
 
 private:
   const Device* device;

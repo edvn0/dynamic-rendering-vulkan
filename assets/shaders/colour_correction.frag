@@ -21,7 +21,7 @@ void main()
     vec2 uv = gl_FragCoord.xy / vec2(textureSize(input_image, 0));
     vec3 hdr = texture(input_image, uv).rgb;
 
-    float exposure = 30.0; // make this uniform later
+    float exposure = 100.0;// make this uniform later
     vec3 mapped = tone_map_aces(hdr * exposure);
 
     out_color = vec4(hdr, 1.0);

@@ -77,6 +77,10 @@ public:
   {
     return debug_name;
   }
+  [[nodiscard]] auto is_used_as_storage() const -> bool
+  {
+    return is_storage_image;
+  }
 
   auto resize(std::uint32_t new_width, std::uint32_t new_height) -> void;
   auto set_debug_name(std::string_view name) -> void;
@@ -126,6 +130,7 @@ private:
   VkDescriptorImageInfo image_descriptor_info{}; // For descriptor sets.
   bool is_cubemap{ false };
   std::string debug_name{};
+  bool is_storage_image{ false };
 
   // For UI systems.
   bool allow_in_ui{ true }; // For UI systems

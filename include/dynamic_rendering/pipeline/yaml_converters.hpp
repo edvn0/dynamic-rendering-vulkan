@@ -15,7 +15,7 @@ inline void
 set_default_vertex_input(PipelineBlueprint& rhs)
 {
   rhs.bindings = {
-    { .binding = 0, .stride = 32, .input_rate = VK_VERTEX_INPUT_RATE_VERTEX },
+    { .binding = 0, .stride = 48, .input_rate = VK_VERTEX_INPUT_RATE_VERTEX },
     { .binding = 1,
       .stride = sizeof(float) * 4 * 4,
       .input_rate = VK_VERTEX_INPUT_RATE_INSTANCE },
@@ -25,31 +25,35 @@ set_default_vertex_input(PipelineBlueprint& rhs)
     { .location = 0,
       .binding = 0,
       .format = VK_FORMAT_R32G32B32_SFLOAT,
-      .offset = 0 },
+      .offset = 0 }, // position
     { .location = 1,
       .binding = 0,
       .format = VK_FORMAT_R32G32B32_SFLOAT,
-      .offset = 12 },
+      .offset = 12 }, // normal
     { .location = 2,
       .binding = 0,
       .format = VK_FORMAT_R32G32_SFLOAT,
-      .offset = 24 },
+      .offset = 24 }, // texcoord
     { .location = 3,
-      .binding = 1,
+      .binding = 0,
       .format = VK_FORMAT_R32G32B32A32_SFLOAT,
-      .offset = 0 },
+      .offset = 32 }, // tangent (xyz + handedness)
     { .location = 4,
       .binding = 1,
       .format = VK_FORMAT_R32G32B32A32_SFLOAT,
-      .offset = 16 },
+      .offset = 0 }, // model matrix row 0
     { .location = 5,
       .binding = 1,
       .format = VK_FORMAT_R32G32B32A32_SFLOAT,
-      .offset = 32 },
+      .offset = 16 }, // row 1
     { .location = 6,
       .binding = 1,
       .format = VK_FORMAT_R32G32B32A32_SFLOAT,
-      .offset = 48 },
+      .offset = 32 }, // row 2
+    { .location = 7,
+      .binding = 1,
+      .format = VK_FORMAT_R32G32B32A32_SFLOAT,
+      .offset = 48 }, // row 3
   };
 }
 

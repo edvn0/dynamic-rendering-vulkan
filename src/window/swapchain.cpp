@@ -5,6 +5,7 @@
 #include "window/window.hpp"
 
 #include "core/device.hpp"
+#include "core/vulkan_util.hpp"
 
 #include <imgui.h>
 #include <iostream>
@@ -107,6 +108,8 @@ Swapchain::draw_frame(const GUISystem& gui_system) -> void
 
   vkCmdSetViewport(cmd, 0, 1, &viewport);
 
+  Util::Vulkan::cmd_begin_debug_label(
+    cmd, "Swapchain", { 0.1F, 0.2F, 0.9F, 1.0F });
   vkCmdBeginRendering(cmd, &render_info);
 
   {
@@ -114,6 +117,7 @@ Swapchain::draw_frame(const GUISystem& gui_system) -> void
     gui_system.end_frame(cmd);
   }
   vkCmdEndRendering(cmd);
+  Util::Vulkan::cmd_end_debug_label(cmd);
 
 #ifdef MEMORY_BARRIER
   CoreUtils::cmd_transition_to_present(cmd, swapchain_images[image_index]);
@@ -128,7 +132,7 @@ Swapchain::draw_frame(const GUISystem& gui_system) -> void
   const std::array signal_semaphores = {
     render_finished_semaphores[frame_index],
   };
-  const std::array<VkPipelineStageFlags, 1> wait_stages = {
+  constexpr std::array<VkPipelineStageFlags, 1> wait_stages = {
     VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
   };
 
@@ -158,8 +162,8 @@ Swapchain::draw_frame(const GUISystem& gui_system) -> void
 
   {
     ZoneScopedN("Present");
-    auto result = vkQueuePresentKHR(queue, &present_info);
-    if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR) {
+    if (const auto result = vkQueuePresentKHR(queue, &present_info);
+        result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR) {
       recreate_swapchain();
     }
   }
@@ -179,7 +183,7 @@ Swapchain::recreate_swapchain() -> void
     window->wait_for_events();
   }
 
-  std::cout << "Recreating swapchain..." << std::endl;
+  Logger::log_info("Recreating swapchain");
 
   vkDeviceWaitIdle(device);
 

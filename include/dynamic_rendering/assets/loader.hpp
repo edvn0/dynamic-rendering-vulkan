@@ -10,13 +10,12 @@ struct AssetContext
 {
   const Device& device;
   BS::priority_thread_pool* thread_pool;
-  const BlueprintRegistry& registry;
 };
 
 template<typename T>
 struct Loader
 {
-  static auto load(const AssetContext&, const std::filesystem::path& path)
+  static auto load(const AssetContext&, std::string_view)
     -> Assets::Pointer<T> = delete;
 };
 

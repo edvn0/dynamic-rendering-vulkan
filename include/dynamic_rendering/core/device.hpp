@@ -1,6 +1,8 @@
 #pragma once
 
 #include "core/forward.hpp"
+#include "core/util.hpp"
+#include "pipeline/blueprint_registry.hpp"
 
 #include <VkBootstrap.h>
 #include <optional>
@@ -38,6 +40,20 @@ public:
     -> void;
   auto wait_idle() const -> void;
 
+  auto get_blueprint(const std::string_view name) const
+  {
+    return blueprint_registry->get(name);
+  }
+  auto get_all_blueprints() const { return blueprint_registry->get_all(); }
+  auto register_blueprint_callback(auto&& func)
+  {
+    blueprint_registry->register_callback(func);
+  };
+  auto update_blueprint(const std::filesystem::path& path)
+  {
+    return blueprint_registry->update(path);
+  }
+
   auto destroy() -> void;
   auto create_resettable_command_pool() const -> VkCommandPool;
   auto allocate_secondary_command_buffer(VkCommandPool) const
@@ -47,6 +63,7 @@ public:
 private:
   explicit Device(const Core::Instance&, const vkb::Device&);
 
+  std::unique_ptr<BlueprintRegistry> blueprint_registry;
   vkb::Device device;
   std::unique_ptr<Allocator> allocator;
   VkQueue graphics{};

@@ -18,6 +18,7 @@
 #define GLM_ENABLE_EXPERIMENTAL
 #include "renderer/descriptor_manager.hpp"
 
+#include "assets/manager.hpp"
 #include "core/vulkan_util.hpp"
 #include "renderer/camera.hpp"
 #include "renderer/mesh.hpp"
@@ -134,11 +135,9 @@ to_renderpass(const std::string_view name) -> RenderPass
 }
 
 Renderer::Renderer(const Device& dev,
-                   const BlueprintRegistry& registry,
                    const Window& win,
                    BS::priority_thread_pool& p)
   : device(&dev)
-  , blueprint_registry(&registry)
   , thread_pool(&p)
 {
   DescriptorLayoutBuilder builder(renderer_bindings_metadata);
@@ -157,6 +156,7 @@ Renderer::Renderer(const Device& dev,
                                    ImageConfiguration{
                                      .extent = win.framebuffer_size(),
                                      .format = VK_FORMAT_R32G32B32A32_SFLOAT,
+                                     .debug_name = "Main Geometry Image",
                                    });
 
     auto sample_count = device->get_max_sample_count();
@@ -168,6 +168,7 @@ Renderer::Renderer(const Device& dev,
                       .usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
                                VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT,
                       .sample_count = sample_count,
+                      .debug_name = "Main Geometry Image (MSAA)",
                     });
     geometry_depth_image =
       Image::create(dev,
@@ -178,15 +179,21 @@ Renderer::Renderer(const Device& dev,
                       .aspect = VK_IMAGE_ASPECT_DEPTH_BIT,
                       .sample_count = sample_count,
                       .allow_in_ui = false,
+                      .debug_name = "Geometry Depth Image",
                     });
 
-    auto result =
-      Material::create(*device, blueprint_registry->get("main_geometry"));
-    if (result.has_value()) {
+    if (auto result = Material::create(*device, "main_geometry");
+        result.has_value()) {
       geometry_material = std::move(result.value());
     } else {
       assert(false && "Failed to create main geometry material.");
     }
+  }
+
+  {
+    auto&& [w, h] = win.framebuffer_size();
+    bloom_pass = std::make_unique<BloomPass>(*device, glm::uvec2(w, h));
+    bloom_pass->update_source(geometry_image.get());
   }
 
   {
@@ -196,7 +203,7 @@ Renderer::Renderer(const Device& dev,
       assert(false && "Failed to load environment map.");
     }
 
-    auto result = Material::create(*device, blueprint_registry->get("skybox"));
+    auto result = Material::create(*device, "skybox");
     if (!result.has_value()) {
       assert(false && "Failed to create environment map material.");
     }
@@ -216,17 +223,18 @@ Renderer::Renderer(const Device& dev,
   }
 
   {
-    composite_attachment_texture = Image::create(
-      *device,
-      ImageConfiguration{ .extent = win.framebuffer_size(),
-                          .format = VK_FORMAT_R32G32B32A32_SFLOAT,
-                          .usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
-                                   VK_IMAGE_USAGE_SAMPLED_BIT,
-                          .debug_name = "composite_attachment_texture" });
+    composite_attachment_texture =
+      Image::create(*device,
+                    ImageConfiguration{
+                      .extent = win.framebuffer_size(),
+                      .format = VK_FORMAT_R32G32B32A32_SFLOAT,
+                      .usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
+                               VK_IMAGE_USAGE_SAMPLED_BIT,
+                      .debug_name = "composite_attachment_texture",
+                    });
 
-    auto result =
-      Material::create(*device, blueprint_registry->get("composite"));
-    if (result.has_value()) {
+    if (auto result = Material::create(*device, "composite");
+        result.has_value()) {
       composite_attachment_material = std::move(result.value());
     } else {
       assert(false && "Failed to create composite material.");
@@ -236,6 +244,8 @@ Renderer::Renderer(const Device& dev,
                                           skybox_attachment_texture.get());
     composite_attachment_material->upload("geometry_input",
                                           geometry_image.get());
+    composite_attachment_material->upload("bloom_input",
+                                          &bloom_pass->get_output_image());
   }
 
   {
@@ -246,10 +256,10 @@ Renderer::Renderer(const Device& dev,
                       .format = VK_FORMAT_B8G8R8A8_SRGB,
                       .usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
                                VK_IMAGE_USAGE_SAMPLED_BIT,
+                      .debug_name = "colour_corrected_image",
                     });
 
-    auto result =
-      Material::create(*device, blueprint_registry->get("colour_correction"));
+    auto result = Material::create(*device, "colour_correction");
     if (result.has_value()) {
       colour_corrected_material = std::move(result.value());
     } else {
@@ -261,9 +271,8 @@ Renderer::Renderer(const Device& dev,
   }
 
   {
-    auto result =
-      Material::create(*device, blueprint_registry->get("z_prepass"));
-    if (result.has_value()) {
+    if (auto result = Material::create(*device, "z_prepass");
+        result.has_value()) {
       z_prepass_material = std::move(result.value());
     } else {
       assert(false && "Failed to create z prepass material.");
@@ -271,8 +280,7 @@ Renderer::Renderer(const Device& dev,
   }
 
   {
-    auto result = Material::create(*device, blueprint_registry->get("line"));
-    if (result.has_value()) {
+    if (auto result = Material::create(*device, "line"); result.has_value()) {
       line_material = std::move(result.value());
     } else {
       assert(false && "Failed to create line material.");
@@ -290,7 +298,7 @@ Renderer::Renderer(const Device& dev,
       assert(false && "Failed to allocate line instance buffer.");
     }
     line_instance_buffer->upload(
-      std::span<std::byte>{ bytes.get(), instance_size_bytes });
+      std::as_bytes(std::span{ bytes.get(), instance_size_bytes }));
   }
 
   {
@@ -304,7 +312,7 @@ Renderer::Renderer(const Device& dev,
       assert(false && "Failed to allocate instance vertex buffer.");
     }
     instance_vertex_buffer->upload(
-      std::span{ bytes.get(), instance_size_bytes });
+      std::as_bytes(std::span{ bytes.get(), instance_size_bytes }));
   }
 
   {
@@ -318,7 +326,7 @@ Renderer::Renderer(const Device& dev,
       assert(false && "Failed to allocate instance vertex buffer.");
     }
     instance_shadow_vertex_buffer->upload(
-      std::span{ bytes.get(), instance_size_bytes });
+      std::as_bytes(std::span{ bytes.get(), instance_size_bytes }));
   }
 
   {
@@ -333,8 +341,7 @@ Renderer::Renderer(const Device& dev,
                       .debug_name = "shadow_depth",
                     });
 
-    auto result = Material::create(*device, blueprint_registry->get("shadow"));
-    if (result.has_value()) {
+    if (auto result = Material::create(*device, "shadow"); result.has_value()) {
       shadow_material = std::move(result.value());
     } else {
       assert(false && "Failed to create shadow material.");
@@ -354,7 +361,6 @@ Renderer::Renderer(const Device& dev,
       true);
 
     {
-      // This was a glm::mat4 before, lets strongly type instead.
       auto&& [bytes, instance_size_bytes] =
         make_bytes<InstanceData, 1'000'000>();
       culled_instance_vertex_buffer->upload(
@@ -393,29 +399,22 @@ Renderer::Renderer(const Device& dev,
                                    "workgroup_sum_prefix_buffer");
     }
 
-    auto result =
-      Material::create(*device, blueprint_registry->get("cull_visibility"));
+    auto result = Material::create(*device, "cull_visibility");
     assert(result.has_value());
     cull_visibility_material = std::move(result.value());
 
-    result = Material::create(*device, blueprint_registry->get("cull_scatter"));
+    result = Material::create(*device, "cull_scatter");
     assert(result.has_value());
     cull_scatter_material = std::move(result.value());
 
     cull_prefix_sum_material_first =
-      Material::create(*device,
-                       blueprint_registry->get("cull_prefix_sum_first"))
-        .value();
+      Material::create(*device, "cull_prefix_sum_first").value();
 
     cull_prefix_sum_material_second =
-      Material::create(*device,
-                       blueprint_registry->get("cull_prefix_sum_second"))
-        .value();
+      Material::create(*device, "cull_prefix_sum_second").value();
 
     cull_prefix_sum_material_distribute =
-      Material::create(*device,
-                       blueprint_registry->get("cull_prefix_sum_distribute"))
-        .value();
+      Material::create(*device, "cull_prefix_sum_distribute").value();
 
     cull_visibility_material->upload("InstanceInput",
                                      instance_vertex_buffer.get());
@@ -505,7 +504,7 @@ Renderer::Renderer(const Device& dev,
   static constexpr std::array<unsigned char, 4> black_pixel = {
     0x0, 0x0, 0x0, 0x0
   };
-  black_texture->upload_rgba(white_pixel);
+  black_texture->upload_rgba(black_pixel);
 }
 
 auto
@@ -863,12 +862,17 @@ Renderer::end_frame(std::uint32_t frame_index) -> void
     ZoneScopedN("Begin command buffer");
     command_buffer->begin_frame(frame_index);
   }
-  run_culling_compute_pass(frame_index);
+  // run_culling_compute_pass(frame_index);
 
   run_skybox_pass(frame_index);
   run_shadow_pass(frame_index, flat_shadow_draw_commands);
   run_z_prepass(frame_index, flat_draw_commands);
   run_geometry_pass(frame_index, flat_draw_commands);
+
+  compute_command_buffer->begin_frame(frame_index);
+  run_bloom_pass(frame_index);
+  compute_command_buffer->submit_and_end(frame_index);
+  compute_command_buffer->wait_for_fence(frame_index);
 
   run_composite_pass(frame_index);
   run_postprocess_passes(frame_index);
@@ -886,9 +890,12 @@ Renderer::resize(std::uint32_t width, std::uint32_t height) -> void
   composite_attachment_texture->resize(width, height);
   colour_corrected_image->resize(width, height);
 
+  bloom_pass->resize(width, height);
+
   skybox_material->invalidate(skybox_attachment_texture.get());
   composite_attachment_material->invalidate(skybox_attachment_texture.get());
   composite_attachment_material->invalidate(geometry_image.get());
+  composite_attachment_material->invalidate(&bloom_pass->get_output_image());
   colour_corrected_material->invalidate(composite_attachment_texture.get());
 }
 
@@ -908,6 +915,8 @@ Renderer::run_skybox_pass(std::uint32_t frame_index) -> void
   command_buffer->begin_timer(frame_index, "skybox_pass");
 
   const VkCommandBuffer& cmd = command_buffer->get(frame_index);
+  Util::Vulkan::cmd_begin_debug_label(
+    cmd, "Skybox", { 0.9F, 0.1F, 0.1F, 1.0F });
 
   CoreUtils::cmd_transition_image(
     cmd,
@@ -1000,6 +1009,8 @@ Renderer::run_skybox_pass(std::uint32_t frame_index) -> void
     cmd, skybox_attachment_texture->get_image());
 
   command_buffer->end_timer(frame_index, "skybox_pass");
+
+  Util::Vulkan::cmd_end_debug_label(cmd);
 }
 auto
 bind_sets(auto cmd, auto layout, std::ranges::contiguous_range auto sets)
@@ -1021,6 +1032,9 @@ Renderer::run_z_prepass(std::uint32_t frame_index, const DrawList& draw_list)
   command_buffer->begin_timer(frame_index, "z_prepass");
 
   const VkCommandBuffer& cmd = command_buffer->get(frame_index);
+  Util::Vulkan::cmd_begin_debug_label(
+    cmd, "Z Prepass", { 0.1F, 0.9F, 0.1F, 1.0F });
+
   CoreUtils::cmd_transition_to_depth_attachment(
     cmd, geometry_depth_image->get_image());
 
@@ -1103,6 +1117,8 @@ Renderer::run_z_prepass(std::uint32_t frame_index, const DrawList& draw_list)
 
   vkCmdEndRendering(cmd);
   command_buffer->end_timer(frame_index, "z_prepass");
+
+  Util::Vulkan::cmd_end_debug_label(cmd);
 }
 
 auto
@@ -1114,6 +1130,8 @@ Renderer::run_geometry_pass(std::uint32_t frame_index,
   command_buffer->begin_timer(frame_index, "geometry_pass");
 
   const VkCommandBuffer& cmd = command_buffer->get(frame_index);
+  Util::Vulkan::cmd_begin_debug_label(
+    cmd, "Geometry Pass", { 0.5F, 0.5F, 0.0F, 1.0F });
   CoreUtils::cmd_transition_image(
     cmd,
     {
@@ -1183,7 +1201,7 @@ Renderer::run_geometry_pass(std::uint32_t frame_index,
   vkCmdSetViewport(cmd, 0, 1, &viewport);
   vkCmdSetScissor(cmd, 0, 1, &render_info.renderArea);
 
-  for (const auto& [cmd_info, offset, instance_count] : draw_list) {
+  for (auto&& [cmd_info, offset, instance_count] : draw_list) {
     const auto* submesh = cmd_info.mesh->get_submesh(cmd_info.submesh_index);
     if (!submesh)
       continue;
@@ -1193,8 +1211,10 @@ Renderer::run_geometry_pass(std::uint32_t frame_index,
     const auto& submesh_material =
       cmd_info.mesh->get_material_by_submesh_index(cmd_info.submesh_index);
 
-    auto& material = cmd_info.override_material ? *cmd_info.override_material
-                                                : *submesh_material;
+    Material& material =
+      cmd_info.override_material.is_valid()
+        ? *Assets::Manager::the().get(cmd_info.override_material)
+        : *submesh_material;
 
     // The pipeline should still come from the geometry main material.
     auto& pipeline = geometry_material->get_pipeline();
@@ -1245,6 +1265,9 @@ Renderer::run_geometry_pass(std::uint32_t frame_index,
   }
 
   if (line_instance_count_this_frame > 0) {
+    Util::Vulkan::cmd_begin_debug_label(
+      cmd, "Line Pass (Geometry)", { 0.5F, 0.5F, 0.0F, 1.0F });
+
     auto& line_pipeline = line_material->get_pipeline();
     vkCmdBindPipeline(
       cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, line_pipeline.pipeline);
@@ -1262,12 +1285,28 @@ Renderer::run_geometry_pass(std::uint32_t frame_index,
     vkCmdBindVertexBuffers(cmd, 0, 1, line_buffers.data(), line_offsets.data());
 
     vkCmdDraw(cmd, 4, line_instance_count_this_frame, 0, 0);
+    Util::Vulkan::cmd_end_debug_label(cmd);
   }
 
   vkCmdEndRendering(cmd);
   CoreUtils::cmd_transition_to_shader_read(cmd, geometry_image->get_image());
 
   command_buffer->end_timer(frame_index, "geometry_pass");
+
+  Util::Vulkan::cmd_end_debug_label(cmd);
+}
+
+auto
+Renderer::run_bloom_pass(uint32_t frame_index) -> void
+{
+  compute_command_buffer->begin_timer(frame_index, "bloom_pass");
+
+  const VkCommandBuffer& cmd = compute_command_buffer->get(frame_index);
+  bloom_pass->update_source(geometry_image.get());
+  bloom_pass->prepare(frame_index);
+  bloom_pass->record(cmd, *descriptor_set_manager, frame_index);
+
+  compute_command_buffer->end_timer(frame_index, "bloom_pass");
 }
 
 auto
@@ -1275,7 +1314,6 @@ Renderer::run_culling_compute_pass(std::uint32_t frame_index) -> void
 {
   ZoneScopedN("Compute pass");
 
-  compute_command_buffer->begin_frame(frame_index);
   compute_command_buffer->begin_timer(frame_index, "gpu_culling");
 
   const auto cmd = compute_command_buffer->get(frame_index);
@@ -1352,8 +1390,6 @@ Renderer::run_culling_compute_pass(std::uint32_t frame_index) -> void
     dispatch(*cull_scatter_material, "scatter_pass", group_count, false);
   }
   compute_command_buffer->end_timer(frame_index, "gpu_culling");
-  compute_command_buffer->submit_and_end(frame_index);
-  compute_command_buffer->wait_for_fence(frame_index);
 
   std::uint32_t culled_count = 0;
   if (!culled_instance_count_buffer->read_into_with_offset(culled_count, 0)) {
@@ -1370,6 +1406,9 @@ Renderer::run_shadow_pass(std::uint32_t frame_index, const DrawList& draw_list)
   command_buffer->begin_timer(frame_index, "shadow_pass");
 
   const VkCommandBuffer& cmd = command_buffer->get(frame_index);
+  Util::Vulkan::cmd_begin_debug_label(
+    cmd, "Shadow Pass", { 0.3F, 0.0F, 0.9F, 1.0F });
+
   CoreUtils::cmd_transition_to_depth_attachment(
     cmd, shadow_depth_image->get_image());
 
@@ -1480,6 +1519,8 @@ Renderer::run_shadow_pass(std::uint32_t frame_index, const DrawList& draw_list)
     cmd, shadow_depth_image->get_image());
 
   command_buffer->end_timer(frame_index, "shadow_pass");
+
+  Util::Vulkan::cmd_end_debug_label(cmd);
 }
 
 auto
@@ -1490,6 +1531,10 @@ Renderer::run_colour_correction_pass(std::uint32_t frame_index) -> void
   command_buffer->begin_timer(frame_index, "colour_correction_pass");
 
   const auto cmd = command_buffer->get(frame_index);
+
+  Util::Vulkan::cmd_begin_debug_label(
+    cmd, "Colour Correction (PP)", { 0.5F, 0.9F, 0.1F, 1.0F });
+
   CoreUtils::cmd_transition_image(
     cmd,
     {
@@ -1561,6 +1606,8 @@ Renderer::run_colour_correction_pass(std::uint32_t frame_index) -> void
   CoreUtils::cmd_transition_to_shader_read(cmd,
                                            colour_corrected_image->get_image());
   command_buffer->end_timer(frame_index, "colour_correction_pass");
+
+  Util::Vulkan::cmd_end_debug_label(cmd);
 }
 
 auto
@@ -1569,9 +1616,9 @@ Renderer::run_composite_pass(const std::uint32_t frame_index) -> void
   ZoneScopedN("Composite pass");
 
   command_buffer->begin_timer(frame_index, "composite_pass");
-
   const VkCommandBuffer& cmd = command_buffer->get(frame_index);
-
+  Util::Vulkan::cmd_begin_debug_label(
+    cmd, "Composite (PP)", { 0.1F, 0.9F, 0.1F, 1.0F });
   CoreUtils::cmd_transition_to_color_attachment(
     cmd, composite_attachment_texture->get_image());
 
@@ -1634,6 +1681,7 @@ Renderer::run_composite_pass(const std::uint32_t frame_index) -> void
     cmd, composite_attachment_texture->get_image());
 
   command_buffer->end_timer(frame_index, "composite_pass");
+  Util::Vulkan::cmd_end_debug_label(cmd);
 }
 
 #pragma endregion RenderPasses

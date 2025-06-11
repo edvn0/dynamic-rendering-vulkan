@@ -35,7 +35,7 @@ class MeshCache
 public:
   ~MeshCache();
 
-  static auto initialise(const Device&, const BlueprintRegistry&) -> void;
+  static auto initialise(const Device&) -> void;
   static auto destroy() -> void
   {
     std::lock_guard lock(mutex);
@@ -57,7 +57,7 @@ public:
   {
     return get_mesh(T);
   }
-  [[nodiscard]] auto get_mesh(MeshType type) const
+  [[nodiscard]] auto get_mesh(const MeshType type) const
     -> std::expected<StaticMesh*, MeshCacheError>
   {
     const auto it = meshes.find(type);
@@ -71,9 +71,8 @@ public:
   }
 
 private:
-  explicit MeshCache(const Device&, const BlueprintRegistry&);
+  explicit MeshCache(const Device&);
   const Device* device{ nullptr };
-  const BlueprintRegistry* blueprint_registry{ nullptr };
 
   std::unordered_map<MeshType, std::unique_ptr<StaticMesh>> meshes;
   static inline std::unique_ptr<MeshCache> instance{ nullptr };

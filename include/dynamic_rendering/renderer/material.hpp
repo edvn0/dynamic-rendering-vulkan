@@ -1,5 +1,7 @@
 #pragma once
 
+#include "assets/pointer.hpp"
+
 #include <array>
 #include <memory>
 #include <span>
@@ -14,6 +16,7 @@
 #include "core/util.hpp"
 #include "pipeline/compute_pipeline_factory.hpp"
 #include "pipeline/pipeline_factory.hpp"
+#include "renderer/material_bindings.hpp"
 #include "renderer/material_data.hpp"
 
 #include <vulkan/vulkan.h>
@@ -38,8 +41,12 @@ struct MaterialError
 class Material
 {
 public:
-  static auto create(const Device&, const PipelineBlueprint&)
-    -> std::expected<std::unique_ptr<Material>, MaterialError>;
+  static auto create(const Device&, std::string_view name)
+    -> std::expected<Assets::Pointer<Material>, MaterialError>;
+  auto initialise(const Device&, const PipelineBlueprint&) -> bool;
+  auto initialise(const Device&, std::string_view) -> bool;
+
+  Material() = default;
   ~Material();
 
   auto upload(std::string_view name, const GPUBuffer* buffer) -> void;
@@ -96,7 +103,10 @@ public:
     std::uint32_t size;
     const void* pointer;
   };
-  auto generate_push_constant_data() const -> PushConstantInformation;
+  [[nodiscard]] auto generate_push_constant_data() const
+    -> PushConstantInformation;
+
+  auto get_material_data() -> MaterialData& { return material_data; }
 
 private:
   string_hash_map<std::unique_ptr<GPUBinding>> bindings;
@@ -130,6 +140,10 @@ private:
 
   auto rebuild_pipeline(const PipelineBlueprint&)
     -> std::expected<std::unique_ptr<CompiledPipeline>, MaterialError>;
+  auto upload_storage_image(std::string_view, const Image*) -> void;
 
   auto upload_default_textures() -> void;
+
+  static auto create(const Device&, const PipelineBlueprint&)
+    -> std::expected<std::unique_ptr<Material>, MaterialError>;
 };

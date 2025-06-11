@@ -11,7 +11,8 @@ ComputePipelineFactory::ComputePipelineFactory(const Device& dev)
 auto
 ComputePipelineFactory::create_pipeline_layout(
   const PipelineBlueprint&,
-  std::span<const VkDescriptorSetLayout> layouts) const
+  std::span<const VkDescriptorSetLayout> layouts,
+  std::span<const VkPushConstantRange> push_constants) const
   -> std::expected<VkPipelineLayout, PipelineError>
 {
   VkPipelineLayoutCreateInfo layout_info{
@@ -20,8 +21,8 @@ ComputePipelineFactory::create_pipeline_layout(
     .flags = 0,
     .setLayoutCount = static_cast<std::uint32_t>(layouts.size()),
     .pSetLayouts = layouts.data(),
-    .pushConstantRangeCount = 0,
-    .pPushConstantRanges = nullptr,
+    .pushConstantRangeCount = static_cast<std::uint32_t>(push_constants.size()),
+    .pPushConstantRanges = push_constants.data(),
   };
 
   VkPipelineLayout layout{};
@@ -37,10 +38,9 @@ ComputePipelineFactory::create_pipeline_layout(
 }
 
 auto
-ComputePipelineFactory::create_pipeline(
-  const PipelineBlueprint& blueprint,
-  const PipelineLayoutInfo& descriptor_layout_info) const
-  -> std::expected<std::unique_ptr<CompiledPipeline>, PipelineError>
+ComputePipelineFactory::create_pipeline(const PipelineBlueprint& blueprint,
+                                        const PipelineLayoutInfo& layout_info)
+  const -> std::expected<std::unique_ptr<CompiledPipeline>, PipelineError>
 {
   auto shader_result = Shader::create(*device, blueprint.shader_stages);
   if (!shader_result) {
@@ -49,6 +49,7 @@ ComputePipelineFactory::create_pipeline(
       .code = PipelineError::Code::pipeline_creation_failed,
     });
   }
+
   auto shader = std::move(shader_result.value());
   const auto& stage_info = blueprint.shader_stages.front();
 
@@ -63,38 +64,42 @@ ComputePipelineFactory::create_pipeline(
   };
 
   std::vector<VkDescriptorSetLayout> layouts;
-  if (descriptor_layout_info.renderer_set_layout != VK_NULL_HANDLE) {
-    layouts.push_back(descriptor_layout_info.renderer_set_layout);
-  }
+  if (layout_info.renderer_set_layout != VK_NULL_HANDLE)
+    layouts.push_back(layout_info.renderer_set_layout);
   layouts.insert(layouts.end(),
-                 descriptor_layout_info.material_sets.begin(),
-                 descriptor_layout_info.material_sets.end());
-  auto layout_result = create_pipeline_layout(blueprint, layouts);
-  if (!layout_result) {
+                 layout_info.material_sets.begin(),
+                 layout_info.material_sets.end());
+
+  auto layout_result =
+    create_pipeline_layout(blueprint, layouts, layout_info.push_constants);
+  if (!layout_result)
     return std::unexpected(layout_result.error());
-  }
-  auto layout = layout_result.value();
 
   VkComputePipelineCreateInfo pipeline_info{
     .sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
     .pNext = nullptr,
     .flags = 0,
     .stage = stage,
-    .layout = layout,
+    .layout = layout_result.value(),
     .basePipelineHandle = VK_NULL_HANDLE,
     .basePipelineIndex = -1,
   };
 
   VkPipeline pipeline{};
-  vkCreateComputePipelines(device->get_device(),
-                           VK_NULL_HANDLE,
-                           1,
-                           &pipeline_info,
-                           nullptr,
-                           &pipeline);
+  if (vkCreateComputePipelines(device->get_device(),
+                               VK_NULL_HANDLE,
+                               1,
+                               &pipeline_info,
+                               nullptr,
+                               &pipeline) != VK_SUCCESS) {
+    return std::unexpected(PipelineError{
+      .message = "Failed to create compute pipeline",
+      .code = PipelineError::Code::pipeline_creation_failed,
+    });
+  }
 
   return std::make_unique<CompiledPipeline>(pipeline,
-                                            layout,
+                                            layout_result.value(),
                                             VK_PIPELINE_BIND_POINT_COMPUTE,
                                             std::move(shader),
                                             device);

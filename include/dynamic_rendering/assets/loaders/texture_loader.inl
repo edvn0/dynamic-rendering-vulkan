@@ -8,8 +8,9 @@ template<>
 struct Assets::Loader<Image>
 {
   static auto load(const AssetContext& context,
-                   const std::filesystem::path& path) -> Assets::Pointer<Image>
+                   const std::string_view path_view) -> Assets::Pointer<Image>
   {
+    const auto path = std::filesystem::path(path_view);
     auto image = Assets::make_tracked<Image>();
     if (Image::is_cubemap_externally(path.string())) {
       image = Image::load_cubemap(context.device, path.string());

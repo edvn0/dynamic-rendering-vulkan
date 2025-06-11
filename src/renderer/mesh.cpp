@@ -128,8 +128,8 @@ try_upload_texture(texture_context ctx,
 
 LoadedSubmesh
 process_mesh_impl(const aiMesh* mesh,
-                  glm::mat4 transform,
-                  int parent_index,
+                  const glm::mat4& transform,
+                  const int parent_index,
                   SubmeshPerformanceStats& stats)
 {
   std::vector<Vertex> raw_vertices(mesh->mNumVertices);
@@ -146,6 +146,21 @@ process_mesh_impl(const aiMesh* mesh,
                                  ? glm::vec2{ mesh->mTextureCoords[0][i].x,
                                               mesh->mTextureCoords[0][i].y }
                                  : glm::vec2{ 0.0f };
+    if (mesh->HasTangentsAndBitangents()) {
+      const glm::vec3 tangent = glm::normalize(glm::vec3{
+        mesh->mTangents[i].x, mesh->mTangents[i].y, mesh->mTangents[i].z });
+      const glm::vec3 bitangent =
+        glm::normalize(glm::vec3{ mesh->mBitangents[i].x,
+                                  mesh->mBitangents[i].y,
+                                  mesh->mBitangents[i].z });
+      const glm::vec3 normal = glm::normalize(raw_vertices[i].normal);
+      const float handedness =
+        (glm::dot(glm::cross(normal, tangent), bitangent) < 0.0f) ? -1.0f
+                                                                  : 1.0f;
+      raw_vertices[i].tangent = glm::vec4(tangent, handedness);
+    } else {
+      raw_vertices[i].tangent = glm::vec4(0.0f, 0.0f, 0.0f, 1.0f);
+    }
   }
 
   std::vector<uint32_t> raw_indices;
@@ -221,20 +236,20 @@ void
 upload_materials_impl_secondary(
   const aiScene* scene,
   const Device& device,
-  const BlueprintRegistry& registry,
   const std::string& directory,
   string_hash_map<Assets::Pointer<Image>>& loaded_textures,
-  std::vector<std::unique_ptr<Material>>& materials)
+  std::vector<Assets::Pointer<Material>>& materials)
 {
   struct ThreadResult
   {
     VkCommandPool pool{ nullptr };
     VkCommandBuffer cmd{ nullptr };
-    std::unique_ptr<Material> mat{ nullptr };
-    std::unique_ptr<GPUBuffer> staging{ nullptr };
+    Assets::Pointer<Material> mat{ nullptr };
+    std::vector<std::unique_ptr<GPUBuffer>>
+      staging_buffers; // Changed to vector
   };
 
-  std::mutex cache_mutex;
+  static std::mutex cache_mutex;
 
   std::vector<std::future<ThreadResult>> futures;
   std::vector<ThreadResult> completed;
@@ -244,16 +259,11 @@ upload_materials_impl_secondary(
       std::async(std::launch::async, [&, ai_mat]() -> ThreadResult {
         ThreadResult result{};
 
-        auto maybe_mat =
-          Material::create(device, registry.get("main_geometry"));
+        auto maybe_mat = Material::create(device, "main_geometry");
         if (!maybe_mat.has_value())
           return result;
 
         result.mat = std::move(maybe_mat.value());
-        texture_context ctx{
-          ai_mat, directory, device, loaded_textures, *result.mat
-        };
-
         result.pool = device.create_resettable_command_pool();
         result.cmd = device.allocate_secondary_command_buffer(result.pool);
 
@@ -272,32 +282,42 @@ upload_materials_impl_secondary(
                                           const std::string& slot,
                                           auto&& setter) {
           aiString tex_path;
-          if (ctx.ai_mat->GetTexture(type, 0, &tex_path) != AI_SUCCESS)
+          if (ai_mat->GetTexture(type, 0, &tex_path) != AI_SUCCESS)
             return;
 
-          const std::string full_path = ctx.directory + "/" + tex_path.C_Str();
-          Image* image;
+          const std::string full_path = directory + "/" + tex_path.C_Str();
+          Image* image = nullptr;
+          bool needs_staging = false;
 
           {
             std::scoped_lock lock(cache_mutex);
-            if (const auto it = ctx.cache.find(full_path);
-                it != ctx.cache.end()) {
+            if (const auto it = loaded_textures.find(full_path);
+                it != loaded_textures.end()) {
               image = it->second.get();
             } else {
-              auto [image_result, staging] = Image::load_from_file_with_staging(
-                ctx.device, full_path, false, true, result.cmd);
-              if (!image_result)
+              // Load image with staging buffer
+              auto image_result = Image::load_from_file_with_staging(
+                device, full_path, false, true, result.cmd);
+              if (!image_result.image)
                 return;
 
-              image = image_result.get();
-              result.staging = std::move(staging);
-              ctx.cache[full_path] = std::move(image_result);
+              image = image_result.image.get();
+              // Store staging buffer in our result to keep it alive
+              if (image_result.staging) {
+                result.staging_buffers.push_back(
+                  std::move(image_result.staging));
+              }
+
+              // Cache the loaded image
+              loaded_textures[full_path] = std::move(image_result.image);
+              needs_staging = true;
             }
           }
 
-          ctx.mat.upload(slot, image);
+          // Upload to material
           if (image != nullptr) {
-            setter(ctx.mat);
+            result.mat->upload(slot, image);
+            setter(*result.mat);
           }
         };
 
@@ -327,11 +347,13 @@ upload_materials_impl_secondary(
       }));
   }
 
+  // Collect all completed results
   for (auto& f : futures) {
     if (auto result = f.get(); result.cmd != VK_NULL_HANDLE)
       completed.push_back(std::move(result));
   }
 
+  // Execute all secondary command buffers if we have any
   if (!completed.empty()) {
     const auto vk_device = device.get_device();
     const auto queue = device.graphics_queue();
@@ -371,14 +393,20 @@ upload_materials_impl_secondary(
 
     vkQueueSubmit(queue, 1, &submit_info, fence);
     vkWaitForFences(vk_device, 1, &fence, VK_TRUE, UINT64_MAX);
+
+    // Clean up synchronization objects
     vkDestroyFence(vk_device, fence, nullptr);
     vkDestroyCommandPool(vk_device, primary_pool, nullptr);
   }
 
+  // Now it's safe to move materials and clean up resources
+  // The staging buffers will be destroyed here after GPU work is complete
   for (auto& r : completed) {
     if (r.mat)
       materials.push_back(std::move(r.mat));
     vkDestroyCommandPool(device.get_device(), r.pool, nullptr);
+    // staging_buffers vector will automatically clean up when r goes out of
+    // scope
   }
 }
 
@@ -387,9 +415,8 @@ upload_materials_impl_secondary(
 StaticMesh::~StaticMesh() = default;
 
 auto
-StaticMesh::load_from_file(const Device& device,
-                           const BlueprintRegistry& registry,
-                           const std::string& path) -> bool
+StaticMesh::load_from_file(const Device& device, const std::string& path)
+  -> bool
 {
   ZoneScopedN("Load from file (ST)");
 
@@ -436,7 +463,7 @@ StaticMesh::load_from_file(const Device& device,
   const auto directory = resolved_path.parent_path().string();
 
   for (auto* ai_mat : std::span(scene->mMaterials, scene->mNumMaterials)) {
-    auto maybe_mat = Material::create(device, registry.get("main_geometry"));
+    auto maybe_mat = Material::create(device, "main_geometry");
     if (!maybe_mat.has_value())
       continue;
 
@@ -615,23 +642,7 @@ StaticMesh::load_from_file(const Device& device,
 }
 
 auto
-StaticMesh::load_from_memory(const Device& device,
-                             const BlueprintRegistry& registry,
-                             std::unique_ptr<VertexBuffer>&& vertex_buffer,
-                             std::unique_ptr<IndexBuffer>&& index_buffer)
-{
-  auto mesh = std::make_unique<StaticMesh>();
-  mesh->vertex_buffer = std::move(vertex_buffer);
-  mesh->index_buffer = std::move(index_buffer);
-  mesh->materials.reserve(1);
-  mesh->materials.push_back(
-    Material::create(device, registry.get("main_geometry")).value());
-  return true;
-}
-
-auto
 StaticMesh::load_from_file(const Device& device,
-                           const BlueprintRegistry& registry,
                            BS::priority_thread_pool* thread_pool,
                            const std::string& path) -> bool
 {
@@ -673,7 +684,7 @@ StaticMesh::load_from_file(const Device& device,
   }
 
   const auto directory = resolved_path.parent_path().string();
-  upload_materials(scene, device, registry, directory);
+  upload_materials(scene, device, directory);
 
   std::vector<std::future<LoadedSubmesh>> futures;
   std::vector<int> future_to_parent_mapping;
@@ -789,9 +800,8 @@ StaticMesh::load_from_file(const Device& device,
 auto
 StaticMesh::upload_materials(const aiScene* scene,
                              const Device& device,
-                             const BlueprintRegistry& registry,
                              const std::string& directory) -> void
 {
   upload_materials_impl_secondary(
-    scene, device, registry, directory, loaded_textures, materials);
+    scene, device, directory, loaded_textures, materials);
 }

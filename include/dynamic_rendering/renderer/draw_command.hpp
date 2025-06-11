@@ -1,5 +1,6 @@
 #pragma once
 
+#include "assets/handle.hpp"
 #include "core/forward.hpp"
 
 #include <glm/glm.hpp>
@@ -12,7 +13,7 @@
 struct DrawCommand
 {
   StaticMesh* mesh;
-  Material* override_material{ nullptr };
+  Assets::Handle<Material> override_material{};
   std::int32_t submesh_index{ -1 };
   bool casts_shadows{ true };
 

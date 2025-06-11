@@ -47,4 +47,16 @@ struct Mesh
   explicit Mesh(std::string_view path);
 };
 
+struct Material
+{
+  Assets::Handle<::Material> material;
+
+  Material() = default;
+  explicit Material(Assets::Handle<::Material> m)
+    : material(m)
+  {
+  }
+  explicit Material(std::string_view path);
+};
+
 } // namespace Component

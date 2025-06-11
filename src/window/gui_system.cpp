@@ -12,6 +12,7 @@
 #include <imgui_impl_vulkan.h>
 
 #include "core/config.hpp"
+#include "core/vulkan_util.hpp"
 
 #include <ImGuizmo.h>
 #include <implot.h>
@@ -58,10 +59,14 @@ GUISystem::end_frame(VkCommandBuffer cmd_buf) const -> void
 {
   ImGui::End();
   ImGui::Render();
-  ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd_buf);
 
-  const auto& io = ImGui::GetIO();
-  if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
+  Util::Vulkan::cmd_begin_debug_label(
+    cmd_buf, "GUI", { 1.0F, 0.0F, 0.0F, 1.0F });
+  ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd_buf);
+  Util::Vulkan::cmd_end_debug_label(cmd_buf);
+
+  if (const auto& io = ImGui::GetIO();
+      io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
     ImGui::UpdatePlatformWindows();
     ImGui::RenderPlatformWindowsDefault();
   }

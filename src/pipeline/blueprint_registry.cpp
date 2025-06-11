@@ -63,6 +63,16 @@ BlueprintRegistry::get(const std::string& name) const
 }
 
 auto
+BlueprintRegistry::get(const std::string_view name) const
+  -> const PipelineBlueprint&
+{
+  assert(blueprints.contains(name) &&
+         "BlueprintRegistry::get: Blueprint not found");
+
+  return blueprints.find(name)->second;
+}
+
+auto
 BlueprintRegistry::update(const std::filesystem::path& path)
   -> std::expected<void, PipelineLoadError>
 {

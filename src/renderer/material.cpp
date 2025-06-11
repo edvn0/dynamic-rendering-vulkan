@@ -49,19 +49,17 @@ using BindingSet = std::unordered_set<VkDescriptorSetLayoutBinding,
                                       descriptor_binding_equal>;
 
 static auto
-merge_descriptor_binding(BindingSet& dst, VkDescriptorSetLayoutBinding& binding)
-  -> void
+merge_descriptor_binding(BindingSet& dst,
+                         const VkDescriptorSetLayoutBinding& binding) -> void
 {
-  if (binding.descriptorType == VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER) {
-    static constexpr auto stages = VK_SHADER_STAGE_VERTEX_BIT |
-                                   VK_SHADER_STAGE_FRAGMENT_BIT |
-                                   VK_SHADER_STAGE_COMPUTE_BIT;
-    binding.stageFlags = stages;
+  if (const auto existing = dst.find(binding); existing != dst.end()) {
+    auto updated = *existing;
+    updated.stageFlags |= binding.stageFlags;
+    dst.erase(existing);
+    dst.insert(updated);
+  } else {
+    dst.insert(binding);
   }
-  if (binding.descriptorType == VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER) {
-    binding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
-  }
-  dst.insert(binding);
 }
 
 static auto
@@ -308,6 +306,128 @@ Material::create(const Device& device, const PipelineBlueprint& blueprint)
 }
 
 auto
+Material::create(const Device& device, const std::string_view name)
+  -> std::expected<Assets::Pointer<Material>, MaterialError>
+{
+  return Material::create(device, device.get_blueprint(name));
+}
+
+auto
+Material::initialise(const Device& d, const std::string_view blueprint) -> bool
+{
+  return initialise(d, d.get_blueprint(blueprint));
+}
+
+auto
+Material::initialise(const Device& d, const PipelineBlueprint& blueprint)
+  -> bool
+{
+  device = &d;
+  if (!pipeline_factory || !compute_pipeline_factory) {
+    pipeline_factory = std::make_unique<PipelineFactory>(d);
+    compute_pipeline_factory = std::make_unique<ComputePipelineFactory>(d);
+  }
+
+  std::unordered_map<std::uint32_t, BindingSet> binds;
+  std::vector<VkPushConstantRange> push_constants;
+  string_hash_map<std::tuple<std::uint32_t, std::uint32_t>> new_binding_info;
+
+  for (const auto& stage : blueprint.shader_stages) {
+    if (!stage.empty)
+      reflect_shader_using_spirv_reflect(
+        stage.filepath, binds, push_constants, new_binding_info);
+  }
+
+  std::vector<VkDescriptorSetLayout> all_layouts(binds.size(), VK_NULL_HANDLE);
+  for (auto& [set, binding_set] : binds) {
+    std::vector<VkDescriptorSetLayoutBinding> binding_vec{ binding_set.begin(),
+                                                           binding_set.end() };
+
+    VkDescriptorSetLayoutCreateInfo layout_info{
+      .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+      .bindingCount = static_cast<uint32_t>(binding_vec.size()),
+      .pBindings = binding_vec.data(),
+    };
+
+    if (vkCreateDescriptorSetLayout(
+          d.get_device(), &layout_info, nullptr, &all_layouts.at(set)) !=
+        VK_SUCCESS)
+      return false;
+  }
+
+  frame_array<VkDescriptorSet> new_descriptor_sets{};
+  new_descriptor_sets.fill(VK_NULL_HANDLE);
+  VkDescriptorPool new_pool{ VK_NULL_HANDLE };
+
+  std::vector<VkDescriptorSetLayout> material_sets;
+  if (binds.contains(0))
+    material_sets.push_back(all_layouts.at(0));
+  if (binds.contains(1)) {
+    std::unordered_map<VkDescriptorType, uint32_t> type_counts;
+    for (const auto& b : binds.at(1))
+      type_counts[b.descriptorType] += b.descriptorCount;
+
+    std::vector<VkDescriptorPoolSize> pool_sizes;
+    for (const auto& [type, count] : type_counts)
+      pool_sizes.push_back(
+        { .type = type, .descriptorCount = count * frames_in_flight });
+
+    VkDescriptorPoolCreateInfo pool_info{
+      .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+      .maxSets = frames_in_flight,
+      .poolSizeCount = static_cast<uint32_t>(pool_sizes.size()),
+      .pPoolSizes = pool_sizes.data(),
+    };
+
+    if (vkCreateDescriptorPool(
+          d.get_device(), &pool_info, nullptr, &new_pool) != VK_SUCCESS)
+      return false;
+
+    std::vector repeated_layouts(frames_in_flight, all_layouts.at(1));
+    VkDescriptorSetAllocateInfo alloc_info{
+      .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+      .descriptorPool = new_pool,
+      .descriptorSetCount = frames_in_flight,
+      .pSetLayouts = repeated_layouts.data(),
+    };
+
+    if (vkAllocateDescriptorSets(d.get_device(),
+                                 &alloc_info,
+                                 new_descriptor_sets.data()) != VK_SUCCESS)
+      return false;
+
+    material_sets.push_back(all_layouts.at(1));
+  }
+
+  const bool is_compute =
+    blueprint.shader_stages.size() == 1 &&
+    blueprint.shader_stages[0].stage == ShaderStage::compute;
+
+  const auto* factory =
+    is_compute ? compute_pipeline_factory.get() : pipeline_factory.get();
+
+  auto pipeline_result = factory->create_pipeline(
+    blueprint,
+    PipelineLayoutInfo{ .material_sets = material_sets,
+                        .push_constants = push_constants });
+
+  if (!pipeline_result)
+    return false;
+
+  // destroy(); // cleanup old Vulkan resources
+
+  binding_info = std::move(new_binding_info);
+  descriptor_sets = new_descriptor_sets;
+  descriptor_set_layouts = std::move(all_layouts);
+  descriptor_pool = new_pool;
+  pipeline = std::move(*pipeline_result);
+  pipeline_hash = blueprint.hash();
+  upload_default_textures();
+
+  return true;
+}
+
+auto
 Material::invalidate(const std::span<const Image*> images) -> void
 {
   for (auto* img : images) {
@@ -505,6 +625,10 @@ Material::upload(const std::string_view name, const Image* image) -> void
   if (image == nullptr)
     return;
 
+  if (image->is_used_as_storage()) {
+    return upload_storage_image(name, image);
+  }
+
   const auto key = std::string(name);
   const auto it = bindings.find(key);
 
@@ -525,6 +649,39 @@ Material::upload(const std::string_view name, const Image* image) -> void
   if (needs_update) {
     bindings[key] = std::make_unique<ImageBinding>(
       image, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, binding_index);
+    for (auto& dirty : per_frame_dirty_flags) {
+      dirty.insert(key);
+    }
+  }
+}
+
+auto
+Material::upload_storage_image(const std::string_view name, const Image* image)
+  -> void
+{
+  if (image == nullptr)
+    return;
+
+  const auto key = std::string(name);
+  const auto it = bindings.find(key);
+
+  const auto binding_it = binding_info.find(key);
+  if (binding_it == binding_info.end())
+    return;
+
+  const uint32_t binding_index = std::get<1>(binding_it->second);
+
+  bool needs_update = true;
+  if (it != bindings.end()) {
+    if (const auto* existing = dynamic_cast<ImageBinding*>(it->second.get());
+        existing && existing->get_underlying_image() == image) {
+      needs_update = false;
+    }
+  }
+
+  if (needs_update) {
+    bindings[key] = std::make_unique<ImageBinding>(
+      image, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, binding_index);
     for (auto& dirty : per_frame_dirty_flags) {
       dirty.insert(key);
     }

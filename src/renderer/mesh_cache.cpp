@@ -10,13 +10,11 @@ MeshCache::~MeshCache()
 }
 
 auto
-MeshCache::initialise(const Device& device,
-                      const BlueprintRegistry& blueprint_registry) -> void
+MeshCache::initialise(const Device& device) -> void
 {
   std::lock_guard lock(mutex);
   assert(!instance);
-  instance =
-    std::unique_ptr<MeshCache>(new MeshCache(device, blueprint_registry));
+  instance = std::unique_ptr<MeshCache>(new MeshCache(device));
 }
 
 static constexpr auto
@@ -39,9 +37,8 @@ to_string(MeshType type) -> std::string
   return {};
 }
 
-MeshCache::MeshCache(const Device& dev, const BlueprintRegistry& reg)
+MeshCache::MeshCache(const Device& dev)
   : device(&dev)
-  , blueprint_registry(&reg)
 {
 
   meshes[MeshType::Cube] = std::make_unique<StaticMesh>();
@@ -51,17 +48,11 @@ MeshCache::MeshCache(const Device& dev, const BlueprintRegistry& reg)
   meshes[MeshType::Cone] = std::make_unique<StaticMesh>();
   meshes[MeshType::Torus] = std::make_unique<StaticMesh>();
 
-  /*for (auto&& [type, mesh] : meshes) {
-    if (!mesh->load_from_file(
-          device, blueprint_registry, "meshes/default/" + to_string(type))) {
-      std::cerr << "Failed to load mesh: "
-                << "meshes/default/" + to_string(type) << std::endl;
+  for (auto&& [type, mesh] : meshes) {
+    if (!mesh->load_from_file(*device, "meshes/default/" + to_string(type))) {
       mesh.reset();
-    } else {
-      std::cout << "Loaded mesh: " << "meshes/default/" + to_string(type)
-                << std::endl;
     }
-  }*/
+  }
 
   initialise_cube();
 }
@@ -111,39 +102,117 @@ generate_cube_counter_clockwise(const Device& device)
       glm::vec3 position;
       glm::vec3 normal;
       glm::vec2 uv;
+      glm::vec4 tangent;
     };
 
     static constexpr std::array<Vertex, 24> vertices = { {
-      // Front
-      { { -1.f, -1.f, 1.f }, { 0.f, 0.f, 1.f }, { 0.f, 0.f } },
-      { { 1.f, -1.f, 1.f }, { 0.f, 0.f, 1.f }, { 1.f, 0.f } },
-      { { 1.f, 1.f, 1.f }, { 0.f, 0.f, 1.f }, { 1.f, 1.f } },
-      { { -1.f, 1.f, 1.f }, { 0.f, 0.f, 1.f }, { 0.f, 1.f } },
-      // Back
-      { { 1.f, -1.f, -1.f }, { 0.f, 0.f, -1.f }, { 0.f, 0.f } },
-      { { -1.f, -1.f, -1.f }, { 0.f, 0.f, -1.f }, { 1.f, 0.f } },
-      { { -1.f, 1.f, -1.f }, { 0.f, 0.f, -1.f }, { 1.f, 1.f } },
-      { { 1.f, 1.f, -1.f }, { 0.f, 0.f, -1.f }, { 0.f, 1.f } },
-      // Left
-      { { -1.f, -1.f, -1.f }, { -1.f, 0.f, 0.f }, { 0.f, 0.f } },
-      { { -1.f, -1.f, 1.f }, { -1.f, 0.f, 0.f }, { 1.f, 0.f } },
-      { { -1.f, 1.f, 1.f }, { -1.f, 0.f, 0.f }, { 1.f, 1.f } },
-      { { -1.f, 1.f, -1.f }, { -1.f, 0.f, 0.f }, { 0.f, 1.f } },
-      // Right
-      { { 1.f, -1.f, 1.f }, { 1.f, 0.f, 0.f }, { 0.f, 0.f } },
-      { { 1.f, -1.f, -1.f }, { 1.f, 0.f, 0.f }, { 1.f, 0.f } },
-      { { 1.f, 1.f, -1.f }, { 1.f, 0.f, 0.f }, { 1.f, 1.f } },
-      { { 1.f, 1.f, 1.f }, { 1.f, 0.f, 0.f }, { 0.f, 1.f } },
-      // Top
-      { { -1.f, 1.f, 1.f }, { 0.f, 1.f, 0.f }, { 0.f, 0.f } },
-      { { 1.f, 1.f, 1.f }, { 0.f, 1.f, 0.f }, { 1.f, 0.f } },
-      { { 1.f, 1.f, -1.f }, { 0.f, 1.f, 0.f }, { 1.f, 1.f } },
-      { { -1.f, 1.f, -1.f }, { 0.f, 1.f, 0.f }, { 0.f, 1.f } },
-      // Bottom
-      { { -1.f, -1.f, -1.f }, { 0.f, -1.f, 0.f }, { 0.f, 0.f } },
-      { { 1.f, -1.f, -1.f }, { 0.f, -1.f, 0.f }, { 1.f, 0.f } },
-      { { 1.f, -1.f, 1.f }, { 0.f, -1.f, 0.f }, { 1.f, 1.f } },
-      { { -1.f, -1.f, 1.f }, { 0.f, -1.f, 0.f }, { 0.f, 1.f } },
+      // Front (+Z), tangent +X
+      { { -1.f, -1.f, 1.f },
+        { 0.f, 0.f, 1.f },
+        { 0.f, 0.f },
+        { 1.f, 0.f, 0.f, 1.f } },
+      { { 1.f, -1.f, 1.f },
+        { 0.f, 0.f, 1.f },
+        { 1.f, 0.f },
+        { 1.f, 0.f, 0.f, 1.f } },
+      { { 1.f, 1.f, 1.f },
+        { 0.f, 0.f, 1.f },
+        { 1.f, 1.f },
+        { 1.f, 0.f, 0.f, 1.f } },
+      { { -1.f, 1.f, 1.f },
+        { 0.f, 0.f, 1.f },
+        { 0.f, 1.f },
+        { 1.f, 0.f, 0.f, 1.f } },
+
+      // Back (-Z), tangent -X
+      { { 1.f, -1.f, -1.f },
+        { 0.f, 0.f, -1.f },
+        { 0.f, 0.f },
+        { -1.f, 0.f, 0.f, 1.f } },
+      { { -1.f, -1.f, -1.f },
+        { 0.f, 0.f, -1.f },
+        { 1.f, 0.f },
+        { -1.f, 0.f, 0.f, 1.f } },
+      { { -1.f, 1.f, -1.f },
+        { 0.f, 0.f, -1.f },
+        { 1.f, 1.f },
+        { -1.f, 0.f, 0.f, 1.f } },
+      { { 1.f, 1.f, -1.f },
+        { 0.f, 0.f, -1.f },
+        { 0.f, 1.f },
+        { -1.f, 0.f, 0.f, 1.f } },
+
+      // Left (-X), tangent -Z
+      { { -1.f, -1.f, -1.f },
+        { -1.f, 0.f, 0.f },
+        { 0.f, 0.f },
+        { 0.f, 0.f, -1.f, 1.f } },
+      { { -1.f, -1.f, 1.f },
+        { -1.f, 0.f, 0.f },
+        { 1.f, 0.f },
+        { 0.f, 0.f, -1.f, 1.f } },
+      { { -1.f, 1.f, 1.f },
+        { -1.f, 0.f, 0.f },
+        { 1.f, 1.f },
+        { 0.f, 0.f, -1.f, 1.f } },
+      { { -1.f, 1.f, -1.f },
+        { -1.f, 0.f, 0.f },
+        { 0.f, 1.f },
+        { 0.f, 0.f, -1.f, 1.f } },
+
+      // Right (+X), tangent +Z
+      { { 1.f, -1.f, 1.f },
+        { 1.f, 0.f, 0.f },
+        { 0.f, 0.f },
+        { 0.f, 0.f, 1.f, 1.f } },
+      { { 1.f, -1.f, -1.f },
+        { 1.f, 0.f, 0.f },
+        { 1.f, 0.f },
+        { 0.f, 0.f, 1.f, 1.f } },
+      { { 1.f, 1.f, -1.f },
+        { 1.f, 0.f, 0.f },
+        { 1.f, 1.f },
+        { 0.f, 0.f, 1.f, 1.f } },
+      { { 1.f, 1.f, 1.f },
+        { 1.f, 0.f, 0.f },
+        { 0.f, 1.f },
+        { 0.f, 0.f, 1.f, 1.f } },
+
+      // Top (+Y), tangent +X
+      { { -1.f, 1.f, 1.f },
+        { 0.f, 1.f, 0.f },
+        { 0.f, 0.f },
+        { 1.f, 0.f, 0.f, 1.f } },
+      { { 1.f, 1.f, 1.f },
+        { 0.f, 1.f, 0.f },
+        { 1.f, 0.f },
+        { 1.f, 0.f, 0.f, 1.f } },
+      { { 1.f, 1.f, -1.f },
+        { 0.f, 1.f, 0.f },
+        { 1.f, 1.f },
+        { 1.f, 0.f, 0.f, 1.f } },
+      { { -1.f, 1.f, -1.f },
+        { 0.f, 1.f, 0.f },
+        { 0.f, 1.f },
+        { 1.f, 0.f, 0.f, 1.f } },
+
+      // Bottom (-Y), tangent +X
+      { { -1.f, -1.f, -1.f },
+        { 0.f, -1.f, 0.f },
+        { 0.f, 0.f },
+        { 1.f, 0.f, 0.f, 1.f } },
+      { { 1.f, -1.f, -1.f },
+        { 0.f, -1.f, 0.f },
+        { 1.f, 0.f },
+        { 1.f, 0.f, 0.f, 1.f } },
+      { { 1.f, -1.f, 1.f },
+        { 0.f, -1.f, 0.f },
+        { 1.f, 1.f },
+        { 1.f, 0.f, 0.f, 1.f } },
+      { { -1.f, -1.f, 1.f },
+        { 0.f, -1.f, 0.f },
+        { 0.f, 1.f },
+        { 1.f, 0.f, 0.f, 1.f } },
     } };
 
     static constexpr std::array<std::uint32_t, 36> indices = {
@@ -172,17 +241,17 @@ MeshCache::initialise_cube() -> void
     mesh = std::make_unique<StaticMesh>();
     mesh->vertex_buffer = std::move(cube_vertex);
     mesh->index_buffer = std::move(cube_index);
-    mesh->submeshes.push_back(Submesh{
-      .index_offset = 0,
-      .index_count =
-        static_cast<std::uint32_t>(mesh->index_buffer->get_count()),
-      .material_index = 0,
-    });
+    mesh->add_submesh_at_index(0,
+                               Submesh{
+                                 .index_offset = 0,
+                                 .index_count = static_cast<std::uint32_t>(
+                                   mesh->index_buffer->get_count()),
+                                 .material_index = 0,
+                               });
 
     mesh->materials.reserve(1);
     mesh->materials.push_back(
-      Material::create(*device, blueprint_registry->get("main_geometry"))
-        .value());
+      Material::create(*device, "main_geometry").value());
   }
 
   {
@@ -192,16 +261,16 @@ MeshCache::initialise_cube() -> void
     mesh = std::make_unique<StaticMesh>();
     mesh->vertex_buffer = std::move(cube_vertex);
     mesh->index_buffer = std::move(cube_index);
-    mesh->submeshes.push_back(Submesh{
-      .index_offset = 0,
-      .index_count =
-        static_cast<std::uint32_t>(mesh->index_buffer->get_count()),
-      .material_index = 0,
-    });
+    mesh->add_submesh_at_index(0,
+                               Submesh{
+                                 .index_offset = 0,
+                                 .index_count = static_cast<std::uint32_t>(
+                                   mesh->index_buffer->get_count()),
+                                 .material_index = 0,
+                               });
 
     mesh->materials.reserve(1);
     mesh->materials.push_back(
-      Material::create(*device, blueprint_registry->get("main_geometry"))
-        .value());
+      Material::create(*device, "main_geometry").value());
   }
 }

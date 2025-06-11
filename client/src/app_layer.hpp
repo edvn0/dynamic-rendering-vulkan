@@ -8,9 +8,7 @@ class AppLayer final
   , public DynamicRendering::ViewportBoundsListener
 {
 public:
-  explicit AppLayer(const Device&,
-                    BS::priority_thread_pool*,
-                    BlueprintRegistry*);
+  explicit AppLayer(const Device&, BS::priority_thread_pool*);
   ~AppLayer() override;
 
   auto on_destroy() -> void override;
@@ -33,7 +31,6 @@ public:
 private:
   const DynamicRendering::App* app{ nullptr };
   BS::priority_thread_pool* thread_pool{ nullptr };
-  BlueprintRegistry* blueprint_registry{ nullptr };
 
   void generate_scene();
 

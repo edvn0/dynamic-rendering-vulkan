@@ -6,12 +6,11 @@
 namespace Assets {
 
 auto
-Manager::initialise(const Device& device,
-                    BS::priority_thread_pool* pool,
-                    const BlueprintRegistry& registry) -> void
+Manager::initialise(const Device& device, BS::priority_thread_pool* pool)
+  -> void
 {
   assert(singleton == nullptr);
-  singleton = new Manager(device, pool, registry);
+  singleton = new Manager(device, pool);
 }
 
 auto

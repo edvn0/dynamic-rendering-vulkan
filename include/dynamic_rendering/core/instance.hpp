@@ -18,7 +18,7 @@ debug_callback(VkDebugUtilsMessageSeverityFlagBitsEXT,
                const VkDebugUtilsMessengerCallbackDataEXT* callback_data,
                void*) -> VkBool32
 {
-  std::cerr << "Validation layer: " << callback_data->pMessage << "\n";
+  Logger::log_error("Validation layer: {}", callback_data->pMessage);
   return VK_FALSE;
 }
 #endif
