@@ -68,6 +68,11 @@ Image::recreate() -> void
 {
   destroy();
 
+  const std::array access_queues = {
+    device->compute_queue_family_index(),
+    device->graphics_queue_family_index(),
+  };
+
   VkImageCreateInfo image_info{
     .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
     .pNext = nullptr,
@@ -81,9 +86,9 @@ Image::recreate() -> void
     .samples = static_cast<VkSampleCountFlagBits>(sample_count),
     .tiling = VK_IMAGE_TILING_OPTIMAL,
     .usage = usage,
-    .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
-    .queueFamilyIndexCount = 0,
-    .pQueueFamilyIndices = nullptr,
+    .sharingMode = VK_SHARING_MODE_CONCURRENT,
+    .queueFamilyIndexCount = static_cast<std::uint32_t>(access_queues.size()),
+    .pQueueFamilyIndices = access_queues.data(),
     .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
   };
 
@@ -211,10 +216,19 @@ Image::recreate() -> void
 
   if (is_storage_image) {
     image_descriptor_info = VkDescriptorImageInfo{
-      .sampler = VK_NULL_HANDLE,
+      .sampler = sampler,
       .imageView = default_view,
       .imageLayout = VK_IMAGE_LAYOUT_GENERAL,
     };
+  }
+
+  if (initial_layout != VK_IMAGE_LAYOUT_UNDEFINED) {
+    auto&& [buf, pool] =
+      device->create_one_time_command_buffer(device->compute_queue());
+
+    CoreUtils::cmd_transition_to_general(buf, *this);
+
+    device->flush(buf, pool, device->compute_queue());
   }
 }
 
@@ -229,6 +243,7 @@ Image::create(const Device& device, const ImageConfiguration& config)
                                          config.array_layers,
                                          config.usage,
                                          config.aspect,
+                                         config.initial_layout,
                                          config.allow_in_ui,
                                          config.sample_count,
                                          config.is_cubemap);

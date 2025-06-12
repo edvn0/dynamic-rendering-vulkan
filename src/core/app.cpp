@@ -429,7 +429,7 @@ App::interface() -> void
 
     ImGui::BeginTable("GPU Timings", 3);
     ImGui::TableSetupColumn("Name");
-    ImGui::TableSetupColumn("Duration (us)");
+    ImGui::TableSetupColumn("Duration (ms)");
     ImGui::TableSetupColumn("Command Buffer");
     ImGui::TableHeadersRow();
 
@@ -438,7 +438,7 @@ App::interface() -> void
       ImGui::TableNextColumn();
       ImGui::Text("%s", section.name.c_str());
       ImGui::TableNextColumn();
-      ImGui::Text("%.0f", section.duration_ms * 1000.0); // <-- MICROSECONDS
+      ImGui::Text("%.3f", section.duration_ms);
       ImGui::TableNextColumn();
       ImGui::Text("Raster");
     }
@@ -448,7 +448,7 @@ App::interface() -> void
       ImGui::TableNextColumn();
       ImGui::Text("%s", section.name.c_str());
       ImGui::TableNextColumn();
-      ImGui::Text("%.0f", section.duration_ms * 1000.0); // <-- MICROSECONDS
+      ImGui::Text("%.3f", section.duration_ms);
       ImGui::TableNextColumn();
       ImGui::Text("Compute");
     }
@@ -515,7 +515,7 @@ App::render()
   for (const auto& layer : layers)
     layer->on_render(*renderer);
 
-  renderer->end_frame(frame_index);
+  renderer->new_end_frame(frame_index);
 
   swapchain->draw_frame(*gui_system);
 }

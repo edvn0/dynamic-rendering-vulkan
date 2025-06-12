@@ -51,8 +51,8 @@ public:
     };
   }
 
-  auto raw() const -> VkInstance { return instance.instance; }
-  auto vkb() const -> const auto& { return instance; }
+  [[nodiscard]] auto raw() const -> VkInstance { return instance.instance; }
+  [[nodiscard]] auto vkb() const -> const auto& { return instance; }
 
   auto destroy() -> void { vkb::destroy_instance(instance); }
 

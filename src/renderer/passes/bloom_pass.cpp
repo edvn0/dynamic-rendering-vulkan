@@ -8,17 +8,19 @@
 
 #include <cassert>
 
-BloomPass::BloomPass(const Device& device, const glm::uvec2& size, int)
-  : device(&device)
+BloomPass::BloomPass(const Device& d, const glm::uvec2& size, int)
+  : device(&d)
 {
   extract_image = Image::create(
-    device,
+    *device,
     { .extent = size,
       .format = VK_FORMAT_R32G32B32A32_SFLOAT,
       .usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+      .initial_layout = VK_IMAGE_LAYOUT_GENERAL,
       .debug_name = "bloom_extract_image" });
 
-  extract_material = Material::create(device, "bloom_extract").value();
+  extract_material = Material::create(*device, "bloom_extract").value();
+
   // downsample_material = Material::create(device, "bloom_downsample").value();
 
   mip_chain.clear();
@@ -52,6 +54,8 @@ BloomPass::resize(const glm::uvec2& size)
   extract_image->resize(size.x, size.y);
   extract_material->upload("input_image", source_image);
   extract_material->upload("output_image", extract_image.get());
+  extract_material->invalidate(extract_image.get());
+  extract_material->invalidate(source_image);
 }
 
 void
@@ -63,16 +67,16 @@ BloomPass::update_source(const Image* image)
 }
 
 void
-BloomPass::prepare(const uint32_t frame_index)
+BloomPass::prepare(const uint32_t)
 {
-  extract_material->prepare_for_rendering(frame_index);
+  // extract_material->prepare_for_rendering(frame_index);
 
-  const Image* input = extract_image.get();
-  for (auto& mip : mip_chain) {
+  // const Image* input = extract_image.get();
+  /*for (auto& mip : mip_chain) {
     downsample_material->upload("input_image", input);
     downsample_material->prepare_for_rendering(frame_index);
     input = mip.image.get();
-  }
+  }*/
 }
 
 auto
@@ -102,13 +106,13 @@ BloomPass::record(VkCommandBuffer cmd,
   };
   Util::Vulkan::cmd_begin_debug_label(cmd, extract_label);
 
-  CoreUtils::cmd_transition_to_general(cmd, *extract_image);
+  // CoreUtils::cmd_transition_to_general(cmd, *extract_image);
   dispatch_compute(cmd,
                    *extract_material,
                    dsm,
                    frame_index,
                    { extract_image->width(), extract_image->height() });
-  CoreUtils::cmd_transition_to_shader_read(cmd, *extract_image);
+  // CoreUtils::cmd_transition_general_to_sampled(cmd, *extract_image, true);
 
   Util::Vulkan::cmd_end_debug_label(cmd);
   Util::Vulkan::cmd_end_debug_label(cmd);

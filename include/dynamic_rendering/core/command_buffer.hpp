@@ -49,9 +49,17 @@ public:
               VkSemaphore wait_semaphore = VK_NULL_HANDLE,
               VkSemaphore signal_semaphore = VK_NULL_HANDLE,
               VkFence fence = VK_NULL_HANDLE) const;
+  void submit(std::uint32_t frame_index,
+              std::span<const VkSemaphore> wait_semaphores,
+              std::span<const VkSemaphore> signal_semaphores,
+              VkFence fence = VK_NULL_HANDLE) const;
   void submit_and_end(std::uint32_t frame_index,
                       VkSemaphore wait_semaphore = VK_NULL_HANDLE,
                       VkSemaphore signal_semaphore = VK_NULL_HANDLE,
+                      VkFence fence = VK_NULL_HANDLE) const;
+  void submit_and_end(std::uint32_t frame_index,
+                      std::span<const VkSemaphore> wait_semaphores,
+                      std::span<const VkSemaphore> signal_semaphore,
                       VkFence fence = VK_NULL_HANDLE) const;
 
   void reset_query_pool(std::uint32_t frame_index) const;
@@ -62,17 +70,8 @@ public:
   VkFence get_fence(std::uint32_t frame_index) const;
   auto wait_for_fence(std::uint32_t frame_index) const -> void;
   auto reset_fence(std::uint32_t frame_index) const -> void;
-
-  auto begin_frame(const std::uint32_t frame_index) const
-  {
-    wait_for_fence(frame_index);
-    reset_fence(frame_index);
-    vkResetCommandBuffer(get(frame_index), 0);
-    begin(frame_index);
-    reset_query_pool(frame_index);
-    timer_sections[frame_index].clear();
-    next_query_index[frame_index] = 0;
-  }
+  auto begin_frame(std::uint32_t frame_index) const -> void;
+  auto begin_frame_persist_query_pools(std::uint32_t frame_index) const -> void;
 
   auto read_timestamps(std::uint32_t frame_index,
                        std::uint32_t first_query,

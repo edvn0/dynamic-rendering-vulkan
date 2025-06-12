@@ -148,20 +148,44 @@ CommandBuffer::submit(const uint32_t frame_index,
                       const VkSemaphore signal_semaphore,
                       const VkFence fence) const
 {
-  VkSubmitInfo submit_info;
-  std::memset(&submit_info, 0, sizeof(submit_info));
+  submit(frame_index,
+         std::span{ &wait_semaphore, 1 },
+         std::span{ &signal_semaphore, 1 },
+         fence);
+}
+
+template<typename T>
+constexpr bool
+is_valid(const std::span<const T> span)
+{
+  return !span.empty() &&
+         std::ranges::all_of(span, [](auto ptr) { return ptr != nullptr; });
+}
+
+void
+CommandBuffer::submit(const uint32_t frame_index,
+                      const std::span<const VkSemaphore> wait_semaphores,
+                      const std::span<const VkSemaphore> signal_semaphores,
+                      const VkFence fence) const
+{
+  VkSubmitInfo submit_info = {};
   submit_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
 
-  VkPipelineStageFlags stage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-  if (wait_semaphore) {
-    submit_info.waitSemaphoreCount = 1;
-    submit_info.pWaitSemaphores = &wait_semaphore;
+  const VkPipelineStageFlags stage =
+    execution_queue == device->compute_queue()
+      ? VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT
+      : VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+  if (is_valid(wait_semaphores)) {
+    submit_info.waitSemaphoreCount =
+      static_cast<std::uint32_t>(wait_semaphores.size());
+    submit_info.pWaitSemaphores = wait_semaphores.data();
     submit_info.pWaitDstStageMask = &stage;
   }
 
-  if (signal_semaphore) {
-    submit_info.signalSemaphoreCount = 1;
-    submit_info.pSignalSemaphores = &signal_semaphore;
+  if (is_valid(signal_semaphores)) {
+    submit_info.signalSemaphoreCount =
+      static_cast<std::uint32_t>(signal_semaphores.size());
+    submit_info.pSignalSemaphores = signal_semaphores.data();
   }
 
   submit_info.commandBufferCount = 1;
@@ -180,7 +204,21 @@ CommandBuffer::submit_and_end(const uint32_t frame_index,
                               const VkFence fence) const
 {
   end(frame_index);
-  submit(frame_index, wait_semaphore, signal_semaphore, fence);
+  submit(frame_index,
+         std::span{ &wait_semaphore, 1 },
+         std::span{ &signal_semaphore, 1 },
+         fence);
+}
+
+void
+CommandBuffer::submit_and_end(
+  const uint32_t frame_index,
+  const std::span<const VkSemaphore> wait_semaphores,
+  const std::span<const VkSemaphore> signal_semaphores,
+  const VkFence fence) const
+{
+  end(frame_index);
+  submit(frame_index, wait_semaphores, signal_semaphores, fence);
 }
 
 void
@@ -225,6 +263,27 @@ void
 CommandBuffer::reset_fence(const uint32_t frame_index) const
 {
   vkResetFences(device->get_device(), 1, &fences[frame_index]);
+}
+auto
+CommandBuffer::begin_frame(const std::uint32_t frame_index) const -> void
+{
+  wait_for_fence(frame_index);
+  reset_fence(frame_index);
+  vkResetCommandBuffer(get(frame_index), 0);
+  begin(frame_index);
+  reset_query_pool(frame_index);
+  timer_sections[frame_index].clear();
+  next_query_index[frame_index] = 0;
+}
+
+auto
+CommandBuffer::begin_frame_persist_query_pools(
+  const std::uint32_t frame_index) const -> void
+{
+  wait_for_fence(frame_index);
+  reset_fence(frame_index);
+  vkResetCommandBuffer(get(frame_index), 0);
+  begin(frame_index);
 }
 
 auto

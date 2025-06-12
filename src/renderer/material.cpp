@@ -49,17 +49,22 @@ using BindingSet = std::unordered_set<VkDescriptorSetLayoutBinding,
                                       descriptor_binding_equal>;
 
 static auto
-merge_descriptor_binding(BindingSet& dst,
-                         const VkDescriptorSetLayoutBinding& binding) -> void
+merge_descriptor_binding(BindingSet& dst, VkDescriptorSetLayoutBinding& binding)
+  -> void
 {
-  if (const auto existing = dst.find(binding); existing != dst.end()) {
-    auto updated = *existing;
-    updated.stageFlags |= binding.stageFlags;
-    dst.erase(existing);
-    dst.insert(updated);
-  } else {
-    dst.insert(binding);
+  if (binding.descriptorType == VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER) {
+    static constexpr auto stages = VK_SHADER_STAGE_VERTEX_BIT |
+                                   VK_SHADER_STAGE_FRAGMENT_BIT |
+                                   VK_SHADER_STAGE_COMPUTE_BIT;
+    binding.stageFlags = stages;
   }
+  if (binding.descriptorType == VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER ||
+      binding.descriptorType == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE) {
+    binding.stageFlags =
+      VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT;
+  }
+
+  dst.insert(binding);
 }
 
 static auto

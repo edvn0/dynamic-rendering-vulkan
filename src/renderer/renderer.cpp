@@ -89,7 +89,7 @@ static constexpr std::array renderer_bindings_metadata{
   DescriptorBindingMetadata{
     .binding = 3,
     .descriptor_type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-    .stage_flags = VK_SHADER_STAGE_FRAGMENT_BIT,
+    .stage_flags = VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT,
     .name = "shadow_depth",
   },
 };
@@ -505,6 +505,21 @@ Renderer::Renderer(const Device& dev,
     0x0, 0x0, 0x0, 0x0
   };
   black_texture->upload_rgba(black_pixel);
+
+  VkSemaphoreCreateInfo semaphore_create_info{
+    .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
+    .pNext = nullptr,
+    .flags = 0,
+  };
+  for (auto& sema : geometry_complete_semaphores) {
+    vkCreateSemaphore(
+      device->get_device(), &semaphore_create_info, nullptr, &sema);
+  }
+
+  for (auto& sema : bloom_complete_semaphores) {
+    vkCreateSemaphore(
+      device->get_device(), &semaphore_create_info, nullptr, &sema);
+  }
 }
 
 auto
@@ -517,6 +532,13 @@ Renderer::get_renderer_descriptor_set_layout(Badge<AssetReloader>) const
 auto
 Renderer::destroy() -> void
 {
+  for (auto& sema : geometry_complete_semaphores) {
+    vkDestroySemaphore(device->get_device(), sema, nullptr);
+  }
+  for (auto& sema : bloom_complete_semaphores) {
+    vkDestroySemaphore(device->get_device(), sema, nullptr);
+  }
+
   white_texture.reset();
   black_texture.reset();
 }
@@ -762,9 +784,168 @@ Renderer::begin_frame(const std::uint32_t frame_index, const VP& matrices)
 }
 
 auto
+Renderer::new_end_frame(const std::uint32_t frame_index) -> void
+{
+  ZoneScopedN("End frame");
+
+  if (shadow_draw_commands.empty() && draw_commands.empty())
+    return;
+
+  DrawList flat_shadow_draw_commands;
+  DrawList flat_draw_commands;
+  std::size_t shadow_count{ 0 };
+
+  std::latch uploads_remaining(3);
+
+  constexpr std::size_t culling_threshold = 5000;
+  std::size_t total_instance_count = 0;
+  {
+    ZoneScopedN("Count Instances");
+    total_instance_count = std::transform_reduce(
+      draw_commands.begin(),
+      draw_commands.end(),
+      0ULL,
+      std::plus<>{},
+      [](const auto& pair) { return pair.second.size(); });
+  }
+
+  auto&& [should_geom_cull, should_shadow_cull] = submit_tuple_and_wait(
+    *thread_pool,
+    [&] {
+      ZoneScopedN("Geom Culling");
+      return DrawListManager::should_perform_culling(draw_commands,
+                                                     culling_threshold);
+    },
+    [&] {
+      ZoneScopedN("Shadow Culling");
+      return DrawListManager::should_perform_culling(shadow_draw_commands,
+                                                     culling_threshold);
+    });
+
+  if (should_geom_cull) {
+    thread_pool->detach_task([this, &flat_draw_commands, &uploads_remaining] {
+      ZoneScopedN("Instance Upload");
+      flat_draw_commands =
+        cpu_mt_cull_and_upload_to_gpu(*thread_pool,
+                                      *instance_vertex_buffer,
+                                      draw_commands,
+                                      camera_frustum,
+                                      instance_count_this_frame);
+      uploads_remaining.count_down();
+    });
+  } else {
+    thread_pool->detach_task([this, &flat_draw_commands, &uploads_remaining] {
+      ZoneScopedN("Flat Upload (no cull)");
+      flat_draw_commands = DrawListManager::flatten_draw_commands(
+        draw_commands, *instance_vertex_buffer, instance_count_this_frame);
+      uploads_remaining.count_down();
+    });
+  }
+
+  if (should_shadow_cull) {
+    thread_pool->detach_task(
+      [this, &flat_shadow_draw_commands, &shadow_count, &uploads_remaining] {
+        ZoneScopedN("Shadow Upload");
+        flat_shadow_draw_commands =
+          cpu_mt_cull_and_upload_to_gpu(*thread_pool,
+                                        *instance_shadow_vertex_buffer,
+                                        shadow_draw_commands,
+                                        light_frustum,
+                                        shadow_count);
+        uploads_remaining.count_down();
+      });
+  } else {
+    std::uint32_t temp_count = 0;
+    thread_pool->detach_task([this,
+                              &flat_shadow_draw_commands,
+                              &temp_count,
+                              &uploads_remaining,
+                              &shadow_count] {
+      ZoneScopedN("Flat Shadow Upload (no cull)");
+      flat_shadow_draw_commands = DrawListManager::flatten_draw_commands(
+        shadow_draw_commands, *instance_shadow_vertex_buffer, temp_count);
+      uploads_remaining.count_down();
+      shadow_count = temp_count;
+    });
+  }
+
+  thread_pool->detach_task([this, &uploads = uploads_remaining] {
+    ZoneScopedN("Line instance upload");
+    upload_line_instance_data();
+    uploads.count_down();
+  });
+
+  {
+    ZoneScopedN("Performance uploads");
+    uploads_remaining.wait();
+  }
+
+  {
+    ZoneScopedN("Begin command buffer");
+    command_buffer->begin_frame(frame_index);
+  }
+
+  run_skybox_pass(frame_index);
+  run_shadow_pass(frame_index, flat_shadow_draw_commands);
+  run_z_prepass(frame_index, flat_draw_commands);
+  run_geometry_pass(frame_index, flat_draw_commands);
+
+  // Add image barrier to prepare geometry_image for compute shader read
+  {
+    ZoneScopedN("Geometry to Compute Barrier");
+    VkImageMemoryBarrier geometry_barrier{};
+    geometry_barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    geometry_barrier.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    geometry_barrier.dstAccessMask = 0;
+    geometry_barrier.oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    geometry_barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    geometry_barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    geometry_barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    geometry_barrier.image = geometry_image->get_image();
+    geometry_barrier.subresourceRange = {
+      VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1
+    };
+
+    vkCmdPipelineBarrier(command_buffer->get(frame_index),
+                         VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                         VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+                         0,
+                         0,
+                         nullptr,
+                         0,
+                         nullptr,
+                         1,
+                         &geometry_barrier);
+  }
+
+  // Submit graphics work and signal semaphore
+  command_buffer->submit_and_end(
+    frame_index, VK_NULL_HANDLE, geometry_complete_semaphores.at(frame_index));
+
+  // Begin compute work
+  compute_command_buffer->begin_frame(frame_index);
+
+  run_bloom_pass(frame_index);
+
+  compute_command_buffer->submit_and_end(
+    frame_index,
+    geometry_complete_semaphores.at(frame_index),
+    bloom_complete_semaphores.at(frame_index));
+
+  // Begin final graphics work
+  command_buffer->begin_frame_persist_query_pools(frame_index);
+
+  run_composite_pass(frame_index);
+  run_postprocess_passes(frame_index);
+
+  command_buffer->submit_and_end(
+    frame_index, bloom_complete_semaphores.at(frame_index), VK_NULL_HANDLE);
+}
+
+auto
 Renderer::end_frame(std::uint32_t frame_index) -> void
 {
-  ZoneScoped;
+  ZoneScopedN("End frame");
 
   if (shadow_draw_commands.empty() && draw_commands.empty())
     return;
@@ -872,7 +1053,7 @@ Renderer::end_frame(std::uint32_t frame_index) -> void
   compute_command_buffer->begin_frame(frame_index);
   run_bloom_pass(frame_index);
   compute_command_buffer->submit_and_end(frame_index);
-  compute_command_buffer->wait_for_fence(frame_index);
+  // compute_command_buffer->wait_for_fence(frame_index);
 
   run_composite_pass(frame_index);
   run_postprocess_passes(frame_index);
@@ -890,6 +1071,7 @@ Renderer::resize(std::uint32_t width, std::uint32_t height) -> void
   composite_attachment_texture->resize(width, height);
   colour_corrected_image->resize(width, height);
 
+  bloom_pass->update_source(geometry_image.get());
   bloom_pass->resize(width, height);
 
   skybox_material->invalidate(skybox_attachment_texture.get());
@@ -1289,7 +1471,7 @@ Renderer::run_geometry_pass(std::uint32_t frame_index,
   }
 
   vkCmdEndRendering(cmd);
-  CoreUtils::cmd_transition_to_shader_read(cmd, geometry_image->get_image());
+  // CoreUtils::cmd_transition_to_shader_read(cmd, geometry_image->get_image());
 
   command_buffer->end_timer(frame_index, "geometry_pass");
 

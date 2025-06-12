@@ -107,6 +107,7 @@ public:
   };
   auto begin_frame(std::uint32_t, const VP&) -> void;
   auto end_frame(std::uint32_t) -> void;
+  auto new_end_frame(std::uint32_t) -> void;
   auto resize(std::uint32_t, std::uint32_t) -> void;
   [[nodiscard]] auto get_output_image() const -> const Image&;
   [[nodiscard]] auto get_shadow_image() const -> const Image&
@@ -170,6 +171,9 @@ private:
   const Device* device{ nullptr };
   BS::priority_thread_pool* thread_pool{ nullptr };
   std::unique_ptr<DescriptorSetManager> descriptor_set_manager;
+
+  frame_array<VkSemaphore> geometry_complete_semaphores{};
+  frame_array<VkSemaphore> bloom_complete_semaphores{};
 
   Frustum camera_frustum;
   Frustum light_frustum;

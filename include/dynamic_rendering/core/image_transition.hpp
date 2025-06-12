@@ -149,6 +149,31 @@ cmd_transition_to_shader_read(VkCommandBuffer cmd,
                        });
 }
 
+inline auto
+cmd_transition_general_to_sampled(
+  const VkCommandBuffer cmd,
+  Image& image,
+  const bool from_compute_queue = false) noexcept -> void
+{
+  constexpr VkPipelineStageFlags src_stage =
+    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+  const VkPipelineStageFlags dst_stage =
+    from_compute_queue
+      ? VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT // fallback for compute queue
+      : VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+
+  cmd_transition_image(cmd,
+                       {
+                         image.get_image(),
+                         VK_IMAGE_LAYOUT_GENERAL,
+                         VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                         VK_ACCESS_SHADER_WRITE_BIT,
+                         VK_ACCESS_SHADER_READ_BIT,
+                         src_stage,
+                         dst_stage,
+                       });
+}
+
 /// @brief Transition depth image from depth attachment to shader read layout.
 /// @param cmd
 /// @param image

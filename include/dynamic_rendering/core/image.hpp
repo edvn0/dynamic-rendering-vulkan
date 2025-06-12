@@ -28,6 +28,7 @@ public:
         const std::uint32_t layers,
         const VkImageUsageFlags usage_flags,
         const VkImageAspectFlags aspect_flags,
+        const VkImageLayout layout,
         const bool allow,
         const VkSampleCountFlags sc,
         const bool cube)
@@ -38,6 +39,7 @@ public:
     , format(fmt)
     , usage(usage_flags)
     , aspect(aspect_flags)
+    , initial_layout(layout)
     , sample_count(sc)
     , is_cubemap(cube)
     , allow_in_ui(allow)
@@ -126,6 +128,7 @@ private:
   VkFormat format{};
   VkImageUsageFlags usage{};
   VkImageAspectFlags aspect{};
+  VkImageLayout initial_layout{ VK_IMAGE_LAYOUT_UNDEFINED };
   VkSampleCountFlags sample_count{};             // For MSAA images.
   VkDescriptorImageInfo image_descriptor_info{}; // For descriptor sets.
   bool is_cubemap{ false };
