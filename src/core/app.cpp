@@ -515,7 +515,7 @@ App::render()
   for (const auto& layer : layers)
     layer->on_render(*renderer);
 
-  renderer->new_end_frame(frame_index);
+  renderer->end_frame(frame_index);
 
   swapchain->draw_frame(*gui_system);
 }

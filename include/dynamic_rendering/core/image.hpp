@@ -29,6 +29,7 @@ public:
         const VkImageUsageFlags usage_flags,
         const VkImageAspectFlags aspect_flags,
         const VkImageLayout layout,
+        const SamplerConfiguration& sample_conf,
         const bool allow,
         const VkSampleCountFlags sc,
         const bool cube)
@@ -41,6 +42,7 @@ public:
     , aspect(aspect_flags)
     , initial_layout(layout)
     , sample_count(sc)
+    , sampler_config(sample_conf)
     , is_cubemap(cube)
     , allow_in_ui(allow)
   {
@@ -131,6 +133,7 @@ private:
   VkImageLayout initial_layout{ VK_IMAGE_LAYOUT_UNDEFINED };
   VkSampleCountFlags sample_count{};             // For MSAA images.
   VkDescriptorImageInfo image_descriptor_info{}; // For descriptor sets.
+  SamplerConfiguration sampler_config{};
   bool is_cubemap{ false };
   std::string debug_name{};
   bool is_storage_image{ false };

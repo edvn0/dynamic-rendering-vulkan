@@ -39,12 +39,14 @@ class DebouncedCompiler:
     def schedule(self, path: pathlib.Path) -> None:
         if path in self._tasks:
             self._tasks[path].cancel()
-        handle = self._loop.call_later(DEBOUNCE_SECONDS, self._compile_sync, path)
+        handle = self._loop.call_later(
+            DEBOUNCE_SECONDS, self._compile_sync, path)
         self._tasks[path] = handle
 
     def _compile_sync(self, path: pathlib.Path) -> None:
         self._tasks.pop(path, None)
-        compile_shader((path, self._output_dir, self._include_dir, self._optimize, False))
+        compile_shader(
+            (path, self._output_dir, self._include_dir, self._optimize, False))
 
     def cancel_all(self) -> None:
         for handle in self._tasks.values():
@@ -55,9 +57,18 @@ class DebouncedCompiler:
         return len(self._tasks)
 
     def recompile_all(self) -> None:
+        print(f'{Fore.YELLOW}Cleaning old .spv files...{Style.RESET_ALL}')
+        for spv_file in self._output_dir.rglob('*.spv'):
+            try:
+                spv_file.unlink()
+            except Exception as e:
+                print(
+                    f'{Fore.RED}[Error] Failed to delete {spv_file}: {e}{Style.RESET_ALL}')
         print(f'{Fore.YELLOW}Recompiling all shaders...{Style.RESET_ALL}')
-        compile_all_shaders(self._source_dir, self._output_dir, self._optimize, True)
-        print(f'{Fore.CYAN}[Done] Full recompilation finished{Style.RESET_ALL}')
+        compile_all_shaders(self._source_dir, self._output_dir,
+                            self._optimize, True)
+        print(
+            f'{Fore.CYAN}[Done] Full recompilation finished{Style.RESET_ALL}')
 
 
 class ShaderEventHandler(FileSystemEventHandler):
@@ -95,7 +106,8 @@ async def main(source: str, output: str, optimize: bool) -> None:
     include_dir = source_dir / 'include'
 
     loop = asyncio.get_running_loop()
-    compiler = DebouncedCompiler(loop, output_dir, include_dir, source_dir, optimize)
+    compiler = DebouncedCompiler(
+        loop, output_dir, include_dir, source_dir, optimize)
     handler = ShaderEventHandler(compiler)
 
     observer = Observer()
@@ -135,6 +147,7 @@ if __name__ == '__main__':
     parser.add_argument('--optimize', action='store_true', default=True)
     args = parser.parse_args()
 
-    compile_all_shaders(pathlib.Path(args.source), pathlib.Path(args.output), args.optimize, True)
+    compile_all_shaders(pathlib.Path(args.source),
+                        pathlib.Path(args.output), args.optimize, True)
 
     asyncio.run(main(args.source, args.output, args.optimize))

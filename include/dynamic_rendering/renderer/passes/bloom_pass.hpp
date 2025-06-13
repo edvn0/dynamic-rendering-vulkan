@@ -11,6 +11,8 @@ struct BloomMip
   Assets::Pointer<Image> image;
   Assets::Pointer<Material> blur_horizontal;
   Assets::Pointer<Material> blur_vertical;
+  Assets::Pointer<Material> downsample_material;
+  Assets::Pointer<Material> upsample_material;
 };
 
 struct BloomPass
@@ -18,6 +20,7 @@ struct BloomPass
   explicit BloomPass(const Device& device,
                      const glm::uvec2& size,
                      int mip_count = 5);
+  ~BloomPass() = default;
 
   auto prepare(std::uint32_t) -> void;
   void resize(const glm::uvec2& size);
@@ -36,17 +39,18 @@ private:
 
   Assets::Pointer<Image> extract_image;
   Assets::Pointer<Material> extract_material;
-  Assets::Pointer<Material> downsample_material;
-  Assets::Pointer<Material> upsample_material;
+  Assets::Pointer<Image> blur_temp;
 
   std::vector<BloomMip> mip_chain;
 
   void dispatch_compute(VkCommandBuffer cmd,
                         Material& material,
-                        DescriptorSetManager& dsm,
-                        uint32_t frame_index,
+                        std::span<const VkDescriptorSet>,
                         glm::uvec2 extent);
 
+  void downsample_and_blur(VkCommandBuffer cmd,
+                           DescriptorSetManager& dsm,
+                           uint32_t frame_index);
   void downsample(VkCommandBuffer, DescriptorSetManager&, uint32_t);
   void blur_mips(VkCommandBuffer, DescriptorSetManager&, uint32_t);
   void upsample_and_combine(VkCommandBuffer, DescriptorSetManager&, uint32_t);

@@ -61,6 +61,7 @@ add_library(DynamicRendering_Core STATIC
         src/core/app.cpp
         src/core/asset_file_watcher.cpp
         src/core/asset_reloader.cpp
+        src/core/random.cpp
         src/core/fs.cpp
         src/core/debug_utils.cpp
         src/core/logger.cpp

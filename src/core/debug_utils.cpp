@@ -18,10 +18,9 @@ set_debug_name(const Device& device,
   static auto func = reinterpret_cast<PFN_vkSetDebugUtilsObjectNameEXT>(
     vkGetDeviceProcAddr(device.get_device(), "vkSetDebugUtilsObjectNameEXT"));
 
-  if (!func)
-    assert(false && "Could not find 'vkSetDebugUtilsObjectNameEXT'");
-
-  func(device.get_device(), &name_info);
+  if (func != nullptr) {
+    func(device.get_device(), &name_info);
+  }
 }
 
 auto

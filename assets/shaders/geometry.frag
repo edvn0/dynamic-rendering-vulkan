@@ -62,8 +62,10 @@ float calculate_shadow(vec4 light_space_pos)
 {
     vec3 proj_coords = light_space_pos.xyz / light_space_pos.w;
     if (proj_coords.x < 0.0 || proj_coords.x > 1.0 || proj_coords.y < 0.0 ||
-    proj_coords.y > 1.0 || proj_coords.z < 0.0 || proj_coords.z > 1.0)
-    return 1.0;
+        proj_coords.y > 1.0 || proj_coords.z < 0.0 || proj_coords.z > 1.0)
+    {
+        return 1.0;
+    }
 
     float shadow = 0.0;
     for (int x = -PCF_SAMPLES; x <= PCF_SAMPLES; ++x)
@@ -72,7 +74,7 @@ float calculate_shadow(vec4 light_space_pos)
         {
             vec2 offset = vec2(x, y) * INVERSE_SHADOW_MAP_SIZE;
             shadow +=
-            texture(shadow_image, vec3(proj_coords.xy + offset, proj_coords.z));
+                texture(shadow_image, vec3(proj_coords.xy + offset, proj_coords.z));
         }
     }
     return shadow / float(PCF_TOTAL);
@@ -88,20 +90,21 @@ void main()
 {
     vec4 albedo_tex = texture(albedo_map, v_uv);
     vec3 albedo = has_albedo_texture() ? material.albedo.rgb * albedo_tex.rgb
-    : material.albedo.rgb;
+                                       : material.albedo.rgb;
 
     float roughness = has_roughness_map()
-    ? material.roughness * texture(roughness_map, v_uv).g
-    : material.roughness;
+                          ? material.roughness * texture(roughness_map, v_uv).g
+                          : material.roughness;
 
     float metallic = has_metallic_map()
-    ? material.metallic * texture(metallic_map, v_uv).b
-    : material.metallic;
+                         ? material.metallic * texture(metallic_map, v_uv).b
+                         : material.metallic;
 
     float ao = has_ao_map() ? material.ao * texture(ao_map, v_uv).r : material.ao;
 
     vec3 n = normalize(v_normal);
-    if (has_normal_map()) {
+    if (has_normal_map())
+    {
         n = calculate_normal_from_map(v_uv, v_tbn);
     }
 
@@ -129,13 +132,16 @@ void main()
     vec3 diffuse = kd * albedo / PI;
     vec3 lighting = (diffuse + specular) * radiance * ndotl;
 
-    float shadow = calculate_shadow(v_light_space_pos);
-    vec3 ambient = vec3(shadow_ubo.ambient_color.rgb) * AMBIENT_LIGHT * albedo * ao;
+    float shadow = 1.0F - calculate_shadow(v_light_space_pos);
+    vec3 ambient =
+        vec3(shadow_ubo.ambient_color.rgb) * AMBIENT_LIGHT * albedo * ao;
 
     vec3 color = ambient + shadow * lighting;
 
-    vec3 emissive_tex = has_emissive_map() ? texture(emissive_map, v_uv).rgb : vec3(1.0);
-    vec3 emission = material.emissive_color * material.emissive_strength * emissive_tex;
+    vec3 emissive_tex =
+        has_emissive_map() ? texture(emissive_map, v_uv).rgb : vec3(1.0);
+    vec3 emission =
+        material.emissive_color * material.emissive_strength * emissive_tex;
     color += emission;
 
     frag_colour = vec4(color, 1.0F);

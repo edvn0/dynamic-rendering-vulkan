@@ -17,6 +17,7 @@
 #include <dynamic_rendering/core/input.hpp>
 #include <dynamic_rendering/core/instance.hpp>
 #include <dynamic_rendering/core/logger.hpp>
+#include <dynamic_rendering/core/random.hpp>
 #include <dynamic_rendering/core/sampler_manager.hpp>
 #include <dynamic_rendering/core/util.hpp>
 

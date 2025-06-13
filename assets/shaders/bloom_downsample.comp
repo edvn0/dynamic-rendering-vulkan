@@ -1,0 +1,34 @@
+#version 450
+
+#include "set0.glsl"
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(set = 1, binding = 0, rgba32f) uniform
+  restrict readonly image2D input_image;
+layout(set = 1, binding = 1, rgba32f) uniform
+  restrict writeonly image2D output_image;
+
+void
+main()
+{
+  ivec2 gid = ivec2(gl_GlobalInvocationID.xy);
+  ivec2 output_size = imageSize(output_image);
+  ivec2 input_size = imageSize(input_image);
+  if (gid.x >= output_size.x || gid.y >= output_size.y)
+    return;
+
+  ivec2 input_coord = gid * 2;
+
+  vec4 color = vec4(0.0);
+  color += imageLoad(
+    input_image, clamp(input_coord + ivec2(0, 0), ivec2(0), input_size - 1));
+  color += imageLoad(
+    input_image, clamp(input_coord + ivec2(1, 0), ivec2(0), input_size - 1));
+  color += imageLoad(
+    input_image, clamp(input_coord + ivec2(0, 1), ivec2(0), input_size - 1));
+  color += imageLoad(
+    input_image, clamp(input_coord + ivec2(1, 1), ivec2(0), input_size - 1));
+
+  imageStore(output_image, gid, color * 0.25);
+}

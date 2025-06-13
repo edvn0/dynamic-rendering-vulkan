@@ -107,7 +107,6 @@ public:
   };
   auto begin_frame(std::uint32_t, const VP&) -> void;
   auto end_frame(std::uint32_t) -> void;
-  auto new_end_frame(std::uint32_t) -> void;
   auto resize(std::uint32_t, std::uint32_t) -> void;
   [[nodiscard]] auto get_output_image() const -> const Image&;
   [[nodiscard]] auto get_shadow_image() const -> const Image&

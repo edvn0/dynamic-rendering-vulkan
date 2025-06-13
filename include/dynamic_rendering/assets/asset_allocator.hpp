@@ -30,7 +30,7 @@ public:
   {
     auto bytes = n * sizeof(T);
     total_tracked_bytes += bytes;
-    Logger::log_debug("Allocating {} bytes for {}", bytes, typeid(T).name());
+    Logger::log_trace("Allocating {} bytes for {}", bytes, typeid(T).name());
     return current_allocator.allocate(n);
   }
 
@@ -38,7 +38,7 @@ public:
   {
     auto bytes = n * sizeof(T);
     total_tracked_bytes -= bytes;
-    Logger::log_debug("Deallocating {} bytes for {}", bytes, typeid(T).name());
+    Logger::log_trace("Deallocating {} bytes for {}", bytes, typeid(T).name());
     current_allocator.deallocate(p, n);
   }
 

@@ -1,0 +1,41 @@
+#version 450
+
+#include "set0.glsl"
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(set = 1, binding = 0, rgba32f) uniform
+  restrict readonly image2D input_image;
+layout(set = 1, binding = 1, rgba32f) uniform
+  restrict writeonly image2D output_image;
+
+void
+main()
+{
+  ivec2 gid = ivec2(gl_GlobalInvocationID.xy);
+  ivec2 output_size = imageSize(output_image);
+  if (gid.x >= output_size.x || gid.y >= output_size.y)
+    return;
+
+  vec2 uv = (vec2(gid) + 0.5) / vec2(output_size);
+  ivec2 input_size = imageSize(input_image);
+  vec2 coord = uv * vec2(input_size) - 0.5;
+
+  ivec2 p0 = ivec2(floor(coord));
+  ivec2 p1 = p0 + ivec2(1, 0);
+  ivec2 p2 = p0 + ivec2(0, 1);
+  ivec2 p3 = p0 + ivec2(1, 1);
+
+  vec2 f = fract(coord);
+
+  vec4 c00 = imageLoad(input_image, clamp(p0, ivec2(0), input_size - 1));
+  vec4 c10 = imageLoad(input_image, clamp(p1, ivec2(0), input_size - 1));
+  vec4 c01 = imageLoad(input_image, clamp(p2, ivec2(0), input_size - 1));
+  vec4 c11 = imageLoad(input_image, clamp(p3, ivec2(0), input_size - 1));
+
+  vec4 interp_x1 = mix(c00, c10, f.x);
+  vec4 interp_x2 = mix(c01, c11, f.x);
+  vec4 result = mix(interp_x1, interp_x2, f.y);
+
+  imageStore(output_image, gid, result);
+}

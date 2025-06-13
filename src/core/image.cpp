@@ -177,27 +177,46 @@ Image::recreate() -> void
     .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
     .pNext = nullptr,
     .flags = 0,
-    .magFilter = VK_FILTER_LINEAR,
-    .minFilter = VK_FILTER_LINEAR,
-    .mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR,
-    .addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT,
-    .addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT,
-    .addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT,
-    .mipLodBias = 0.0f,
-    .anisotropyEnable = VK_FALSE,
-    .maxAnisotropy = 1.f,
-    .compareEnable = VK_FALSE,
-    .compareOp = VK_COMPARE_OP_ALWAYS,
-    .minLod = 0.0f,
-    .maxLod = static_cast<float>(mip_levels),
-    .borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK,
-    .unnormalizedCoordinates = VK_FALSE,
+    .magFilter = sampler_config.mag_filter,
+    .minFilter = sampler_config.min_filter,
+    .mipmapMode = sampler_config.mipmap_mode,
+    .addressModeU = sampler_config.address_mode_u,
+    .addressModeV = sampler_config.address_mode_v,
+    .addressModeW = sampler_config.address_mode_w,
+    .mipLodBias = sampler_config.mip_lod_bias,
+    .anisotropyEnable = sampler_config.anisotropy_enable,
+    .maxAnisotropy = sampler_config.max_anisotropy,
+    .compareEnable = sampler_config.compare_enable,
+    .compareOp = sampler_config.compare_op,
+    .minLod = sampler_config.min_lod,
+    .maxLod = sampler_config.max_lod > 0.0F
+                ? sampler_config.max_lod
+                : static_cast<float>(mip_levels - 1),
+    .borderColor = sampler_config.border_color,
+    .unnormalizedCoordinates = sampler_config.unnormalized_coordinates,
   };
 
   if (const Attachment attachment{ format }; attachment.is_depth()) {
-    sampler_info.compareEnable = VK_TRUE;
-    sampler_info.compareOp = VK_COMPARE_OP_GREATER_OR_EQUAL;
-    sampler_info.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE;
+    sampler_info = {
+      .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
+      .pNext = nullptr,
+      .flags = 0,
+      .magFilter = VK_FILTER_LINEAR,
+      .minFilter = VK_FILTER_LINEAR,
+      .mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST,
+      .addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER,
+      .addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER,
+      .addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER,
+      .mipLodBias = 0.0f,
+      .anisotropyEnable = VK_FALSE,
+      .maxAnisotropy = 1.0f,
+      .compareEnable = VK_TRUE,
+      .compareOp = VK_COMPARE_OP_LESS,
+      .minLod = 0.0f,
+      .maxLod = 0.0f,
+      .borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE,
+      .unnormalizedCoordinates = VK_FALSE,
+    };
   }
 
   sampler = sampler_manager.get_sampler(sampler_info);
@@ -244,6 +263,7 @@ Image::create(const Device& device, const ImageConfiguration& config)
                                          config.usage,
                                          config.aspect,
                                          config.initial_layout,
+                                         config.sampler_config,
                                          config.allow_in_ui,
                                          config.sample_count,
                                          config.is_cubemap);

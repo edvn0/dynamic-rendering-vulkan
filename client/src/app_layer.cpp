@@ -187,7 +187,7 @@ AppLayer::generate_scene() -> void
         auto& mat = entity.add_component<Component::Material>("main_geometry");
         auto& mat_data = mat.material.get()->get_material_data();
         mat_data.emissive_strength = 20.0F;
-        mat_data.emissive_color = glm::vec4(0.5F, 0.0F, 0.5F, 1.0f);
+        mat_data.emissive_color = Utils::Random::random_colour();
       }
     }
   }

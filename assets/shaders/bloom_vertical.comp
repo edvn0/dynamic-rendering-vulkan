@@ -1,0 +1,30 @@
+#version 450
+
+#include "gaussian.glsl"
+#include "set0.glsl"
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(set = 1, binding = 0, rgba32f) uniform
+  restrict readonly image2D input_image;
+layout(set = 1, binding = 1, rgba32f) uniform
+  restrict writeonly image2D output_image;
+
+void
+main()
+{
+  ivec2 size = imageSize(input_image);
+  ivec2 coord = ivec2(gl_GlobalInvocationID.xy);
+
+  if (coord.x >= size.x || coord.y >= size.y)
+    return;
+
+  vec4 sum = vec4(0.0);
+  for (int i = 0; i < N; ++i) {
+    ivec2 offset = ivec2(0, 1) * (i - M);
+    ivec2 sample_coord = clamp(coord + offset, ivec2(0), size - 1);
+    sum += coeffs[i] * imageLoad(input_image, sample_coord);
+  }
+
+  imageStore(output_image, coord, sum);
+}
