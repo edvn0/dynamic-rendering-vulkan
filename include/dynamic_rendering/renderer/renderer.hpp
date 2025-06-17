@@ -20,6 +20,8 @@
 #include "renderer/draw_command.hpp"
 #include "renderer/frustum.hpp"
 #include "renderer/material.hpp"
+#include "techniques/fullscreen_technique.hpp"
+#include "techniques/shadow_gui_technique.hpp"
 
 #include <BS_thread_pool.hpp>
 
@@ -36,38 +38,11 @@ enum class RenderPass : std::uint8_t
   ComputePrefixCullingDistribute,
   ComputeCullingScatter,
   ComputeCullingVisibility,
-  Skybox
+  Skybox,
+  ShadowGUI,
 };
 auto
 to_renderpass(std::string_view name) -> RenderPass;
-
-enum class ShadowViewMode
-{
-  LookAtRH,
-  LookAtLH
-};
-enum class ShadowProjectionMode
-{
-  OrthoRH_ZO,
-  OrthoRH_NO,
-  OrthoLH_ZO,
-  OrthoLH_NO
-};
-
-struct LightEnvironment
-{
-  glm::vec3 light_position{ 40.f, -40.f, 40.f };
-  glm::vec4 light_color{ 1.f, 1.f, 1.f, 1.f };
-  glm::vec4 ambient_color{ 0.1F, 0.1F, 0.1F, 1.0F };
-
-  float ortho_size{ 50.f };
-  float near_plane{ 0.1f };
-  float far_plane{ 100.f };
-  glm::vec3 target{ 0.F };
-
-  ShadowProjectionMode projection_mode{ ShadowProjectionMode::OrthoRH_ZO };
-  ShadowViewMode view_mode{ ShadowViewMode::LookAtRH };
-};
 
 struct LineInstanceData
 {
@@ -111,7 +86,11 @@ public:
   [[nodiscard]] auto get_output_image() const -> const Image&;
   [[nodiscard]] auto get_shadow_image() const -> const Image&
   {
-    return *shadow_depth_image;
+    auto* shadow_mapped = techniques.at("shadow_gui").get();
+    if (const auto* p = dynamic_cast<ShadowGUITechnique*>(shadow_mapped)) {
+      return p->get_output();
+    }
+    throw;
   }
   [[nodiscard]] auto get_command_buffer() const -> CommandBuffer&
   {
@@ -121,12 +100,22 @@ public:
   {
     return *compute_command_buffer;
   }
+  auto update_camera(const EditorCamera& camera) -> void;
   auto update_frustum(const glm::mat4& vp) -> void
   {
     camera_frustum.update(vp);
   }
 
   auto get_light_environment() -> auto& { return light_environment; }
+  [[nodiscard]] auto get_light_environment() const -> const auto&
+  {
+    return light_environment;
+  }
+  auto get_camera_environment() -> auto& { return camera_environment; }
+  [[nodiscard]] auto get_camera_environment() const -> const auto&
+  {
+    return camera_environment;
+  }
   [[nodiscard]] auto get_material_by_name(const std::string& name) const
     -> Material*
   {
@@ -156,6 +145,8 @@ public:
         return cull_scatter_material.get();
       case ComputeCullingVisibility:
         return cull_visibility_material.get();
+      case ShadowGUI:
+        return techniques.at("shadow_gui")->get_material();
       default:
         assert(false && "Unknown render pass name");
         return nullptr;
@@ -177,6 +168,9 @@ private:
   Frustum camera_frustum;
   Frustum light_frustum;
   LightEnvironment light_environment;
+  CameraEnvironment camera_environment{};
+
+  string_hash_map<Assets::Pointer<IFullscreenTechnique>> techniques;
 
   std::unique_ptr<CommandBuffer> command_buffer;
   std::unique_ptr<GPUBuffer> instance_vertex_buffer;

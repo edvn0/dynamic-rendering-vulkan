@@ -13,6 +13,13 @@ struct InitialisationParameters
   const AssetReloader& asset_reloader;
 };
 
+struct CameraMatrices
+{
+  glm::mat4 projection;
+  glm::mat4 inverse_projection;
+  glm::mat4 view;
+};
+
 struct ILayer
 {
   virtual ~ILayer() = default;
@@ -23,4 +30,8 @@ struct ILayer
   virtual auto on_update(double) -> void = 0;
   virtual auto on_render(Renderer&) -> void = 0;
   virtual auto on_resize(std::uint32_t, std::uint32_t) -> void = 0;
+  [[nodiscard]] virtual auto get_camera_matrices(CameraMatrices&) const -> bool
+  {
+    return false;
+  }
 };

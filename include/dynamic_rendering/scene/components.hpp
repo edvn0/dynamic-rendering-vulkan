@@ -59,4 +59,32 @@ struct Material
   explicit Material(std::string_view path);
 };
 
+struct Camera
+{
+  float fov{ 60.0f };
+  float aspect{ 16.0f / 9.0f };
+  float znear{ 0.1f };
+  float zfar{ 1000.0f };
+
+  glm::mat4 projection{ 1.0f };
+  glm::mat4 inverse_projection{ 1.0f };
+
+  bool dirty{ true };
+  [[nodiscard]] auto clean() const { return !dirty; }
+  auto on_resize(const float new_fov, const float new_aspect) -> void
+  {
+    fov = new_fov;
+    aspect = new_aspect;
+    dirty = true;
+  }
+  auto on_resize(const float new_aspect) -> void { on_resize(fov, new_aspect); }
+};
+
+struct FlyController
+{
+  float move_speed{ 5.0f };
+  float rotation_speed{ 0.1f };
+  bool active{ true };
+};
+
 } // namespace Component

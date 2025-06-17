@@ -115,13 +115,13 @@ std::expected<VkPrimitiveTopology, ConversionError> inline string_to_topology(
 {
   if (topo == "triangle-list")
     return VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-  else if (topo == "triangle-strip")
+  if (topo == "triangle-strip")
     return VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP;
-  else if (topo == "line-list")
+  if (topo == "line-list")
     return VK_PRIMITIVE_TOPOLOGY_LINE_LIST;
-  else if (topo == "line-strip")
+  if (topo == "line-strip")
     return VK_PRIMITIVE_TOPOLOGY_LINE_STRIP;
-  else if (topo == "point-list")
+  if (topo == "point-list")
     return VK_PRIMITIVE_TOPOLOGY_POINT_LIST;
 
   return std::unexpected(ConversionError("Unsupported topology: " + topo));

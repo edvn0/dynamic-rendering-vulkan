@@ -67,6 +67,10 @@ public:
   [[nodiscard]] auto get_image() const -> VkImage { return image; }
   [[nodiscard]] auto width() const -> std::uint32_t { return extent.width; }
   [[nodiscard]] auto height() const -> std::uint32_t { return extent.height; }
+  [[nodiscard]] auto size() const -> glm::uvec2
+  {
+    return { width(), height() };
+  }
   [[nodiscard]] auto layers() const -> std::uint32_t { return array_layers; }
   [[nodiscard]] auto mips() const -> std::uint32_t { return mip_levels; }
   [[nodiscard]] auto get_aspect_ratio() const

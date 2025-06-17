@@ -8,15 +8,16 @@
 
 #include <cassert>
 
-BloomPass::BloomPass(const Device& d, const glm::uvec2& size, int mips)
+BloomPass::BloomPass(const Device& d, const Image* fb, int mips)
   : device(&d)
+  , source_image(fb)
 {
   assert(mips >= 3 && mips < 6);
 
   extract_image = Image::create(
     *device,
     {
-      .extent = size,
+      .extent = source_image->size(),
       .format = VK_FORMAT_R32G32B32A32_SFLOAT,
       .usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
       .initial_layout = VK_IMAGE_LAYOUT_GENERAL,
@@ -25,8 +26,10 @@ BloomPass::BloomPass(const Device& d, const glm::uvec2& size, int mips)
     });
 
   extract_material = Material::create(*device, "bloom_extract").value();
+  extract_material->upload("input_image", source_image);
+  extract_material->upload("output_image", extract_image.get());
 
-  glm::uvec2 current_size = glm::max(size / 2u, glm::uvec2(1));
+  glm::uvec2 current_size = glm::max(source_image->size() / 2u, glm::uvec2(1));
   for (int i = 0; i < mips; ++i) {
     auto image = Image::create(
       *device,
@@ -68,27 +71,21 @@ void
 BloomPass::resize(const glm::uvec2& size)
 {
   extract_image->resize(size.x, size.y);
-  extract_material->upload("input_image", source_image);
-  extract_material->upload("output_image", extract_image.get());
-  extract_material->invalidate(extract_image.get());
   extract_material->invalidate(source_image);
+  extract_material->invalidate(extract_image.get());
 }
 
 void
 BloomPass::update_source(const Image* image)
 {
   source_image = image;
-  extract_material->upload("input_image", source_image);
-  extract_material->upload("output_image", extract_image.get());
 }
 
 void
 BloomPass::prepare(const uint32_t)
 {
-  extract_material->upload("input_image", source_image);
-  extract_material->upload("output_image", extract_image.get());
-  extract_material->invalidate(extract_image.get());
-  extract_material->invalidate(source_image);
+  // extract_material->invalidate(extract_image.get());
+  // extract_material->invalidate(source_image);
 }
 
 auto
@@ -97,10 +94,10 @@ BloomPass::get_output_image() const -> const Image&
   return *mip_chain.front().image;
 }
 
-void
-BloomPass::record(VkCommandBuffer cmd,
+auto
+BloomPass::record(const VkCommandBuffer cmd,
                   DescriptorSetManager& dsm,
-                  uint32_t frame_index)
+                  const std::uint32_t frame_index) -> void
 {
   assert(source_image != nullptr);
 
@@ -132,14 +129,36 @@ BloomPass::record(VkCommandBuffer cmd,
 }
 
 void
-BloomPass::downsample_and_blur(VkCommandBuffer cmd,
-                               DescriptorSetManager& dsm,
-                               uint32_t frame_index)
+BloomPass::downsample_and_blur(const VkCommandBuffer cmd,
+                               const DescriptorSetManager& dsm,
+                               const uint32_t frame_index)
 {
+  Util::Vulkan::cmd_begin_debug_label(cmd,
+                                      { VK_STRUCTURE_TYPE_DEBUG_UTILS_LABEL_EXT,
+                                        nullptr,
+                                        "Bloom Downsample & Blur",
+                                        { 0.6f, 0.8f, 1.0f, 1.0f } });
+
   const Image* input_image = extract_image.get();
 
-  for (size_t i = 0; i < mip_chain.size(); ++i) {
+  for (std::size_t i = 0; i < mip_chain.size(); ++i) {
     auto& mip = mip_chain[i];
+
+    const std::string mip_label = "Mip Level " + std::to_string(i);
+    Util::Vulkan::cmd_begin_debug_label(
+      cmd,
+      { VK_STRUCTURE_TYPE_DEBUG_UTILS_LABEL_EXT,
+        nullptr,
+        mip_label.c_str(),
+        { 0.3f, 0.5f, 1.0f, 1.0f } });
+
+    Util::Vulkan::cmd_begin_debug_label(
+      cmd,
+      { VK_STRUCTURE_TYPE_DEBUG_UTILS_LABEL_EXT,
+        nullptr,
+        "Downsample",
+        { 0.7f, 0.3f, 0.8f, 1.0f } });
+
     mip.downsample_material->upload("input_image", input_image);
     mip.downsample_material->upload("output_image", mip.image.get());
     mip.downsample_material->invalidate(input_image);
@@ -154,6 +173,16 @@ BloomPass::downsample_and_blur(VkCommandBuffer cmd,
       },
       { mip.image->width(), mip.image->height() });
 
+    vkQueueWaitIdle(device->compute_queue());
+    Util::Vulkan::cmd_end_debug_label(cmd); // Downsample
+
+    Util::Vulkan::cmd_begin_debug_label(
+      cmd,
+      { VK_STRUCTURE_TYPE_DEBUG_UTILS_LABEL_EXT,
+        nullptr,
+        "Blur Horizontal",
+        { 0.9f, 0.6f, 0.2f, 1.0f } });
+
     mip.blur_horizontal->upload("input_image", mip.image.get());
     mip.blur_horizontal->upload("output_image", blur_temp.get());
     mip.blur_horizontal->invalidate(mip.image.get());
@@ -166,6 +195,16 @@ BloomPass::downsample_and_blur(VkCommandBuffer cmd,
                        mip.blur_horizontal->prepare_for_rendering(frame_index),
                      },
                      { mip.image->width(), mip.image->height() });
+
+    vkQueueWaitIdle(device->compute_queue());
+    Util::Vulkan::cmd_end_debug_label(cmd); // Blur Horizontal
+
+    Util::Vulkan::cmd_begin_debug_label(
+      cmd,
+      { VK_STRUCTURE_TYPE_DEBUG_UTILS_LABEL_EXT,
+        nullptr,
+        "Blur Vertical",
+        { 0.8f, 0.4f, 0.1f, 1.0f } });
 
     mip.blur_vertical->upload("input_image", blur_temp.get());
     mip.blur_vertical->upload("output_image", mip.image.get());
@@ -180,18 +219,38 @@ BloomPass::downsample_and_blur(VkCommandBuffer cmd,
                      },
                      { mip.image->width(), mip.image->height() });
 
+    vkQueueWaitIdle(device->compute_queue());
+    Util::Vulkan::cmd_end_debug_label(cmd); // Blur Vertical
+
+    Util::Vulkan::cmd_end_debug_label(cmd); // Mip Level
     input_image = mip.image.get();
   }
+
+  Util::Vulkan::cmd_end_debug_label(cmd); // Downsample & Blur
 }
 
 void
-BloomPass::upsample_and_combine(VkCommandBuffer cmd,
-                                DescriptorSetManager& dsm,
-                                uint32_t frame_index)
+BloomPass::upsample_and_combine(const VkCommandBuffer cmd,
+                                const DescriptorSetManager& dsm,
+                                const std::uint32_t frame_index)
 {
+  Util::Vulkan::cmd_begin_debug_label(cmd,
+                                      { VK_STRUCTURE_TYPE_DEBUG_UTILS_LABEL_EXT,
+                                        nullptr,
+                                        "Bloom Upsample",
+                                        { 0.4f, 1.0f, 0.6f, 1.0f } });
+
   for (int i = static_cast<int>(mip_chain.size()) - 1; i > 0; --i) {
     auto& lower = mip_chain[i];
     auto& higher = mip_chain[i - 1];
+
+    const std::string label = "Upsample Mip " + std::to_string(i - 1);
+    Util::Vulkan::cmd_begin_debug_label(
+      cmd,
+      { VK_STRUCTURE_TYPE_DEBUG_UTILS_LABEL_EXT,
+        nullptr,
+        label.c_str(),
+        { 0.6f, 1.0f, 0.4f, 1.0f } });
 
     higher.upsample_material->upload("input_image", lower.image.get());
     higher.upsample_material->upload("output_image", higher.image.get());
@@ -206,14 +265,18 @@ BloomPass::upsample_and_combine(VkCommandBuffer cmd,
         higher.upsample_material->prepare_for_rendering(frame_index),
       },
       { higher.image->width(), higher.image->height() });
+
+    Util::Vulkan::cmd_end_debug_label(cmd); // Upsample Mip N
   }
+
+  Util::Vulkan::cmd_end_debug_label(cmd); // Bloom Upsample
 }
 
 void
-BloomPass::dispatch_compute(VkCommandBuffer cmd,
-                            Material& material,
+BloomPass::dispatch_compute(const VkCommandBuffer cmd,
+                            const Material& material,
                             const std::span<const VkDescriptorSet> sets,
-                            glm::uvec2 extent)
+                            const glm::uvec2 extent)
 {
   const auto& pipeline = material.get_pipeline();
   vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline.pipeline);
@@ -226,6 +289,8 @@ BloomPass::dispatch_compute(VkCommandBuffer cmd,
                           0,
                           nullptr);
 
-  const auto ceil_div = [](uint32_t x, uint32_t y) { return (x + y - 1) / y; };
+  const auto ceil_div = [](std::uint32_t x, std::uint32_t y) {
+    return (x + y - 1) / y;
+  };
   vkCmdDispatch(cmd, ceil_div(extent.x, 8), ceil_div(extent.y, 8), 1);
 }

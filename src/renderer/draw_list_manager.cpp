@@ -21,6 +21,8 @@ DrawListManager::flatten_draw_commands(const DrawCommandMap& draw_map,
                                        std::uint32_t& instance_count)
   -> DrawList
 {
+  using DrawCommandEntry = std::pair<DrawCommand, std::vector<InstanceData>>;
+
   DrawList flat_list;
   instance_count = 0;
 
@@ -28,7 +30,17 @@ DrawListManager::flatten_draw_commands(const DrawCommandMap& draw_map,
   std::vector<InstanceData> all_instances;
   all_instances.reserve(reserved_size);
 
-  for (const auto& [cmd, instances] : draw_map) {
+  std::vector<DrawCommandEntry> sorted;
+  sorted.reserve(draw_map.size());
+
+  for (const auto& [cmd, instances] : draw_map)
+    sorted.emplace_back(cmd, instances);
+
+  std::ranges::sort(sorted, [](const auto& a, const auto& b) {
+    return a.first.override_material < b.first.override_material;
+  });
+
+  for (const auto& [cmd, instances] : sorted) {
     if (instances.empty())
       continue;
     const auto offset = static_cast<std::uint32_t>(all_instances.size());
@@ -42,7 +54,6 @@ DrawListManager::flatten_draw_commands(const DrawCommandMap& draw_map,
   if (instance_count > 0)
     buffer.upload(std::span(all_instances));
 
-  // Update reserved size for next frame
   reserved_size = std::max(reserved_size, all_instances.size());
 
   return flat_list;

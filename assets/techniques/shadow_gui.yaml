@@ -1,0 +1,16 @@
+type: shadow_gui
+name: shadow_gui
+material: shadow_gui_material
+
+inputs:
+  - binding: u_input_shadow
+    source: shadow_depth_image
+
+output:
+  binding: output_target
+  name: shadow_gui_output
+  extent: framebuffer
+  format: BGRA8_SRGB
+  usage:
+    - Sampled
+    - Colour

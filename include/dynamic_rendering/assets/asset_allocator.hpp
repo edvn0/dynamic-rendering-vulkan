@@ -91,4 +91,28 @@ make_tracked(Args&&... args) -> Assets::Pointer<T>
 
   return Assets::Pointer<T>(raw, deleter);
 }
+
+template<typename Base, typename Derived, typename... Args>
+auto
+make_tracked_as(Args&&... args) -> Assets::Pointer<Base>
+{
+  static detail::TrackingAllocator<Derived> allocator;
+
+  Derived* raw = allocator.allocate(1);
+  try {
+    std::construct_at(raw, std::forward<Args>(args)...);
+  } catch (...) {
+    allocator.deallocate(raw, 1);
+    throw;
+  }
+
+  auto deleter = [](Base* base_ptr) {
+    auto derived_ptr = static_cast<Derived*>(base_ptr);
+    std::destroy_at(derived_ptr);
+    allocator.deallocate(derived_ptr, 1);
+  };
+
+  return Assets::Pointer<Base>(raw, deleter);
+}
+
 }

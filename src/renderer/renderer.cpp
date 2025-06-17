@@ -21,7 +21,10 @@
 #include "assets/manager.hpp"
 #include "core/vulkan_util.hpp"
 #include "renderer/camera.hpp"
+#include "renderer/editor_camera.hpp"
 #include "renderer/mesh.hpp"
+#include "renderer/techniques/fullscreen_technique.hpp"
+#include "renderer/techniques/shadow_gui_technique.hpp"
 #include "window/window.hpp"
 
 #include <glm/gtx/quaternion.hpp>
@@ -97,38 +100,44 @@ static constexpr std::array renderer_bindings_metadata{
 auto
 to_renderpass(const std::string_view name) -> RenderPass
 {
-  if (name == "main_geometry") {
+  auto lowercase = std::string(name);
+  std::ranges::transform(
+    lowercase.begin(), lowercase.end(), lowercase.begin(), ::tolower);
+  if (lowercase == "main_geometry") {
     return RenderPass::MainGeometry;
   }
-  if (name == "shadow") {
+  if (lowercase == "shadow") {
     return RenderPass::Shadow;
   }
-  if (name == "line") {
+  if (lowercase == "line") {
     return RenderPass::Line;
   }
-  if (name == "z_prepass") {
+  if (lowercase == "z_prepass") {
     return RenderPass::ZPrepass;
   }
-  if (name == "colour_correction") {
+  if (lowercase == "colour_correction") {
     return RenderPass::ColourCorrection;
   }
-  if (name == "skybox") {
+  if (lowercase == "skybox") {
     return RenderPass::Skybox;
   }
-  if (name == "cull_prefix_sum_first") {
+  if (lowercase == "cull_prefix_sum_first") {
     return RenderPass::ComputePrefixCullingFirst;
   }
-  if (name == "cull_prefix_sum_second") {
+  if (lowercase == "cull_prefix_sum_second") {
     return RenderPass::ComputePrefixCullingSecond;
   }
-  if (name == "cull_prefix_sum_distribute") {
+  if (lowercase == "cull_prefix_sum_distribute") {
     return RenderPass::ComputePrefixCullingDistribute;
   }
-  if (name == "cull_scatter") {
+  if (lowercase == "cull_scatter") {
     return RenderPass::ComputeCullingScatter;
   }
-  if (name == "cull_visibility") {
+  if (lowercase == "cull_visibility") {
     return RenderPass::ComputeCullingVisibility;
+  }
+  if (lowercase == "shadow_gui") {
+    return RenderPass::ShadowGUI;
   }
 
   return RenderPass::Invalid;
@@ -191,9 +200,7 @@ Renderer::Renderer(const Device& dev,
   }
 
   {
-    auto&& [w, h] = win.framebuffer_size();
-    bloom_pass = std::make_unique<BloomPass>(*device, glm::uvec2(w, h), 5);
-    bloom_pass->update_source(geometry_image.get());
+    bloom_pass = std::make_unique<BloomPass>(*device, geometry_image.get(), 3);
   }
 
   {
@@ -520,6 +527,18 @@ Renderer::Renderer(const Device& dev,
     vkCreateSemaphore(
       device->get_device(), &semaphore_create_info, nullptr, &sema);
   }
+
+  auto&& [tech, could] = techniques.try_emplace("shadow_gui");
+  tech->second = FullscreenTechniqueFactory::create(
+    "shadow_gui", *device, *descriptor_set_manager);
+
+  string_hash_map<const Image*> image_technique_map;
+  string_hash_map<const GPUBuffer*> buffer_technique_map;
+  image_technique_map["shadow_depth_image"] = shadow_depth_image.get();
+
+  for (auto&& [k, t] : techniques) {
+    t->initialise(*this, image_technique_map, buffer_technique_map);
+  }
 }
 
 auto
@@ -588,7 +607,7 @@ auto
 Renderer::submit_aabb(const glm::vec3& min,
                       const glm::vec3& max,
                       const glm::vec4& color,
-                      float width) -> void
+                      const float width) -> void
 {
   const std::array<glm::vec3, 8> corners = {
     glm::vec3{ min.x, min.y, min.z }, { max.x, min.y, min.z },
@@ -694,7 +713,7 @@ Renderer::upload_line_instance_data() -> void
 }
 
 auto
-Renderer::update_shadow_buffers(std::uint32_t frame_index) -> void
+Renderer::update_shadow_buffers(const std::uint32_t frame_index) -> void
 {
   constexpr glm::vec3 up{ camera_constants::WORLD_UP };
 
@@ -782,6 +801,17 @@ Renderer::begin_frame(const std::uint32_t frame_index, const VP& matrices)
   draw_commands.clear();
   shadow_draw_commands.clear();
 }
+
+static constexpr auto run_technique_passes =
+  [](const auto& techniques, const auto& cmd, auto fm) {
+    Util::Vulkan::cmd_begin_debug_label(
+      cmd.get(fm), "Technique passes", { 0.9F, 0.9F, 0.1F, 1.0F });
+    std::ranges::for_each(techniques, [c = &cmd, fm](const auto& t) {
+      auto&& [k, v] = t;
+      v->perform(*c, fm);
+    });
+    Util::Vulkan::cmd_end_debug_label(cmd.get(fm));
+  };
 
 auto
 Renderer::end_frame(const std::uint32_t frame_index) -> void
@@ -938,12 +968,14 @@ Renderer::end_frame(const std::uint32_t frame_index) -> void
   run_composite_pass(frame_index);
   run_postprocess_passes(frame_index);
 
+  run_technique_passes(techniques, *command_buffer, frame_index);
+
   command_buffer->submit_and_end(
     frame_index, bloom_complete_semaphores.at(frame_index), VK_NULL_HANDLE);
 }
 
 auto
-Renderer::resize(std::uint32_t width, std::uint32_t height) -> void
+Renderer::resize(const std::uint32_t width, const std::uint32_t height) -> void
 {
   geometry_image->resize(width, height);
   geometry_msaa_image->resize(width, height);
@@ -952,20 +984,48 @@ Renderer::resize(std::uint32_t width, std::uint32_t height) -> void
   composite_attachment_texture->resize(width, height);
   colour_corrected_image->resize(width, height);
 
-  bloom_pass->update_source(geometry_image.get());
   bloom_pass->resize(width, height);
 
-  skybox_material->invalidate(skybox_attachment_texture.get());
-  composite_attachment_material->invalidate(skybox_attachment_texture.get());
-  composite_attachment_material->invalidate(geometry_image.get());
-  composite_attachment_material->invalidate(&bloom_pass->get_output_image());
-  colour_corrected_material->invalidate(composite_attachment_texture.get());
+  if (skybox_material)
+    skybox_material->invalidate(skybox_attachment_texture.get());
+
+  if (composite_attachment_material) {
+    composite_attachment_material->invalidate(skybox_attachment_texture.get());
+    composite_attachment_material->invalidate(geometry_image.get());
+    composite_attachment_material->invalidate(&bloom_pass->get_output_image());
+  }
+
+  if (colour_corrected_material)
+    colour_corrected_material->invalidate(composite_attachment_texture.get());
+
+  if (geometry_material)
+    geometry_material->invalidate(geometry_msaa_image.get());
+
+  if (z_prepass_material)
+    z_prepass_material->invalidate(geometry_depth_image.get());
+
+  if (shadow_material)
+    shadow_material->invalidate(shadow_depth_image.get());
 }
 
 auto
 Renderer::get_output_image() const -> const Image&
 {
   return *colour_corrected_image;
+}
+
+auto
+Renderer::update_camera(const EditorCamera& camera) -> void
+{
+  update_frustum(camera.get_projection() * camera.get_view());
+
+  camera_environment = {
+    .view = camera.get_view(),
+    .projection = camera.get_projection(),
+    .inverse_projection = camera.get_inverse_projection(),
+    .z_near = camera.get_projection_config().znear,
+    .z_far = camera.get_projection_config().zfar,
+  };
 }
 
 #pragma region RenderPasses

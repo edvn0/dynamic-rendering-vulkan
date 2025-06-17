@@ -62,6 +62,7 @@ public:
   auto on_interface() -> void;
   auto on_update(double ts) -> void;
   auto on_render(Renderer& renderer) -> void;
+  auto on_event(Event&) -> bool;
   auto on_resize(const EditorCamera&, std::uint32_t w, std::uint32_t h) -> void;
   template<typename... Ts>
   auto view()
@@ -91,6 +92,9 @@ public:
 
   auto update_viewport_bounds(const DynamicRendering::ViewportBounds& bounds)
     -> void;
+  [[nodiscard]] auto selected_is_valid() const -> bool;
+  auto delete_entity(entt::entity) -> void;
+  auto delete_entity() -> void { delete_entity(selected_entity); }
 
 private:
   entt::registry registry;
@@ -99,12 +103,6 @@ private:
 
   entt::entity selected_entity = entt::null;
 
-  struct SceneCameraComponent
-  {
-    glm::vec3 position{};
-    glm::mat4 view{};
-    glm::mat4 projection{};
-  };
   Entity scene_camera_entity;
 
   bool show_components = false;
@@ -125,6 +123,7 @@ private:
                            const char* format) -> bool;
   auto draw_quaternion_slider(const char* label, glm::quat& quaternion) -> bool;
   auto draw_entity_item(entt::entity entity, std::string_view tag) -> void;
+  auto update_fly_controllers(double) -> void;
 
   friend class Entity;
 };

@@ -43,11 +43,7 @@ AppLayer::on_destroy() -> void
 auto
 AppLayer::on_event(Event& event) -> bool
 {
-  EventDispatcher dispatch(event);
-  dispatch.dispatch<MouseButtonPressedEvent>([](auto&) { return true; });
-  dispatch.dispatch<KeyPressedEvent>([](auto&) { return true; });
-  dispatch.dispatch<WindowCloseEvent>([](auto&) { return true; });
-  return false;
+  return active_scene->on_event(event);
 }
 
 auto
@@ -164,6 +160,23 @@ AppLayer::on_initialise(const InitialisationParameters& params) -> void
 }
 
 auto
+AppLayer::get_camera_matrices(CameraMatrices& out) const -> bool
+{
+  const auto view =
+    active_scene->view<Component::Camera, Component::Transform>();
+  auto entity = view.front();
+  if (active_scene->get_registry().valid(entity)) {
+    const auto& cam = view.get<Component::Camera>(entity);
+    const auto& tr = view.get<Component::Transform>(entity);
+    out.projection = cam.projection;
+    out.inverse_projection = cam.inverse_projection,
+    out.view = glm::inverse(tr.compute());
+    return true;
+  }
+  return false;
+}
+
+auto
 AppLayer::generate_scene() -> void
 {
   {
@@ -187,7 +200,7 @@ AppLayer::generate_scene() -> void
         auto& mat = entity.add_component<Component::Material>("main_geometry");
         auto& mat_data = mat.material.get()->get_material_data();
         mat_data.emissive_strength = 20.0F;
-        mat_data.emissive_color = Utils::Random::random_colour();
+        mat_data.emissive_color = Utils::Random::random_single_channel_colour();
       }
     }
   }

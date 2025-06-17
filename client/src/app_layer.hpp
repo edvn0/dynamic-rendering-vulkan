@@ -18,6 +18,7 @@ public:
   auto on_render(Renderer& renderer) -> void override;
   auto on_resize(std::uint32_t w, std::uint32_t h) -> void override;
   auto on_initialise(const InitialisationParameters&) -> void override;
+  auto get_camera_matrices(CameraMatrices&) const -> bool override;
 
   auto on_viewport_bounds_changed(
     const DynamicRendering::ViewportBounds& new_viewport_bounds)

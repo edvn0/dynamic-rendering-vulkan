@@ -201,7 +201,7 @@ App::App(const ApplicationArguments& args)
     auto&& [w, h] = window->framebuffer_size();
     camera = std::make_unique<EditorCamera>(
       90.0F, static_cast<float>(w) / static_cast<float>(h), 0.1F, 1000.0F);
-    renderer->update_frustum(camera->get_projection() * camera->get_view());
+    renderer->update_camera(*camera);
   }
 
   {
@@ -234,9 +234,9 @@ App::App(const ApplicationArguments& args)
 App::~App() = default;
 
 void
-App::add_layer(std::unique_ptr<ILayer> layer)
+App::add_layer(std::unique_ptr<ILayer> l)
 {
-  layers.emplace_back(std::move(layer));
+  layer.swap(l);
 }
 
 auto
@@ -251,8 +251,7 @@ App::run() -> std::error_code
     .file_watcher = *file_watcher,
     .asset_reloader = *asset_reloader,
   };
-  for (const auto& layer : layers)
-    layer->on_initialise(params);
+  layer->on_initialise(params);
 
   while (running && !window->should_close()) {
     ZoneScopedN("Main loop");
@@ -262,8 +261,7 @@ App::run() -> std::error_code
       auto&& [w, h] = window->framebuffer_size();
       camera->resize(w, h);
       renderer->resize(w, h);
-      for (const auto& layer : layers)
-        layer->on_resize(w, h);
+      layer->on_resize(w, h);
       window->set_resize_flag(false);
       continue;
     }
@@ -297,10 +295,8 @@ App::run() -> std::error_code
   Assets::Manager::the().clear_all<StaticMesh, Image, Material>();
   MeshCache::destroy();
   Image::destroy_samplers();
-  for (const auto& layer : layers)
-    layer->on_destroy();
-
-  layers.clear();
+  layer->on_destroy();
+  layer.reset();
 
   renderer.reset();
   gui_system->shutdown();
@@ -320,8 +316,7 @@ App::interface() -> void
 {
   ZoneScopedN("Interface");
   gui_system->begin_frame();
-  for (const auto& layer : layers)
-    layer->on_interface();
+  layer->on_interface();
 
   static bool choice = false;
   int flags = 0;
@@ -468,25 +463,22 @@ App::process_events(Event& event)
   dispatcher.dispatch<WindowResizeEvent>([this](auto&) {
     window->set_resize_flag(true);
     update_viewport_bounds(viewport_bounds, viewport_bounds_listeners);
-    return true;
+    return false;
   });
   dispatcher.dispatch<WindowCloseEvent>([this](auto&) {
     running = false;
-    return true;
+    return false;
   });
   dispatcher.dispatch<KeyReleasedEvent>([this](auto& e) {
     if (e.key == KeyCode::Escape)
       running = false;
-    return true;
+    return false;
   });
 
   if (camera->on_event(event))
     return;
 
-  for (auto it = layers.rbegin(); it != layers.rend(); ++it) {
-    if ((*it)->on_event(event))
-      break;
-  }
+  layer->on_event(event);
 }
 
 void
@@ -494,8 +486,7 @@ App::update(double dt)
 {
   ZoneScopedN("Update");
   camera->on_update(dt);
-  for (const auto& layer : layers)
-    layer->on_update(dt);
+  layer->on_update(dt);
 }
 
 void
@@ -504,16 +495,21 @@ App::render()
   ZoneScopedN("Render");
   const auto frame_index = swapchain->get_frame_index();
 
-  renderer->begin_frame(
-    frame_index,
-    {
-      .projection = camera->get_projection(),
-      .inverse_projection = camera->get_inverse_projection(),
-      .view = camera->get_view(),
-    });
+  CameraMatrices camera_data{};
+  if (const bool found = layer->get_camera_matrices(camera_data); !found) {
+    camera_data.projection = camera->get_projection();
+    camera_data.inverse_projection = camera->get_inverse_projection();
+    camera_data.view = camera->get_view();
+  }
 
-  for (const auto& layer : layers)
-    layer->on_render(*renderer);
+  renderer->begin_frame(swapchain->get_frame_index(),
+                        {
+                          .projection = camera_data.projection,
+                          .inverse_projection = camera_data.inverse_projection,
+                          .view = camera_data.view,
+                        });
+
+  layer->on_render(*renderer);
 
   renderer->end_frame(frame_index);
 

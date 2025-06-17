@@ -129,6 +129,8 @@ add_library(DynamicRendering_Renderer STATIC
         src/renderer/mesh.cpp
         src/renderer/mesh_cache.cpp
         src/renderer/passes/bloom_pass.cpp
+        src/renderer/techniques/shadow_gui_technique.cpp
+        src/renderer/techniques/fullscreen_technique.cpp
 )
 
 target_include_directories(DynamicRendering_Renderer PUBLIC
@@ -264,6 +266,24 @@ function(copy_blueprints target)
 
     add_custom_target(copy_blueprints_target ALL DEPENDS ${blueprint_binary_dir})
     add_dependencies(${target} copy_blueprints_target)
+endfunction()
+
+function(copy_techniques target)
+    set(techniques_source_dir ${CMAKE_SOURCE_DIR}/assets/techniques)
+    set(techniques_binary_dir ${CMAKE_BINARY_DIR}/assets/techniques)
+
+    file(GLOB_RECURSE techniques_files ${techniques_source_dir}/*)
+
+    add_custom_command(
+            OUTPUT ${techniques_binary_dir}
+            COMMAND ${CMAKE_COMMAND} -E copy_directory ${techniques_source_dir} ${techniques_binary_dir}
+            DEPENDS ${techniques_files}
+            COMMENT "Copying technique YAMLs to output directory"
+            VERBATIM
+    )
+
+    add_custom_target(copy_techniques_target ALL DEPENDS ${techniques_binary_dir})
+    add_dependencies(${target} copy_techniques_target)
 endfunction()
 
 # === Shader / Blueprint Tools ===

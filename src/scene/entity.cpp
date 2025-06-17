@@ -6,3 +6,9 @@ Entity::Entity(entt::entity han, Scene* s)
   , scene(s)
 {
 }
+
+auto
+Entity::valid() const -> bool
+{
+  return scene->registry.valid(handle);
+}

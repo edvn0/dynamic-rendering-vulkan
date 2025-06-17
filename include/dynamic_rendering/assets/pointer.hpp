@@ -6,6 +6,9 @@
 namespace Assets {
 
 template<typename T>
-using Pointer = std::unique_ptr<T, std::function<void(T*)>>;
+using Deleter = std::function<void(T*)>;
+
+template<typename T>
+using Pointer = std::unique_ptr<T, Deleter<T>>;
 
 }

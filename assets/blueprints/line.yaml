@@ -4,6 +4,7 @@ shaders:
   - stage: fragment
     path: line.frag
 
+topology: triangle-strip
 rasterization:
   cull_mode: none
 

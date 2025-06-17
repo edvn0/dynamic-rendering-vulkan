@@ -15,6 +15,14 @@ constexpr auto WORLD_RIGHT = glm::vec3(1.0f, 0.0f, 0.0f);
 constexpr auto WORLD_UP = glm::vec3(0.0f, 1.0f, 0.0f);
 }
 
+template<std::floating_point T>
+static constexpr auto
+calculate_aspect_ratio(std::integral auto l, std::integral auto r) -> T
+{
+  assert(r > 0);
+  return static_cast<T>(r) / static_cast<T>(l);
+}
+
 class Camera
 {
 public:
@@ -117,33 +125,61 @@ public:
     update_view_matrix();
   }
 
-  auto get_view() const -> const glm::mat4& { return view; }
-  auto get_projection() const -> const glm::mat4& { return projection; }
-  auto get_inverse_projection() const -> const glm::mat4&
+  [[nodiscard]] auto get_view() const -> const glm::mat4& { return view; }
+  [[nodiscard]] auto get_projection() const -> const glm::mat4&
+  {
+    return projection;
+  }
+  [[nodiscard]] auto get_inverse_projection() const -> const glm::mat4&
   {
     return inverse_projection;
   }
-  auto compute_view_projection() const -> glm::mat4
+  [[nodiscard]] auto compute_view_projection() const -> glm::mat4
   {
     return projection * view;
   }
-  auto compute_inverse_view_projection() const -> glm::mat4
+  [[nodiscard]] auto compute_inverse_view_projection() const -> glm::mat4
   {
     return inverse_projection * view;
   }
 
-  auto get_position() const -> const glm::vec3& { return position; }
-  auto get_front() const -> const glm::vec3& { return front; }
-  auto get_right() const -> const glm::vec3& { return right; }
-  auto get_up() const -> const glm::vec3& { return up; }
-  auto get_basis_matrix() const -> glm::mat3
+  [[nodiscard]] virtual auto get_position() const -> const glm::vec3&
   {
-    return glm::mat3(right, up, -front);
+    return position;
+  }
+  [[nodiscard]] auto get_front() const -> const glm::vec3& { return front; }
+  [[nodiscard]] auto get_right() const -> const glm::vec3& { return right; }
+  [[nodiscard]] auto get_up() const -> const glm::vec3& { return up; }
+  [[nodiscard]] auto get_basis_matrix() const -> glm::mat3
+  {
+    return { right, up, -front };
   }
 
-  auto get_projection_config() const -> const ProjectionConfig&
+  [[nodiscard]] auto get_projection_config() const -> const ProjectionConfig&
   {
     return projection_config;
+  }
+
+  static auto make_infinite_reverse_z_proj(const float fovy,
+                                           const float aspect,
+                                           const float znear) -> glm::mat4
+  {
+    float f = 1.0f / std::tan(glm::radians(fovy) * 0.5f);
+    glm::mat4 result{ 0.0f };
+    result[0][0] = f / aspect;
+    result[1][1] = -f;
+    result[2][2] = 0.0f;
+    result[2][3] = -1.0f;
+    result[3][2] = znear;
+    return result;
+  }
+
+  static auto make_float_far_proj(const float fovy,
+                                  const float aspect,
+                                  const float znear,
+                                  const float zfar) -> glm::mat4
+  {
+    return glm::perspective(glm::radians(fovy), aspect, znear, zfar);
   }
 
 protected:
@@ -171,28 +207,6 @@ protected:
   double last_mouse_x{ 0.0 };
   double last_mouse_y{ 0.0 };
   bool first_mouse{ true };
-
-  static auto make_infinite_reverse_z_proj(float fovy,
-                                           float aspect,
-                                           float znear) -> glm::mat4
-  {
-    float f = 1.0f / std::tan(glm::radians(fovy) * 0.5f);
-    glm::mat4 result{ 0.0f };
-    result[0][0] = f / aspect;
-    result[1][1] = -f;
-    result[2][2] = 0.0f;
-    result[2][3] = -1.0f;
-    result[3][2] = znear;
-    return result;
-  }
-
-  static auto make_float_far_proj(float fovy,
-                                  float aspect,
-                                  float znear,
-                                  float zfar) -> glm::mat4
-  {
-    return glm::perspective(glm::radians(fovy), aspect, znear, zfar);
-  }
 
   auto update_projection_matrix() -> void
   {

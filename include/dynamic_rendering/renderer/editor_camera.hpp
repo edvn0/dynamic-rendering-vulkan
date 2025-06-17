@@ -35,10 +35,10 @@ public:
     distance = glm::distance(position, focal_point);
 
     position = calculate_position();
-    glm::quat orientation = get_orientation();
+    const auto orientation = get_orientation();
     direction = glm::eulerAngles(orientation) * (180.0f / glm::pi<float>());
 
-    glm::mat4 transform =
+    const auto transform =
       glm::translate(glm::mat4(1.0f), position) * glm::mat4_cast(orientation);
     view = glm::inverse(transform);
 

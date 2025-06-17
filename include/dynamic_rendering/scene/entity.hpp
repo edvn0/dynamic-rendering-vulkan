@@ -24,6 +24,7 @@ public:
   auto has_component() const -> bool;
 
   [[nodiscard]] auto raw() const -> entt::entity { return handle; }
+  [[nodiscard]] auto valid() const -> bool;
 
 private:
   entt::entity handle{ entt::null };

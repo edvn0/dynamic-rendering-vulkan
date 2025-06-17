@@ -47,7 +47,7 @@ struct Extent2D
   }
 
   template<ExtentConstructible T>
-  constexpr Extent2D(const T& t)
+  explicit(false) constexpr Extent2D(const T& t)
   {
     if constexpr (detail::has_xy_fields<T>) {
       width = static_cast<std::uint32_t>(t.x);

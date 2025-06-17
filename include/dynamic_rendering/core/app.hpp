@@ -65,28 +65,29 @@ public:
                                           Device&,
                                           BS::priority_thread_pool*,
                                           Args...>) {
-      auto layer =
+      auto l =
         std::make_unique<T>(*device, &thread_pool, std::forward<Args>(args)...);
-      layers.emplace_back(std::move(layer));
+      layer = std::move(l);
     } else if constexpr (std::is_constructible_v<T, Device&, Args...>) {
-      auto layer = std::make_unique<T>(*device, std::forward<Args>(args)...);
-      layers.emplace_back(std::move(layer));
+      auto l = std::make_unique<T>(*device, std::forward<Args>(args)...);
+      layer = std::move(l);
     } else {
       static_assert(false,
                     "Layer constructor must be compatible with (Device&, "
                     "[BS::thread_pool*], Args...)");
     }
 
-    if (auto* back = dynamic_cast<IRayPickListener*>(layers.back().get())) {
-      ray_pick_listeners.push_back(back);
+    if (auto* ray_pick_listener =
+          dynamic_cast<IRayPickListener*>(layer.get())) {
+      ray_pick_listeners.push_back(ray_pick_listener);
     }
 
     if (auto* vp_listener =
-          dynamic_cast<ViewportBoundsListener*>(layers.back().get())) {
+          dynamic_cast<ViewportBoundsListener*>(layer.get())) {
       viewport_bounds_listeners.push_back(vp_listener);
     }
 
-    return layers.back().get();
+    return layer.get();
   }
 
   auto run() -> std::error_code;
@@ -113,7 +114,7 @@ private:
   std::unique_ptr<FrameTimePlotter> plotter;
   std::unique_ptr<FrametimeCalculator> timer;
 
-  std::vector<std::unique_ptr<ILayer>> layers;
+  std::unique_ptr<ILayer> layer;
   bool running = true;
 
   ViewportBounds viewport_bounds;

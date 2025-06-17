@@ -17,9 +17,7 @@ struct BloomMip
 
 struct BloomPass
 {
-  explicit BloomPass(const Device& device,
-                     const glm::uvec2& size,
-                     int mip_count = 5);
+  explicit BloomPass(const Device& device, const Image*, int mip_count = 5);
   ~BloomPass() = default;
 
   auto prepare(std::uint32_t) -> void;
@@ -44,14 +42,16 @@ private:
   std::vector<BloomMip> mip_chain;
 
   void dispatch_compute(VkCommandBuffer cmd,
-                        Material& material,
+                        const Material& material,
                         std::span<const VkDescriptorSet>,
                         glm::uvec2 extent);
 
   void downsample_and_blur(VkCommandBuffer cmd,
-                           DescriptorSetManager& dsm,
+                           const DescriptorSetManager& dsm,
                            uint32_t frame_index);
   void downsample(VkCommandBuffer, DescriptorSetManager&, uint32_t);
   void blur_mips(VkCommandBuffer, DescriptorSetManager&, uint32_t);
-  void upsample_and_combine(VkCommandBuffer, DescriptorSetManager&, uint32_t);
+  void upsample_and_combine(VkCommandBuffer,
+                            const DescriptorSetManager&,
+                            uint32_t);
 };

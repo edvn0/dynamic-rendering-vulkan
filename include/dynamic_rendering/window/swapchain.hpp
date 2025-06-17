@@ -19,6 +19,8 @@ public:
   auto draw_frame(const GUISystem&) -> void;
   [[nodiscard]] auto get_frame_index() const -> std::uint32_t;
   [[nodiscard]] auto get_image_count() const { return swapchain_image_count; }
+  [[nodiscard]] auto get_width() const { return swapchain_extent.width; }
+  [[nodiscard]] auto get_height() const { return swapchain_extent.height; }
 
 private:
   void recreate_swapchain();

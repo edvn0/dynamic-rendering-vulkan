@@ -24,6 +24,7 @@
 
 #include "renderer/editor_camera.hpp"
 #include "renderer/layer.hpp"
+#include "window/swapchain.hpp"
 
 Scene::Scene(const std::string_view n)
   : scene_name(n) {};
@@ -48,8 +49,22 @@ Scene::create_entt_entity() -> entt::entity
 }
 
 auto
-Scene::on_update(double) -> void
+Scene::on_update(double dt) -> void
 {
+  update_fly_controllers(dt);
+
+  for (const auto view = registry.view<Component::Camera>();
+       auto&& [entity, camera] : view.each()) {
+    if (camera.clean())
+      return;
+
+    camera.projection = Camera::make_float_far_proj(
+      camera.fov, camera.aspect, camera.znear, camera.zfar);
+    camera.inverse_projection = Camera::make_float_far_proj(
+      camera.fov, camera.aspect, camera.zfar, camera.znear);
+
+    camera.dirty = true;
+  }
 }
 
 // Helper function for fancy vector sliders
@@ -268,7 +283,7 @@ Scene::draw_entity_item(entt::entity entity, const std::string_view tag)
   ImGui::PushID(static_cast<int>(entity));
 
   // Entity icon and name
-  bool is_selected = (selected_entity == entity);
+  const bool is_selected = (selected_entity == entity);
 
   if (is_selected) {
     ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.3f, 0.6f, 0.9f, 0.4f));
@@ -337,6 +352,23 @@ Scene::draw_entity_item(entt::entity entity, const std::string_view tag)
           "Clearcoat Roughness", &mat_data.clearcoat_roughness, 0.0f, 1.0f);
         ImGui::SliderFloat("Anisotropy", &mat_data.anisotropy, 0.0f, 1.0f);
         ImGui::SliderFloat("Alpha Cutoff", &mat_data.alpha_cutoff, 0.0f, 1.0f);
+
+        ImGui::TreePop();
+      }
+    }
+
+    if (auto* camera = registry.try_get<Component::Camera>(entity)) {
+      if (ImGui::TreeNode("Camera")) {
+        bool modified = false;
+
+        modified |= ImGui::SliderFloat("FOV", &camera->fov, 1.0f, 179.0f);
+        modified |= ImGui::SliderFloat("Aspect", &camera->aspect, 0.1f, 5.0f);
+        modified |= ImGui::SliderFloat("Z Near", &camera->znear, 0.01f, 10.0f);
+        modified |= ImGui::SliderFloat("Z Far", &camera->zfar, 10.0f, 10000.0f);
+
+        if (modified) {
+          camera->dirty = true;
+        }
 
         ImGui::TreePop();
       }
@@ -438,23 +470,24 @@ Scene::on_interface() -> void
 
   ImGui::End();
 
-  if (selected_entity != entt::null) {
-    auto* transform = registry.try_get<Component::Transform>(selected_entity);
-    if (auto* scene_camera =
-          scene_camera_entity.try_get<SceneCameraComponent>();
-        transform && scene_camera) {
+  if (scene_camera_entity.valid()) {
+    auto* camera = scene_camera_entity.try_get<Component::Camera>();
+
+    if (auto* transform = scene_camera_entity.try_get<Component::Transform>();
+        camera && transform) {
+      glm::mat4 view = glm::inverse(transform->compute());
+      const glm::mat4& projection = camera->projection;
+
       ImGuizmo::SetOrthographic(false);
       ImGuizmo::SetDrawlist(ImGui::GetForegroundDrawList());
 
       ImGuizmo::SetRect(vp_min.x, vp_min.y, vp_max.x, vp_max.y);
 
-      glm::mat4 view = scene_camera->view;
-      glm::mat4 proj = scene_camera->projection;
       glm::mat4 model = transform->compute();
 
       ImGuizmo::Manipulate(glm::value_ptr(view),
-                           glm::value_ptr(proj),
-                           ImGuizmo::OPERATION::TRANSLATE, // or ROTATE/SCALE
+                           glm::value_ptr(projection),
+                           ImGuizmo::OPERATION::TRANSLATE,
                            ImGuizmo::LOCAL,
                            glm::value_ptr(model));
 
@@ -532,16 +565,35 @@ Scene::on_render(Renderer& renderer) -> void
     }
   }
 }
+auto
+Scene::on_event(Event& event) -> bool
+{
+  // Delete
+  EventDispatcher dispatcher(event);
+  dispatcher.dispatch<KeyReleasedEvent>([this](const KeyReleasedEvent& ev) {
+    if (selected_is_valid() && KeyCode::Delete == ev.key) {
+      delete_entity(selected_entity);
+    }
+    return true;
+  });
+
+  return true;
+}
 
 auto
-Scene::on_resize(const EditorCamera& camera, std::uint32_t, std::uint32_t)
+Scene::selected_is_valid() const -> bool
+{
+  return registry.valid(selected_entity);
+}
+
+auto
+Scene::on_resize(const EditorCamera& camera, std::uint32_t w, std::uint32_t h)
   -> void
 {
-  auto& [position, view, projection] =
-    scene_camera_entity.get_component<SceneCameraComponent>();
-  projection = camera.get_projection();
-  view = camera.get_view();
-  position = camera.get_position();
+  if (auto* cam = scene_camera_entity.try_get<Component::Camera>();
+      nullptr != cam) {
+    cam->on_resize(calculate_aspect_ratio<float>(w, h));
+  }
 
   scene_camera_entity.get_component<Component::Transform>().position =
     camera.get_position();
@@ -556,11 +608,83 @@ Scene::update_viewport_bounds(const DynamicRendering::ViewportBounds& bounds)
 }
 
 auto
-Scene::on_initialise(const InitialisationParameters& params) -> void
+Scene::delete_entity(const entt::entity to_delete) -> void
+{
+  if (!registry.valid(to_delete)) {
+    Logger::log_warning("Input entity: {} was not valid.",
+                        entt::to_integral(to_delete));
+    return;
+  }
+
+  const auto version = registry.destroy(to_delete);
+  (void)version;
+  if (to_delete == selected_entity) {
+    selected_entity = entt::null;
+  }
+}
+
+auto
+Scene::on_initialise(const InitialisationParameters& parameters) -> void
 {
   scene_camera_entity = create_entity("SceneCamera");
-  scene_camera_entity.add_component<SceneCameraComponent>(
-    params.camera.get_position(),
-    params.camera.get_view(),
-    params.camera.get_projection());
+  scene_camera_entity.add_component<Component::FlyController>();
+  auto& camera = scene_camera_entity.add_component<Component::Camera>();
+  camera.aspect = static_cast<float>(parameters.swapchain.get_width()) /
+                  static_cast<float>(parameters.swapchain.get_height());
+  camera.dirty = true;
+  auto& transform = scene_camera_entity.get_component<Component::Transform>();
+  transform.position = parameters.camera.get_position();
+}
+
+void
+Scene::update_fly_controllers(double delta_seconds)
+{
+
+  for (auto view =
+         registry.view<Component::Transform, Component::FlyController>();
+       auto&& [entity, transform, controller] : view.each()) {
+    if (!controller.active)
+      continue;
+
+    glm::vec3 direction{ 0.0f };
+    if (Input::key_pressed(KeyCode::W))
+      direction += glm::vec3{ 0, 0, -1 };
+    if (Input::key_pressed(KeyCode::S))
+      direction += glm::vec3{ 0, 0, 1 };
+    if (Input::key_pressed(KeyCode::A))
+      direction += glm::vec3{ -1, 0, 0 };
+    if (Input::key_pressed(KeyCode::D))
+      direction += glm::vec3{ 1, 0, 0 };
+    if (Input::key_pressed(KeyCode::Space))
+      direction += glm::vec3{ 0, 1, 0 };
+    if (Input::key_pressed(KeyCode::LeftShift))
+      direction += glm::vec3{ 0, -1, 0 };
+
+    if (glm::length2(direction) > 0.0f) {
+      glm::vec3 forward = transform.rotation * glm::vec3{ 0, 0, -1 };
+      glm::vec3 right = transform.rotation * glm::vec3{ 1, 0, 0 };
+      glm::vec3 up = transform.rotation * glm::vec3{ 0, 1, 0 };
+
+      glm::vec3 move_vector =
+        direction.z * forward + direction.x * right + direction.y * up;
+      transform.position +=
+        move_vector * controller.move_speed * static_cast<float>(delta_seconds);
+    }
+
+    if (Input::mouse_pressed(MouseCode::MouseButtonRight)) {
+      static float last_x = 0, last_y = 0;
+      auto [x, y] = Input::mouse_position();
+      float dx = static_cast<float>(x) - last_x;
+      float dy = static_cast<float>(y) - last_y;
+      last_x = static_cast<float>(x);
+      last_y = static_cast<float>(y);
+
+      glm::quat yaw = glm::angleAxis(
+        glm::radians(-dx * controller.rotation_speed), glm::vec3{ 0, 1, 0 });
+      glm::quat pitch = glm::angleAxis(
+        glm::radians(-dy * controller.rotation_speed), glm::vec3{ 1, 0, 0 });
+
+      transform.rotation = glm::normalize(yaw * transform.rotation * pitch);
+    }
+  }
 }
