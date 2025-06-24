@@ -12,12 +12,20 @@
 
 struct DrawCommand
 {
-  StaticMesh* mesh;
+  StaticMesh* mesh{ nullptr };
   Assets::Handle<Material> override_material{};
   std::int32_t submesh_index{ -1 };
-  bool casts_shadows{ true };
 
   bool operator==(const DrawCommand& rhs) const = default;
+};
+
+/// Used for client code, DTO for DrawCommand
+struct RendererSubmit
+{
+  StaticMesh* mesh{ nullptr };
+  Assets::Handle<Material> override_material{};
+  bool casts_shadows{ false };
+  std::uint32_t identifier{ 0 };
 };
 
 struct DrawCommandHasher
@@ -49,4 +57,6 @@ struct DrawInstanceSubmit
 
 using DrawCommandMap =
   std::unordered_map<DrawCommand, std::vector<InstanceData>, DrawCommandHasher>;
+using IdentifierMap = std::
+  unordered_map<DrawCommand, std::vector<std::uint32_t>, DrawCommandHasher>;
 using DrawList = std::vector<DrawItem>;

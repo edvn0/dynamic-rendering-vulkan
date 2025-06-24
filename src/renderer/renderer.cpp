@@ -186,9 +186,20 @@ Renderer::Renderer(const Device& dev,
                       .format = VK_FORMAT_D32_SFLOAT,
                       .usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
                       .aspect = VK_IMAGE_ASPECT_DEPTH_BIT,
-                      .sample_count = sample_count,
+                      .sample_count = VK_SAMPLE_COUNT_1_BIT,
                       .allow_in_ui = false,
                       .debug_name = "Geometry Depth Image",
+                    });
+    geometry_depth_msaa_image =
+      Image::create(dev,
+                    ImageConfiguration{
+                      .extent = win.framebuffer_size(),
+                      .format = VK_FORMAT_D32_SFLOAT,
+                      .usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+                      .aspect = VK_IMAGE_ASPECT_DEPTH_BIT,
+                      .sample_count = sample_count,
+                      .allow_in_ui = false,
+                      .debug_name = "Geometry Depth MSAA Image",
                     });
 
     if (auto result = Material::create(*device, "main_geometry");
@@ -266,8 +277,8 @@ Renderer::Renderer(const Device& dev,
                       .debug_name = "colour_corrected_image",
                     });
 
-    auto result = Material::create(*device, "colour_correction");
-    if (result.has_value()) {
+    if (auto result = Material::create(*device, "colour_correction");
+        result.has_value()) {
       colour_corrected_material = std::move(result.value());
     } else {
       assert(false && "Failed to create main geometry material.");
@@ -353,6 +364,33 @@ Renderer::Renderer(const Device& dev,
     } else {
       assert(false && "Failed to create shadow material.");
     }
+  }
+
+  {
+    identifier_image =
+      Image::create(dev,
+                    ImageConfiguration{
+                      .extent = win.framebuffer_size(),
+                      .format = VK_FORMAT_R32_UINT,
+                      .usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
+                               VK_IMAGE_USAGE_SAMPLED_BIT,
+                      .aspect = VK_IMAGE_ASPECT_COLOR_BIT,
+                      .sample_count = VK_SAMPLE_COUNT_1_BIT,
+                      .debug_name = "identifier_image",
+                    });
+
+    if (auto result = Material::create(*device, "identifier");
+        result.has_value()) {
+      identifier_material = std::move(result.value());
+    } else {
+      assert(false && "Failed to create shadow material.");
+    }
+
+    identifier_buffer = GPUBuffer::zero_initialise(
+      *device,
+      1'000'000 * sizeof(std::uint32_t),
+      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+    identifier_material->upload("identifiers", identifier_buffer);
   }
 
   {
@@ -568,20 +606,26 @@ Renderer::~Renderer()
 }
 
 auto
-Renderer::submit(const DrawCommand& cmd, const glm::mat4& transform) -> void
+Renderer::submit(const RendererSubmit& cmd,
+                 const glm::mat4& transform,
+                 const std::uint32_t optional_identifier) -> void
 {
   if (cmd.mesh == nullptr) {
     return;
   }
+
+  const bool has_optional_identifier = optional_identifier != 0;
 
   for (auto& submesh : cmd.mesh->get_submeshes()) {
     auto command = DrawCommand{
       .mesh = cmd.mesh,
       .override_material = cmd.override_material,
       .submesh_index = cmd.mesh->get_submesh_index(submesh),
-      .casts_shadows = cmd.casts_shadows,
     };
     draw_commands[command].emplace_back(transform);
+    if (has_optional_identifier) {
+      identifiers[command].emplace_back(optional_identifier);
+    }
     if (cmd.casts_shadows) {
       shadow_draw_commands[command].emplace_back(transform);
     }
@@ -763,6 +807,23 @@ Renderer::update_shadow_buffers(const std::uint32_t frame_index) -> void
   light_frustum.update(shadow_data.light_vp);
 }
 
+void
+Renderer::update_identifiers()
+{
+  std::vector<std::uint32_t> ids;
+  static std::uint64_t ids_count = 5;
+  ids.reserve(ids_count);
+
+  for (auto& v : identifiers | std::views::values) {
+    ids.append_range(v);
+  }
+
+  if (ids_count != ids.size())
+    ids_count = ids.size();
+
+  identifier_buffer->upload(std::span(ids));
+}
+
 auto
 Renderer::update_uniform_buffers(const std::uint32_t frame_index,
                                  const glm::mat4& view,
@@ -798,8 +859,10 @@ Renderer::begin_frame(const std::uint32_t frame_index, const VP& matrices)
                          position);
   update_shadow_buffers(frame_index);
   update_frustum(vp);
+  update_identifiers();
   draw_commands.clear();
   shadow_draw_commands.clear();
+  identifiers.clear();
 }
 
 static constexpr auto run_technique_passes =
@@ -916,9 +979,14 @@ Renderer::end_frame(const std::uint32_t frame_index) -> void
   }
 
   run_skybox_pass(frame_index);
+
   run_shadow_pass(frame_index, flat_shadow_draw_commands);
   run_z_prepass(frame_index, flat_draw_commands);
   run_geometry_pass(frame_index, flat_draw_commands);
+
+#if IS_DEBUG
+  run_identifier_pass(frame_index, flat_draw_commands);
+#endif
 
   // Add image barrier to prepare geometry_image for compute shader read
   {
@@ -980,6 +1048,7 @@ Renderer::resize(const std::uint32_t width, const std::uint32_t height) -> void
   geometry_image->resize(width, height);
   geometry_msaa_image->resize(width, height);
   geometry_depth_image->resize(width, height);
+  geometry_depth_msaa_image->resize(width, height);
   skybox_attachment_texture->resize(width, height);
   composite_attachment_texture->resize(width, height);
   colour_corrected_image->resize(width, height);
@@ -997,15 +1066,6 @@ Renderer::resize(const std::uint32_t width, const std::uint32_t height) -> void
 
   if (colour_corrected_material)
     colour_corrected_material->invalidate(composite_attachment_texture.get());
-
-  if (geometry_material)
-    geometry_material->invalidate(geometry_msaa_image.get());
-
-  if (z_prepass_material)
-    z_prepass_material->invalidate(geometry_depth_image.get());
-
-  if (shadow_material)
-    shadow_material->invalidate(shadow_depth_image.get());
 }
 
 auto
@@ -1160,17 +1220,17 @@ Renderer::run_z_prepass(std::uint32_t frame_index, const DrawList& draw_list)
     cmd, "Z Prepass", { 0.1F, 0.9F, 0.1F, 1.0F });
 
   CoreUtils::cmd_transition_to_depth_attachment(
-    cmd, geometry_depth_image->get_image());
+    cmd, geometry_depth_msaa_image->get_image());
 
   constexpr VkClearValue depth_clear = { .depthStencil = { 0.0f, 0 } };
   VkRenderingAttachmentInfo depth_attachment = {
     .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
     .pNext = nullptr,
-    .imageView = geometry_depth_image->get_view(),
+    .imageView = geometry_depth_msaa_image->get_view(),
     .imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
-    .resolveMode = VK_RESOLVE_MODE_NONE,
-    .resolveImageView = VK_NULL_HANDLE,
-    .resolveImageLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+    .resolveMode = VK_RESOLVE_MODE_AVERAGE_BIT,
+    .resolveImageView = geometry_depth_image->get_view(),
+    .resolveImageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
     .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
     .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
     .clearValue = depth_clear,
@@ -1285,7 +1345,7 @@ Renderer::run_geometry_pass(std::uint32_t frame_index,
   VkRenderingAttachmentInfo depth_attachment = {
     .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
     .pNext = nullptr,
-    .imageView = geometry_depth_image->get_view(),
+    .imageView = geometry_depth_msaa_image->get_view(),
     .imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
     .resolveMode = VK_RESOLVE_MODE_NONE,
     .resolveImageView = VK_NULL_HANDLE,
@@ -1431,6 +1491,138 @@ Renderer::run_bloom_pass(uint32_t frame_index) -> void
   bloom_pass->record(cmd, *descriptor_set_manager, frame_index);
 
   compute_command_buffer->end_timer(frame_index, "bloom_pass");
+}
+
+auto
+Renderer::run_identifier_pass(const std::uint32_t frame_index,
+                              const DrawList& draw_list) -> void
+{
+  ZoneScopedN("Identifier pass");
+
+  command_buffer->begin_timer(frame_index, "identifier_pass");
+
+  const VkCommandBuffer& cmd = command_buffer->get(frame_index);
+  Util::Vulkan::cmd_begin_debug_label(
+    cmd, "Identifier Pass", { 0.3F, 0.0F, 0.9F, 1.0F });
+
+  CoreUtils::cmd_transition_to_color_attachment(cmd,
+                                                identifier_image->get_image());
+
+  constexpr VkClearValue identifier_colour = { .color = { 0.f } };
+
+  VkRenderingAttachmentInfo colour_attachment = {
+    .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+    .pNext = nullptr,
+    .imageView = identifier_image->get_view(),
+    .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+    .resolveMode = VK_RESOLVE_MODE_NONE,
+    .resolveImageView = VK_NULL_HANDLE,
+    .resolveImageLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+    .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+    .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+    .clearValue = identifier_colour,
+  };
+
+  VkRenderingAttachmentInfo depth_attachment = {
+    .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+    .pNext = nullptr,
+    .imageView = geometry_depth_image->get_view(),
+    .imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+    .resolveMode = VK_RESOLVE_MODE_NONE,
+    .resolveImageView = VK_NULL_HANDLE,
+    .resolveImageLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+    .loadOp = VK_ATTACHMENT_LOAD_OP_LOAD,
+    .storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+    .clearValue = {},
+  };
+
+  const VkRenderingInfo rendering_info = {
+    .sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
+    .pNext = nullptr,
+    .flags = 0,
+    .renderArea = { { 0, 0 },
+                    { identifier_image->width(), identifier_image->height() } },
+    .layerCount = 1,
+    .viewMask = 0,
+    .colorAttachmentCount = 1,
+    .pColorAttachments = &colour_attachment,
+    .pDepthAttachment = &depth_attachment,
+    .pStencilAttachment = nullptr,
+  };
+
+  vkCmdBeginRendering(cmd, &rendering_info);
+
+  const VkViewport viewport = {
+    .x = 0.f,
+    .y = static_cast<float>(identifier_image->height()),
+    .width = static_cast<float>(identifier_image->width()),
+    .height = -static_cast<float>(identifier_image->height()),
+    .minDepth = 1.f,
+    .maxDepth = 0.f,
+  };
+  vkCmdSetViewport(cmd, 0, 1, &viewport);
+  vkCmdSetScissor(cmd, 0, 1, &rendering_info.renderArea);
+
+  auto& identifier_pipeline = identifier_material->get_pipeline();
+  vkCmdBindPipeline(
+    cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, identifier_pipeline.pipeline);
+
+  const std::vector sets{
+    descriptor_set_manager->get_set(frame_index),
+    identifier_material->prepare_for_rendering(frame_index),
+  };
+  vkCmdBindDescriptorSets(cmd,
+                          VK_PIPELINE_BIND_POINT_GRAPHICS,
+                          identifier_pipeline.layout,
+                          0,
+                          static_cast<std::uint32_t>(sets.size()),
+                          sets.data(),
+                          0,
+                          nullptr);
+
+  for (const auto& [cmd_info, offset, instance_count] : draw_list) {
+    const auto* submesh = cmd_info.mesh->get_submesh(cmd_info.submesh_index);
+    if (!submesh)
+      continue;
+
+    const auto& vb = cmd_info.mesh->get_vertex_buffer();
+    const auto& ib = cmd_info.mesh->get_index_buffer();
+
+    const VkDeviceSize vb_offset = submesh->vertex_offset * sizeof(Vertex);
+    const std::array vertex_buffers = { vb->get(),
+                                        instance_vertex_buffer->get() };
+    const std::array offsets = { vb_offset, 0ULL };
+
+    vkCmdBindVertexBuffers(cmd,
+                           0,
+                           static_cast<std::uint32_t>(vertex_buffers.size()),
+                           vertex_buffers.data(),
+                           offsets.data());
+    vkCmdBindIndexBuffer(cmd, ib->get(), 0, ib->get_index_type());
+
+    vkCmdBindDescriptorSets(cmd,
+                            VK_PIPELINE_BIND_POINT_GRAPHICS,
+                            identifier_pipeline.layout,
+                            0,
+                            1,
+                            &descriptor_set_manager->get_set(frame_index),
+                            0,
+                            nullptr);
+
+    vkCmdDrawIndexed(cmd,
+                     submesh->index_count,
+                     instance_count,
+                     submesh->index_offset,
+                     0,
+                     offset);
+  }
+
+  vkCmdEndRendering(cmd);
+  CoreUtils::cmd_transition_to_shader_read(cmd, identifier_image->get_image());
+
+  command_buffer->end_timer(frame_index, "identifier_pass");
+
+  Util::Vulkan::cmd_end_debug_label(cmd);
 }
 
 auto
@@ -1596,7 +1788,6 @@ Renderer::run_shadow_pass(std::uint32_t frame_index, const DrawList& draw_list)
                           sets.data(),
                           0,
                           nullptr);
-
   for (const auto& [cmd_info, offset, instance_count] : draw_list) {
     const auto* submesh = cmd_info.mesh->get_submesh(cmd_info.submesh_index);
     if (!submesh)
@@ -1616,9 +1807,6 @@ Renderer::run_shadow_pass(std::uint32_t frame_index, const DrawList& draw_list)
                            vertex_buffers.data(),
                            offsets.data());
     vkCmdBindIndexBuffer(cmd, ib->get(), 0, ib->get_index_type());
-
-    vkCmdBindPipeline(
-      cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, shadow_pipeline.pipeline);
 
     vkCmdBindDescriptorSets(cmd,
                             VK_PIPELINE_BIND_POINT_GRAPHICS,

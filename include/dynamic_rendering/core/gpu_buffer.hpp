@@ -1,8 +1,10 @@
 #pragma once
 
+#include "assets/pointer.hpp"
 #include "core/device.hpp"
 #include "core/util.hpp"
 #include "debug_utils.hpp"
+
 #include <cstring>
 #include <span>
 #include <string>
@@ -39,6 +41,7 @@ public:
       set_name(name);
     }
   }
+  ~GPUBuffer();
 
   static auto zero_initialise(const Device& device,
                               std::size_t bytes,
@@ -46,8 +49,6 @@ public:
                               bool mapped_on_create = false,
                               std::string_view name = {})
     -> std::unique_ptr<GPUBuffer>;
-
-  ~GPUBuffer();
 
   [[nodiscard]] auto get_usage_flags() const -> VkBufferUsageFlags
   {
@@ -68,6 +69,9 @@ public:
   template<AdmitsGPUBuffer T, std::size_t N = std::dynamic_extent>
   auto upload(std::span<const T, N> data) -> void
   {
+    if (data.empty()) {
+      return;
+    }
     const auto required_size = data.size_bytes();
     if (required_size > current_size)
       recreate(required_size);

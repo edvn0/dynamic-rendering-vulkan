@@ -19,6 +19,8 @@ struct sampler_info_hash
     h ^= std::hash<int>()(info.addressModeU) + 0x9e3779b9 + (h << 6) + (h >> 2);
     h ^= std::hash<int>()(info.addressModeV) + 0x9e3779b9 + (h << 6) + (h >> 2);
     h ^= std::hash<int>()(info.addressModeW) + 0x9e3779b9 + (h << 6) + (h >> 2);
+    h ^= std::hash<float>()(info.minLod) + 0x9e3779b9 + (h << 6) + (h >> 2);
+    h ^= std::hash<float>()(info.maxLod) + 0x9e3779b9 + (h << 6) + (h >> 2);
     return h;
   }
 };
@@ -33,12 +35,16 @@ struct sampler_info_equal
                     a.mipmapMode,
                     a.addressModeU,
                     a.addressModeV,
-                    a.addressModeW) == std::tie(b.magFilter,
-                                                b.minFilter,
-                                                b.mipmapMode,
-                                                b.addressModeU,
-                                                b.addressModeV,
-                                                b.addressModeW);
+                    a.addressModeW,
+                    b.minLod,
+                    b.maxLod) == std::tie(b.magFilter,
+                                          b.minFilter,
+                                          b.mipmapMode,
+                                          b.addressModeU,
+                                          b.addressModeV,
+                                          b.addressModeW,
+                                          b.minLod,
+                                          b.maxLod);
   }
 };
 

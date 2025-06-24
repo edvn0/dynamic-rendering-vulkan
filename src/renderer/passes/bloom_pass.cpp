@@ -65,14 +65,33 @@ BloomPass::BloomPass(const Device& d, const Image* fb, int mips)
       .sampler_config = SamplerConfiguration{},
       .debug_name = "blur_temp",
     });
+
+  final_upsample_material = Material::create(*device, "bloom_upsample").value();
 }
 
 void
-BloomPass::resize(const glm::uvec2& size)
+BloomPass::resize(const glm::uvec2& new_size)
 {
-  extract_image->resize(size.x, size.y);
+  extract_image->resize(new_size.x, new_size.y);
   extract_material->invalidate(source_image);
   extract_material->invalidate(extract_image.get());
+
+  glm::uvec2 current_size = glm::max(new_size / 2u, glm::uvec2(1));
+
+  for (auto& mip : mip_chain) {
+    mip.image->resize(current_size.x, current_size.y);
+    mip.downsample_material->invalidate(mip.image.get());
+    mip.blur_horizontal->invalidate(mip.image.get());
+    mip.blur_vertical->invalidate(mip.image.get());
+    mip.upsample_material->invalidate(mip.image.get());
+
+    current_size = glm::max(current_size / 2u, glm::uvec2(1));
+  }
+
+  blur_temp->resize(current_size.x, current_size.y);
+
+  final_upsample_material->invalidate(extract_image.get());
+  final_upsample_material->invalidate(mip_chain[0].image.get());
 }
 
 void
@@ -91,7 +110,7 @@ BloomPass::prepare(const uint32_t)
 auto
 BloomPass::get_output_image() const -> const Image&
 {
-  return *mip_chain.front().image;
+  return *extract_image;
 }
 
 auto
@@ -240,33 +259,59 @@ BloomPass::upsample_and_combine(const VkCommandBuffer cmd,
                                         "Bloom Upsample",
                                         { 0.4f, 1.0f, 0.6f, 1.0f } });
 
-  for (int i = static_cast<int>(mip_chain.size()) - 1; i > 0; --i) {
-    auto& lower = mip_chain[i];
-    auto& higher = mip_chain[i - 1];
+  for (int i = static_cast<int>(mip_chain.size()) - 1; i >= 0; --i) {
+    if (i == 0) {
+      // Final upsample: mip 0 -> extract_image
+      auto& current_mip = mip_chain[i];
 
-    const std::string label = "Upsample Mip " + std::to_string(i - 1);
-    Util::Vulkan::cmd_begin_debug_label(
-      cmd,
-      { VK_STRUCTURE_TYPE_DEBUG_UTILS_LABEL_EXT,
-        nullptr,
-        label.c_str(),
-        { 0.6f, 1.0f, 0.4f, 1.0f } });
+      const std::string label = "Final Upsample to Extract";
+      Util::Vulkan::cmd_begin_debug_label(
+        cmd, label, { 0.6f, 1.0f, 0.4f, 1.0f });
 
-    higher.upsample_material->upload("input_image", lower.image.get());
-    higher.upsample_material->upload("output_image", higher.image.get());
-    higher.upsample_material->invalidate(lower.image.get());
-    higher.upsample_material->invalidate(higher.image.get());
+      final_upsample_material->upload("input_image", current_mip.image.get());
+      final_upsample_material->upload("output_image", extract_image.get());
+      final_upsample_material->invalidate(current_mip.image.get());
+      final_upsample_material->invalidate(extract_image.get());
 
-    dispatch_compute(
-      cmd,
-      *higher.upsample_material,
-      std::array{
-        dsm.get_set(frame_index),
-        higher.upsample_material->prepare_for_rendering(frame_index),
-      },
-      { higher.image->width(), higher.image->height() });
+      dispatch_compute(
+        cmd,
+        *final_upsample_material,
+        std::array{
+          dsm.get_set(frame_index),
+          final_upsample_material->prepare_for_rendering(frame_index),
+        },
+        { extract_image->width(), extract_image->height() });
 
-    Util::Vulkan::cmd_end_debug_label(cmd); // Upsample Mip N
+      Util::Vulkan::cmd_end_debug_label(cmd); // Final Upsample
+    } else {
+      // Normal case: mip i -> mip i-1
+      auto& lower = mip_chain[i];
+      auto& higher = mip_chain[i - 1];
+
+      const std::string label = "Upsample Mip " + std::to_string(i - 1);
+      Util::Vulkan::cmd_begin_debug_label(
+        cmd,
+        { VK_STRUCTURE_TYPE_DEBUG_UTILS_LABEL_EXT,
+          nullptr,
+          label.c_str(),
+          { 0.6f, 1.0f, 0.4f, 1.0f } });
+
+      higher.upsample_material->upload("input_image", lower.image.get());
+      higher.upsample_material->upload("output_image", higher.image.get());
+      higher.upsample_material->invalidate(lower.image.get());
+      higher.upsample_material->invalidate(higher.image.get());
+
+      dispatch_compute(
+        cmd,
+        *higher.upsample_material,
+        std::array{
+          dsm.get_set(frame_index),
+          higher.upsample_material->prepare_for_rendering(frame_index),
+        },
+        { higher.image->width(), higher.image->height() });
+
+      Util::Vulkan::cmd_end_debug_label(cmd); // Upsample Mip N
+    }
   }
 
   Util::Vulkan::cmd_end_debug_label(cmd); // Bloom Upsample
@@ -289,8 +334,10 @@ BloomPass::dispatch_compute(const VkCommandBuffer cmd,
                           0,
                           nullptr);
 
-  const auto ceil_div = [](std::uint32_t x, std::uint32_t y) {
-    return (x + y - 1) / y;
+  static constexpr auto ceil_div = [](const std::uint32_t x) {
+    return (x + 8 - 1) / 8;
   };
-  vkCmdDispatch(cmd, ceil_div(extent.x, 8), ceil_div(extent.y, 8), 1);
+  auto groups = glm::uvec3(ceil_div(extent.x), ceil_div(extent.y), 1);
+
+  vkCmdDispatch(cmd, groups.x, groups.y, groups.z);
 }

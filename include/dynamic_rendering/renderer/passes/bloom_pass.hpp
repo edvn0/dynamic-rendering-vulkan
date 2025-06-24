@@ -37,6 +37,7 @@ private:
 
   Assets::Pointer<Image> extract_image;
   Assets::Pointer<Material> extract_material;
+  Assets::Pointer<Material> final_upsample_material;
   Assets::Pointer<Image> blur_temp;
 
   std::vector<BloomMip> mip_chain;

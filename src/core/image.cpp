@@ -457,6 +457,11 @@ Image::load_from_file(const Device& device,
              VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
     .aspect = VK_IMAGE_ASPECT_COLOR_BIT,
     .sample_count = VK_SAMPLE_COUNT_1_BIT,
+    .sampler_config = {
+      .min_lod = 0.0f,
+      .max_lod = static_cast<float>(1.0F + static_cast<float>(
+                        std::floor(std::log2(std::max(width, height))))),
+    },
     .allow_in_ui = true,
     .debug_name = std::filesystem::path{ path }.filename().string(),
   };
@@ -765,6 +770,11 @@ Image::load_from_file_with_staging(const Device& dev,
              VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
     .aspect = VK_IMAGE_ASPECT_COLOR_BIT,
     .sample_count = VK_SAMPLE_COUNT_1_BIT,
+    .sampler_config = {
+      .min_lod = 0.0f,
+      .max_lod = static_cast<float>(1.0F + static_cast<float>(
+                        std::floor(std::log2(std::max(width, height))))),
+    },
     .allow_in_ui = ui_allow,
     .debug_name = std::filesystem::path{ path }.filename().string(),
   };

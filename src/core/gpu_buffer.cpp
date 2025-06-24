@@ -1,5 +1,7 @@
 #include "core/gpu_buffer.hpp"
 
+#include "assets/asset_allocator.hpp"
+#include "assets/manager.hpp"
 #include "core/allocator.hpp"
 
 auto

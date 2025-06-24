@@ -60,7 +60,9 @@ public:
   Renderer(const Device&, const Window&, BS::priority_thread_pool&);
   ~Renderer();
 
-  auto submit(const DrawCommand&, const glm::mat4& = glm::mat4{ 1.0F }) -> void;
+  auto submit(const RendererSubmit&,
+              const glm::mat4& = glm::mat4{ 1.0F },
+              std::uint32_t optional_identifier = 0) -> void;
   auto submit_lines(const glm::vec3&, const glm::vec3&, float, const glm::vec4&)
     -> void;
   auto submit_aabb(const glm::vec3& min,
@@ -181,6 +183,7 @@ private:
   Assets::Pointer<Image> geometry_image;
   Assets::Pointer<Image> geometry_msaa_image;
   Assets::Pointer<Image> geometry_depth_image;
+  Assets::Pointer<Image> geometry_depth_msaa_image;
   Assets::Pointer<Material> z_prepass_material;
   Assets::Pointer<Material> geometry_material;
   Assets::Pointer<Material> geometry_wireframe_material;
@@ -197,6 +200,9 @@ private:
 
   Assets::Pointer<Image> shadow_depth_image;
   Assets::Pointer<Material> shadow_material;
+
+  Assets::Pointer<Image> identifier_image;
+  Assets::Pointer<Material> identifier_material;
 
   Assets::Pointer<Material> line_material;
 
@@ -218,10 +224,13 @@ private:
   std::uint32_t line_instance_count_this_frame{};
   auto upload_line_instance_data() -> void;
 
+  std::unique_ptr<GPUBuffer> identifier_buffer;
+
   std::unique_ptr<BloomPass> bloom_pass;
   auto run_bloom_pass(uint32_t uint32) -> void;
 
   DrawCommandMap draw_commands{};
+  IdentifierMap identifiers{};
   DrawCommandMap shadow_draw_commands{};
 
   std::unique_ptr<GPUBuffer> camera_uniform_buffer;
@@ -233,6 +242,7 @@ private:
                               const glm::mat4& inverse_proj,
                               const glm::vec3&) const -> void;
   auto update_shadow_buffers(std::uint32_t) -> void;
+  void update_identifiers();
 
   auto run_culling_compute_pass(std::uint32_t) -> void;
   auto run_skybox_pass(std::uint32_t) -> void;
@@ -245,6 +255,7 @@ private:
   {
     run_colour_correction_pass(frame_index);
   }
+  auto run_identifier_pass(std::uint32_t, const DrawList&) -> void;
 
   auto destroy() -> void;
 

@@ -90,7 +90,7 @@ private:
   template<typename T>
   static auto get_next_id()
   {
-    static std::uint32_t next_id = builtin_mesh_count;
+    static std::uint32_t next_id = builtin_max_id;
     return next_id++;
   }
 

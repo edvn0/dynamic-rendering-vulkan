@@ -28,6 +28,15 @@ struct Transform
 struct Tag
 {
   std::string name;
+  std::uint32_t identifier{ 0 };
+
+  Tag(std::string n, std::uint32_t id)
+    : name(std::move(n))
+    , identifier(id)
+  {
+  }
+
+  Tag() = default;
 };
 
 struct Hierarchy

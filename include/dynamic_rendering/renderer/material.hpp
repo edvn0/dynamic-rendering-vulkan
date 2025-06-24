@@ -50,7 +50,30 @@ public:
   ~Material();
 
   auto upload(std::string_view name, const GPUBuffer* buffer) -> void;
+  auto upload(const std::string_view name, const GPUBuffer& buffer) -> void
+  {
+    return upload(name, &buffer);
+  }
+  auto upload(const std::string_view name,
+              const Assets::Pointer<GPUBuffer>& buffer) -> void
+  {
+    return upload(name, buffer.get());
+  }
+  auto upload(const std::string_view name,
+              const std::unique_ptr<GPUBuffer>& buffer) -> void
+  {
+    return upload(name, buffer.get());
+  }
   auto upload(std::string_view name, const Image* image) -> void;
+  auto upload(const std::string_view name, const Image& image) -> void
+  {
+    return upload(name, &image);
+  }
+  auto upload(const std::string_view name, const Assets::Pointer<Image>& image)
+    -> void
+  {
+    return upload(name, image.get());
+  }
 
   auto use_albedo_map(const bool val = true)
   {

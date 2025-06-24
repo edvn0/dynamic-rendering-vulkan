@@ -15,22 +15,35 @@ public:
     return !tag_to_entity.contains(name);
   }
 
-  auto register_tag(std::string_view name, entt::entity e) -> bool
+  auto register_tag(const std::string_view name, entt::entity e) -> bool
   {
-    auto key = std::string(name);
-    const auto [it, inserted] = tag_to_entity.try_emplace(key, e);
+    const auto key = std::string(name);
+    const auto [it, inserted] =
+      tag_to_entity.try_emplace(key, TagTuple{ e, allocate_unique_id() });
     return inserted;
   }
 
-  auto unregister_tag(std::string_view name) -> void
+  auto unregister_tag(const std::string_view name) -> void
   {
-    tag_to_entity.erase(name);
+    if (const auto it = tag_to_entity.find(name); it != tag_to_entity.end()) {
+      deallocate_unique_id(it->second.unique_id);
+      tag_to_entity.erase(it);
+    }
   }
 
-  auto get_entity(std::string_view name) const -> std::optional<entt::entity>
+  auto get_entity(const std::string_view name) const
+    -> std::optional<entt::entity>
   {
-    if (auto it = tag_to_entity.find(name); it != tag_to_entity.end())
-      return it->second;
+    if (const auto it = tag_to_entity.find(name); it != tag_to_entity.end())
+      return it->second.entity;
+    return std::nullopt;
+  }
+
+  auto get_unique_id(const std::string_view name) const
+    -> std::optional<std::uint64_t>
+  {
+    if (const auto it = tag_to_entity.find(name); it != tag_to_entity.end())
+      return it->second.unique_id;
     return std::nullopt;
   }
 
@@ -45,7 +58,41 @@ public:
   }
 
 private:
-  string_hash_map<entt::entity> tag_to_entity;
+  struct TagTuple
+  {
+    entt::entity entity;
+    std::uint32_t unique_id;
+  };
+
+  auto allocate_unique_id() -> std::uint32_t
+  {
+    if (!free_ids.empty()) {
+      const auto id = free_ids.back();
+      free_ids.pop_back();
+      return id;
+    }
+    return next_id++;
+  }
+
+  auto deallocate_unique_id(const std::uint32_t id) -> void
+  {
+    if (id + 1 == next_id) {
+      --next_id;
+
+      while (!free_ids.empty() && free_ids.back() + 1 == next_id) {
+        free_ids.pop_back();
+        --next_id;
+      }
+    } else {
+      free_ids.insert(
+        std::ranges::upper_bound(free_ids, id, std::greater<std::uint32_t>()),
+        id);
+    }
+  }
+
+  string_hash_map<TagTuple> tag_to_entity;
+  std::uint32_t next_id{ 1 }; // Start at 1, reserve 0 for "invalid"
+  std::vector<std::uint32_t> free_ids;
 };
 
 class Scene

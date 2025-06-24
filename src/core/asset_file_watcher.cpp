@@ -72,15 +72,17 @@ AssetFileWatcher::collect_dirty() -> string_hash_set
 {
   using namespace std::chrono;
 
-  {
-    std::shared_lock lock(dirty_mutex);
-    if (pending_changes.empty()) {
-      return {};
-    }
+  if (!dirty_flag.load(std::memory_order_acquire)) {
+    return {};
   }
 
   ZoneScopedN("Collect dirty files");
   std::unique_lock lock(dirty_mutex);
+
+  if (pending_changes.empty()) {
+    dirty_flag.store(false, std::memory_order_release);
+    return {};
+  }
 
   string_hash_set ready;
   ready.reserve(pending_changes.size());
@@ -97,6 +99,10 @@ AssetFileWatcher::collect_dirty() -> string_hash_set
                       }
                       return false;
                     });
+
+  if (pending_changes.empty()) {
+    dirty_flag.store(false, std::memory_order_release);
+  }
 
   return ready;
 }
@@ -117,4 +123,6 @@ AssetFileWatcher::handleFileAction(efsw::WatchID /*watchid*/,
   std::unique_lock lock(dirty_mutex);
   auto full_path = std::filesystem::path{ directory } / filename;
   pending_changes[full_path.string()] = std::chrono::steady_clock::now();
+
+  dirty_flag.store(true, std::memory_order_release);
 }

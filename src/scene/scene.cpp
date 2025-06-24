@@ -29,15 +29,18 @@
 Scene::Scene(const std::string_view n)
   : scene_name(n) {};
 
-Entity
-Scene::create_entity(std::string_view n)
+auto
+Scene::create_entity(std::string_view n) -> Entity
 {
   std::string final_name = n.empty() ? "Entity" : std::string(n);
   if (!tag_registry.is_unique(final_name))
     final_name = tag_registry.generate_unique_name(final_name);
   const entt::entity handle = registry.create();
   tag_registry.register_tag(final_name, handle);
-  registry.emplace<Component::Tag>(handle, final_name);
+
+  const auto unique_id = tag_registry.get_unique_id(final_name).value();
+
+  registry.emplace<Component::Tag>(handle, final_name, unique_id);
   registry.emplace<Component::Transform>(handle);
   return { handle, this };
 }
@@ -542,6 +545,7 @@ Scene::on_render(Renderer& renderer) -> void
        auto&& [entity, mesh, transform] : view.each()) {
     const auto* material_component =
       registry.try_get<Component::Material>(entity);
+    const auto* identifier = registry.try_get<Component::Tag>(entity);
     Assets::Handle<Material> mat{};
     if (material_component) {
       mat = material_component->material;
@@ -554,7 +558,8 @@ Scene::on_render(Renderer& renderer) -> void
         .override_material = mat,
         .casts_shadows = mesh.casts_shadows,
       },
-      transform.compute());
+      transform.compute(),
+      identifier->identifier);
 
     if (mesh.draw_aabb) {
       std::ranges::for_each(

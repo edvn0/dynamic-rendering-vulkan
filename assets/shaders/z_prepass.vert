@@ -12,6 +12,8 @@ layout(location = 5) in vec4 a_model_matrix_row1;
 layout(location = 6) in vec4 a_model_matrix_row2;
 layout(location = 7) in vec4 a_model_matrix_row3;
 
+precise invariant gl_Position;
+
 void main()
 {
     mat4 model_matrix = RECONSTRUCT();

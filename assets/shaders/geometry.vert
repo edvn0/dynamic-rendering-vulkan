@@ -24,6 +24,8 @@ const mat4 shadow_bias_matrix = mat4(
 0.0, 0.0, 1.0, 0.0,
 0.5, 0.5, 0.0, 1.0);
 
+precise invariant gl_Position;
+
 void main()
 {
     mat4 model_matrix = RECONSTRUCT();

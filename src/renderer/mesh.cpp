@@ -14,23 +14,23 @@ namespace {
 
 struct SubmeshPerformanceStats
 {
-  size_t total_submeshes{ 0 };
-  size_t total_triangles{ 0 };
-  size_t total_vertices_in{ 0 };
-  size_t total_vertices_out{ 0 };
+  std::size_t total_submeshes{ 0 };
+  std::size_t total_triangles{ 0 };
+  std::size_t total_vertices_in{ 0 };
+  std::size_t total_vertices_out{ 0 };
   float total_acmr_before{ 0.f };
   float total_acmr_after{ 0.f };
-  size_t total_fetch_before{ 0 };
-  size_t total_fetch_after{ 0 };
+  std::size_t total_fetch_before{ 0 };
+  std::size_t total_fetch_after{ 0 };
 
-  unsigned int cache_size{ 32 };
-  unsigned int warp_size{ 0 };
-  unsigned int primgroup_size{ 0 };
+  std::uint32_t cache_size{ 32 };
+  std::uint32_t warp_size{ 0 };
+  std::uint32_t primgroup_size{ 0 };
 
   void accumulate(const std::vector<Vertex>& raw_vertices,
                   const std::vector<Vertex>& optimized_vertices,
-                  const std::vector<uint32_t>& raw_indices,
-                  const std::vector<uint32_t>& optimized_indices)
+                  const std::vector<std::uint32_t>& raw_indices,
+                  const std::vector<std::uint32_t>& optimized_indices)
   {
     static std::mutex mutex;
     std::unique_lock lock(mutex);
@@ -87,7 +87,7 @@ struct SubmeshPerformanceStats
   }
 };
 
-struct texture_context
+struct TextureContext
 {
   aiMaterial* ai_mat;
   const std::string& directory;
@@ -98,7 +98,7 @@ struct texture_context
 
 template<typename Setter>
 void
-try_upload_texture(texture_context ctx,
+try_upload_texture(TextureContext ctx,
                    aiTextureType type,
                    const std::string& slot,
                    Setter&& setter)
@@ -125,6 +125,16 @@ try_upload_texture(texture_context ctx,
   ctx.mat.upload(slot, image);
   setter(ctx.mat);
 }
+
+struct LoadedSubmesh
+{
+  std::vector<Vertex> vertices;
+  std::vector<std::uint32_t> indices;
+  AABB aabb;
+  std::uint32_t material_index;
+  glm::mat4 transform;
+  std::int32_t parent_index;
+};
 
 LoadedSubmesh
 process_mesh_impl(const aiMesh* mesh,
@@ -418,6 +428,9 @@ auto
 StaticMesh::load_from_file(const Device& device, const std::string& path)
   -> bool
 {
+  std::vector<Vertex> vertices;
+  std::vector<std::uint32_t> indices;
+
   ZoneScopedN("Load from file (ST)");
 
   namespace fs = std::filesystem;
@@ -468,7 +481,7 @@ StaticMesh::load_from_file(const Device& device, const std::string& path)
       continue;
 
     auto mat = std::move(maybe_mat.value());
-    texture_context ctx{ ai_mat, directory, device, loaded_textures, *mat };
+    TextureContext ctx{ ai_mat, directory, device, loaded_textures, *mat };
 
     try_upload_texture(ctx,
                        aiTextureType_DIFFUSE,
@@ -646,6 +659,10 @@ StaticMesh::load_from_file(const Device& device,
                            BS::priority_thread_pool* thread_pool,
                            const std::string& path) -> bool
 {
+
+  std::vector<Vertex> vertices;
+  std::vector<std::uint32_t> indices;
+
   ZoneScopedN("Load from file (MT)");
 
   namespace fs = std::filesystem;

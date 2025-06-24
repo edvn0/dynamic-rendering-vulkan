@@ -292,7 +292,7 @@ App::run() -> std::error_code
   }
 
   vkDeviceWaitIdle(device->get_device());
-  Assets::Manager::the().clear_all<StaticMesh, Image, Material>();
+  Assets::Manager::the().clear_all<StaticMesh, Image, Material, GPUBuffer>();
   MeshCache::destroy();
   Image::destroy_samplers();
   layer->on_destroy();

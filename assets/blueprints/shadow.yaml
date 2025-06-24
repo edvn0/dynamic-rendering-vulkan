@@ -11,6 +11,6 @@ depth_stencil:
   format: d32_sfloat
   compare_op: greater
   depth_bias:
-    constant_factor: 0.1
-    clamp: 50
-    slope_factor: 0
+    constant_factor: 0
+    clamp: 0.1
+    slope_factor: -1.0

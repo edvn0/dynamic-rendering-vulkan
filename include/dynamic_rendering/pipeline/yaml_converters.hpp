@@ -87,6 +87,8 @@ std::expected<VkFormat, ConversionError> inline string_to_vk_format(
     return VK_FORMAT_D32_SFLOAT;
   else if (format_str == "d24_unorm_s8")
     return VK_FORMAT_D24_UNORM_S8_UINT;
+  else if (format_str == "r32_uint")
+    return VK_FORMAT_R32_UINT;
 
   return std::unexpected(ConversionError("Unsupported format: " + format_str));
 }
@@ -105,6 +107,8 @@ std::expected<std::string, ConversionError> inline vk_format_to_string(
       return "d32_sfloat";
     case VK_FORMAT_D24_UNORM_S8_UINT:
       return "d24_unorm_s8";
+    case VK_FORMAT_R32_UINT:
+      return "r32_uint";
     default:
       return std::unexpected(ConversionError("Unsupported VkFormat value"));
   }
@@ -133,13 +137,13 @@ std::
 {
   if (fmt == "vec2")
     return VK_FORMAT_R32G32_SFLOAT;
-  else if (fmt == "vec3")
+  if (fmt == "vec3")
     return VK_FORMAT_R32G32B32_SFLOAT;
-  else if (fmt == "vec4")
+  if (fmt == "vec4")
     return VK_FORMAT_R32G32B32A32_SFLOAT;
-  else if (fmt == "r32_sfloat")
+  if (fmt == "r32_sfloat")
     return VK_FORMAT_R32_SFLOAT;
-  else if (fmt == "r32_uint")
+  if (fmt == "r32_uint")
     return VK_FORMAT_R32_UINT;
 
   return std::unexpected(

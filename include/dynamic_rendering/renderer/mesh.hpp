@@ -130,16 +130,6 @@ struct Submesh
   AABB local_aabb;
 };
 
-struct LoadedSubmesh
-{
-  std::vector<Vertex> vertices;
-  std::vector<std::uint32_t> indices;
-  AABB aabb;
-  std::uint32_t material_index;
-  glm::mat4 transform;
-  std::int32_t parent_index;
-};
-
 class StaticMesh
 {
 public:
@@ -219,8 +209,6 @@ public:
   }
 
 private:
-  std::vector<Vertex> vertices;
-  std::vector<std::uint32_t> indices;
   std::vector<Submesh> submeshes;
   std::unordered_map<const Submesh*, std::uint32_t> submesh_back_pointers;
 
