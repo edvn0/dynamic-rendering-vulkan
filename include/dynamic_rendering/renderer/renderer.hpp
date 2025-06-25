@@ -266,6 +266,14 @@ private:
   IdentifierMap identifiers{};
   DrawCommandMap shadow_draw_commands{};
 
+  using ReloadCallback = std::function<void(const PipelineBlueprint&)>;
+  struct MaterialRecord
+  {
+    Material* material_ptr; // NOTE: Always check nullptr here.
+    ReloadCallback reload_callback;
+  };
+  string_hash_map<MaterialRecord> material_registry;
+
   std::unique_ptr<GPUBuffer> camera_uniform_buffer;
   std::unique_ptr<GPUBuffer> shadow_camera_buffer;
   std::unique_ptr<GPUBuffer> frustum_buffer;

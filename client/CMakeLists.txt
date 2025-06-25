@@ -41,3 +41,8 @@ endif()
 if(CMAKE_BUILD_TYPE STREQUAL "Debug" OR CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo")
   target_compile_definitions(${PROJECT_NAME} PRIVATE IS_DEBUG)
 endif()
+
+target_compile_definitions(${PROJECT_NAME} PRIVATE
+            GLM_FORCE_LEFT_HANDED
+            GLM_FORCE_DEPTH_ZERO_TO_ONE
+    )

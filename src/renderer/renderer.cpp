@@ -594,6 +594,58 @@ Renderer::Renderer(const Device& dev,
   for (auto& t : techniques | std::views::values) {
     t->initialise(*this, image_technique_map, buffer_technique_map);
   }
+
+#pragma region Material reload
+#define REGISTER_MATERIAL(name_str, mat_ptr)                                   \
+  material_registry[name_str] = { mat_ptr,                                     \
+                                  [mat = mat_ptr](                             \
+                                    const PipelineBlueprint& blueprint) {      \
+                                    mat->reload(blueprint);                    \
+                                  } };
+
+#define REGISTER_TECHNIQUE_MATERIAL(name_str)                                  \
+  material_registry[name_str] = { techniques.at(name_str)->get_material(),     \
+                                  [tech = techniques.at(name_str).get()](      \
+                                    const PipelineBlueprint& blueprint) {      \
+                                    tech->get_material()->reload(blueprint);   \
+                                  } };
+
+  REGISTER_MATERIAL("main_geometry", geometry_material.get());
+  REGISTER_MATERIAL("shadow", shadow_material.get());
+  REGISTER_MATERIAL("z_prepass", z_prepass_material.get());
+  REGISTER_MATERIAL("skybox", skybox_material.get());
+  REGISTER_MATERIAL("colour_correction", colour_corrected_material.get());
+  REGISTER_MATERIAL("cull_prefix_sum_first",
+                    cull_prefix_sum_material_first.get());
+  REGISTER_MATERIAL("cull_prefix_sum_second",
+                    cull_prefix_sum_material_second.get());
+  REGISTER_MATERIAL("cull_prefix_sum_distribute",
+                    cull_prefix_sum_material_distribute.get());
+  REGISTER_MATERIAL("cull_scatter", cull_scatter_material.get());
+  REGISTER_MATERIAL("cull_visibility", cull_visibility_material.get());
+  REGISTER_MATERIAL("composite", composite_attachment_material.get());
+  REGISTER_MATERIAL("identifier", identifier_material.get());
+  REGISTER_MATERIAL("line", line_material.get());
+
+  for (const auto& name : techniques | std::views::keys) {
+    REGISTER_TECHNIQUE_MATERIAL(name);
+  }
+
+  material_registry["bloom_horizontal"] = {
+    nullptr,
+    [this](const PipelineBlueprint& blueprint) {
+      bloom_pass->reload_pipeline(blueprint, BloomPipeline::Horizontal);
+    }
+  };
+
+  material_registry["bloom_vertical"] = {
+    nullptr,
+    [this](const PipelineBlueprint& blueprint) {
+      bloom_pass->reload_pipeline(blueprint, BloomPipeline::Vertical);
+    }
+  };
+
+#pragma endregion
 }
 
 auto
@@ -868,9 +920,6 @@ Renderer::update_uniform_buffers(const std::uint32_t fi,
 auto
 Renderer::begin_frame(const VP& matrices) -> void
 {
-  Logger::log_info("Projection:{}\nView:{}\n",
-                   glm::to_string(matrices.projection),
-                   glm::to_string(matrices.view));
   frame_index = swapchain->get_frame_index();
   const auto vp = matrices.projection * matrices.view;
   const auto position = matrices.view[3];
@@ -1116,23 +1165,15 @@ auto
 Renderer::update_material_by_name(const std::string& name,
                                   const PipelineBlueprint& blueprint) -> bool
 {
-
-  auto* mat = get_material_by_name(name);
-  if (mat) {
-    mat->reload(blueprint);
-    return true;
+  auto it = material_registry.find(name);
+  if (it == material_registry.end()) {
+    Logger::log_error(
+      "Renderer::update_material_by_name: Material '{}' not found.", name);
+    return false;
   }
 
-  // Special logic for other materials, such as bloom pass etc
-  if (name == "bloom_horizontal") {
-    bloom_pass->reload_pipeline(blueprint, BloomPipeline::Horizontal);
-    return true;
-  }
-  if (name == "bloom_vertical") {
-    bloom_pass->reload_pipeline(blueprint, BloomPipeline::Vertical);
-    return true;
-  }
-  return false;
+  it->second.reload_callback(blueprint);
+  return true;
 }
 
 #pragma region RenderPasses
