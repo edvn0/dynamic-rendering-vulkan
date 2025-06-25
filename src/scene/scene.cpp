@@ -25,12 +25,18 @@
 #include "renderer/editor_camera.hpp"
 #include "renderer/layer.hpp"
 #include "window/swapchain.hpp"
+#include <tracy/Tracy.hpp>
 
 Scene::Scene(const std::string_view n)
-  : scene_name(n) {};
+  : scene_name(n)
+{
+  scene_camera_entity = create_entity("SceneCamera");
+  scene_camera_entity.add_component<Component::FlyController>();
+  scene_camera_entity.add_component<Component::Camera>();
+};
 
 auto
-Scene::create_entity(std::string_view n) -> Entity
+Scene::create_entity(const std::string_view n) -> Entity
 {
   std::string final_name = n.empty() ? "Entity" : std::string(n);
   if (!tag_registry.is_unique(final_name))
@@ -42,6 +48,9 @@ Scene::create_entity(std::string_view n) -> Entity
 
   registry.emplace<Component::Tag>(handle, final_name, unique_id);
   registry.emplace<Component::Transform>(handle);
+
+  registry.emplace<Component::Hierarchy>(handle);
+
   return { handle, this };
 }
 
@@ -296,7 +305,6 @@ Scene::draw_entity_item(entt::entity entity, const std::string_view tag)
                           ImVec4(0.3f, 0.6f, 0.9f, 0.8f));
   }
 
-  // Entity collapsing header
   bool expanded = ImGui::CollapsingHeader(tag.data());
 
   if (ImGui::IsItemClicked()) {
@@ -307,21 +315,13 @@ Scene::draw_entity_item(entt::entity entity, const std::string_view tag)
     ImGui::PopStyleColor(3);
   }
 
-  // Show components when expanded
   if (expanded) {
     ImGui::Indent();
 
-    // Transform component
     if (auto* transform = registry.try_get<Component::Transform>(entity)) {
       if (ImGui::TreeNode("Transform")) {
-
-        // Position
         draw_vector3_slider("Position", transform->position, -1000.0f, 1000.0f);
-
-        // Rotation (quaternion with euler angles)
         draw_quaternion_slider("Rotation", transform->rotation);
-
-        // Scale
         draw_vector3_slider("Scale", transform->scale, 0.001f, 100.0f);
         ImGui::TreePop();
       }
@@ -377,6 +377,23 @@ Scene::draw_entity_item(entt::entity entity, const std::string_view tag)
       }
     }
 
+    if (auto* light = registry.try_get<Component::PointLight>(entity)) {
+      if (ImGui::TreeNode("Point Light")) {
+        bool modified = false;
+        modified |= draw_vector3_slider("Color", light->color, 0.0f, 10.0f);
+        modified |=
+          ImGui::SliderFloat("Intensity", &light->intensity, 0.0f, 100.0f);
+        modified |= ImGui::SliderFloat("Radius", &light->radius, 0.0f, 100.0f);
+        modified |= ImGui::Checkbox("Cast Shadows", &light->cast_shadows);
+
+        if (modified) {
+          light->dirty = true;
+        }
+
+        ImGui::TreePop();
+      }
+    }
+
     // Add component button
     ImGui::Separator();
     if (ImGui::Button("Add Component")) {
@@ -388,6 +405,7 @@ Scene::draw_entity_item(entt::entity entity, const std::string_view tag)
       if (ImGui::MenuItem("Mesh")) {
       }
       if (ImGui::MenuItem("Light")) {
+        e.add_component<Component::PointLight>();
       }
       if (ImGui::MenuItem("Camera")) {
       }
@@ -403,6 +421,73 @@ Scene::draw_entity_item(entt::entity entity, const std::string_view tag)
   }
 
   ImGui::PopID();
+}
+
+auto
+Scene::draw_entity_hierarchy(entt::entity entity,
+                             const std::string& search_term) -> bool
+{
+  ZoneScopedN("Scene::draw_entity_hierarchy");
+  const auto& tag = registry.get<Component::Tag>(entity);
+  const auto& hierarchy = registry.get<Component::Hierarchy>(entity);
+  std::string name = tag.name;
+  std::ranges::transform(name, name.begin(), ::tolower);
+  const bool name_matches = name.contains(search_term);
+
+  bool child_matches = false;
+  for (entt::entity child : hierarchy.children) {
+    if (has_matching_child(child, search_term)) {
+      child_matches = true;
+      break;
+    }
+  }
+
+  if (!name_matches && !child_matches)
+    return false;
+
+  ImGuiTreeNodeFlags flags =
+    ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth |
+    (hierarchy.children.empty() ? ImGuiTreeNodeFlags_Leaf : 0) |
+    (selected_entity == entity ? ImGuiTreeNodeFlags_Selected : 0);
+
+  const bool node_open =
+    ImGui::TreeNodeEx(reinterpret_cast<void*>(static_cast<uintptr_t>(entity)),
+                      flags,
+                      "%s",
+                      tag.name.c_str());
+
+  if (ImGui::IsItemClicked())
+    selected_entity = entity;
+
+  if (node_open) {
+    for (entt::entity child : hierarchy.children) {
+      draw_entity_hierarchy(child, search_term);
+    }
+    ImGui::TreePop();
+  }
+
+  return true;
+}
+
+auto
+Scene::has_matching_child(entt::entity entity, const std::string& search_term)
+  -> bool
+{
+  const auto& tag = registry.get<Component::Tag>(entity);
+  const auto& hierarchy = registry.get<Component::Hierarchy>(entity);
+
+  std::string name = tag.name;
+  std::ranges::transform(name, name.begin(), ::tolower);
+
+  if (name.contains(search_term))
+    return true;
+
+  for (const auto& child : hierarchy.children) {
+    if (has_matching_child(child, search_term))
+      return true;
+  }
+
+  return false;
 }
 
 auto
@@ -457,70 +542,17 @@ Scene::on_interface() -> void
 
   ImGui::BeginChild("EntityList", ImVec2(0, 0), true);
 
-  for (auto&& [entity, tag] : registry.view<Component::Tag>().each()) {
-    if (!search_term.empty()) {
-      std::string entity_name = tag.name;
-      std::ranges::transform(entity_name, entity_name.begin(), ::tolower);
-      if (!entity_name.contains(search_term)) {
-        continue;
-      }
-    }
+  for (auto&& [entity, tag, hierarchy] :
+       registry.view<Component::Tag, Component::Hierarchy>().each()) {
 
-    draw_entity_item(entity, tag.name);
+    if (hierarchy.parent == entt::null) {
+      draw_entity_hierarchy(entity, search_term);
+    }
   }
 
   ImGui::EndChild();
 
   ImGui::End();
-
-  if (scene_camera_entity.valid()) {
-    auto* camera = scene_camera_entity.try_get<Component::Camera>();
-
-    if (auto* transform = scene_camera_entity.try_get<Component::Transform>();
-        camera && transform) {
-      glm::mat4 view = glm::inverse(transform->compute());
-      const glm::mat4& projection = camera->projection;
-
-      ImGuizmo::SetOrthographic(false);
-      ImGuizmo::SetDrawlist(ImGui::GetForegroundDrawList());
-
-      ImGuizmo::SetRect(vp_min.x, vp_min.y, vp_max.x, vp_max.y);
-
-      glm::mat4 model = transform->compute();
-
-      ImGuizmo::Manipulate(glm::value_ptr(view),
-                           glm::value_ptr(projection),
-                           ImGuizmo::OPERATION::TRANSLATE,
-                           ImGuizmo::LOCAL,
-                           glm::value_ptr(model));
-
-      if (ImGuizmo::IsUsing()) {
-        glm::vec3 skew{};
-        glm::vec3 translation{};
-        glm::vec3 scale{};
-        glm::vec4 perspective{};
-        glm::quat rotation{};
-
-        if (glm::decompose(
-              model, scale, rotation, translation, skew, perspective)) {
-          constexpr float scale_min = 0.001f;
-          scale.x = glm::max(glm::abs(scale.x), scale_min) * glm::sign(scale.x);
-          scale.y = glm::max(glm::abs(scale.y), scale_min) * glm::sign(scale.y);
-          scale.z = glm::max(glm::abs(scale.z), scale_min) * glm::sign(scale.z);
-
-          if (!glm::any(glm::isnan(rotation)) &&
-              glm::length2(rotation) > 0.0001f)
-            rotation = glm::normalize(rotation);
-          else
-            rotation = glm::quat_identity<float, glm::defaultp>();
-
-          transform->position = translation;
-          transform->rotation = rotation;
-          transform->scale = scale;
-        }
-      }
-    }
-  }
 
   if (show_components && selected_entity != entt::null) {
     ImGui::Begin("Inspector", &show_components);
@@ -540,6 +572,31 @@ Scene::on_interface() -> void
 auto
 Scene::on_render(Renderer& renderer) -> void
 {
+  auto& point_light_system = renderer.get_point_light_system();
+  for (const auto view =
+         registry.view<Component::PointLight, const Component::Transform>();
+       auto&& [entity, light, transform] : view.each()) {
+    if (light.dirty) {
+      point_light_system.update_light_position(entt::to_integral(entity),
+                                               transform.position);
+      point_light_system.update_light_component(entt::to_integral(entity),
+                                                light);
+      light.dirty = false;
+    }
+
+    if (IS_DEBUG) {
+      const glm::vec4 colour = { light.intensity * light.color, 1.0F };
+      auto mesh = Assets::builtin_cube();
+      renderer.submit(
+        {
+          .mesh = mesh.get(),
+        },
+        transform.compute(),
+        colour,
+        entt::to_integral(entity));
+    }
+  }
+
   for (const auto view =
          registry.view<Component::Mesh, const Component::Transform>();
        auto&& [entity, mesh, transform] : view.each()) {
@@ -592,12 +649,19 @@ Scene::selected_is_valid() const -> bool
 }
 
 auto
-Scene::on_resize(const EditorCamera& camera, std::uint32_t w, std::uint32_t h)
-  -> void
+Scene::on_resize(const EditorCamera& camera) -> void
 {
   if (auto* cam = scene_camera_entity.try_get<Component::Camera>();
       nullptr != cam) {
-    cam->on_resize(calculate_aspect_ratio<float>(w, h));
+    const auto& config = camera.get_projection_config();
+    cam->fov = config.fov;
+    cam->znear = config.znear;
+    cam->zfar = config.zfar;
+    cam->aspect = config.aspect;
+    cam->projection = camera.get_projection();
+    cam->inverse_projection = camera.get_inverse_projection();
+    cam->view = camera.get_view();
+    cam->dirty = true;
   }
 
   scene_camera_entity.get_component<Component::Transform>().position =
@@ -626,19 +690,6 @@ Scene::delete_entity(const entt::entity to_delete) -> void
   if (to_delete == selected_entity) {
     selected_entity = entt::null;
   }
-}
-
-auto
-Scene::on_initialise(const InitialisationParameters& parameters) -> void
-{
-  scene_camera_entity = create_entity("SceneCamera");
-  scene_camera_entity.add_component<Component::FlyController>();
-  auto& camera = scene_camera_entity.add_component<Component::Camera>();
-  camera.aspect = static_cast<float>(parameters.swapchain.get_width()) /
-                  static_cast<float>(parameters.swapchain.get_height());
-  camera.dirty = true;
-  auto& transform = scene_camera_entity.get_component<Component::Transform>();
-  transform.position = parameters.camera.get_position();
 }
 
 void

@@ -23,6 +23,8 @@ public:
   template<typename T>
   auto has_component() const -> bool;
 
+  auto set_parent(Entity parent) -> void;
+
   [[nodiscard]] auto raw() const -> entt::entity { return handle; }
   [[nodiscard]] auto valid() const -> bool;
 
