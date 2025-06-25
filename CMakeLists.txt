@@ -26,7 +26,6 @@ function(dynamic_rendering_set_target_options target)
 
     target_compile_definitions(${target} PRIVATE
             GLM_FORCE_LEFT_HANDED
-            GLM_FORCE_DEPTH_ZERO_TO_ONE
     )
 endfunction()
 
@@ -132,6 +131,7 @@ add_library(DynamicRendering_Renderer STATIC
         src/renderer/passes/bloom_pass.cpp
         src/renderer/techniques/shadow_gui_technique.cpp
         src/renderer/techniques/fullscreen_technique.cpp
+        src/renderer/point_light_system.cpp
 )
 
 target_include_directories(DynamicRendering_Renderer PUBLIC

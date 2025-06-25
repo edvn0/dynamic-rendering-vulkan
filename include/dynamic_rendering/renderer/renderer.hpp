@@ -1,6 +1,7 @@
 #pragma once
 
 #include "mesh.hpp"
+#include "point_light_system.hpp"
 
 #include <concepts>
 #include <glm/glm.hpp>
@@ -40,6 +41,9 @@ enum class RenderPass : std::uint8_t
   ComputeCullingVisibility,
   Skybox,
   ShadowGUI,
+  Composite,
+  BloomBlurHorizontal,
+  BloomBlurVertical,
 };
 auto
 to_renderpass(std::string_view name) -> RenderPass;
@@ -57,12 +61,22 @@ static_assert(sizeof(LineInstanceData) == 32,
 class Renderer
 {
 public:
-  Renderer(const Device&, const Window&, BS::priority_thread_pool&);
+  Renderer(const Device&,
+           const Swapchain&,
+           const Window&,
+           BS::priority_thread_pool&);
   ~Renderer();
 
   auto submit(const RendererSubmit&,
               const glm::mat4& = glm::mat4{ 1.0F },
+              const glm::vec4& = glm::vec4{ 1.0F },
               std::uint32_t optional_identifier = 0) -> void;
+  auto submit(const RendererSubmit& cmd,
+              const glm::mat4& transform = glm::mat4{ 1.0F },
+              std::uint32_t optional_identifier = 0) -> void
+  {
+    return submit(cmd, transform, glm::vec4{ 1.0F }, optional_identifier);
+  }
   auto submit_lines(const glm::vec3&, const glm::vec3&, float, const glm::vec4&)
     -> void;
   auto submit_aabb(const glm::vec3& min,
@@ -82,7 +96,7 @@ public:
     const glm::mat4& inverse_projection;
     const glm::mat4& view;
   };
-  auto begin_frame(std::uint32_t, const VP&) -> void;
+  auto begin_frame(const VP&) -> void;
   auto end_frame(std::uint32_t) -> void;
   auto resize(std::uint32_t, std::uint32_t) -> void;
   [[nodiscard]] auto get_output_image() const -> const Image&;
@@ -118,6 +132,8 @@ public:
   {
     return camera_environment;
   }
+  auto update_material_by_name(const std::string& name,
+                               const PipelineBlueprint&) -> bool;
   [[nodiscard]] auto get_material_by_name(const std::string& name) const
     -> Material*
   {
@@ -149,8 +165,9 @@ public:
         return cull_visibility_material.get();
       case ShadowGUI:
         return techniques.at("shadow_gui")->get_material();
+      case Composite:
+        return composite_attachment_material.get();
       default:
-        assert(false && "Unknown render pass name");
         return nullptr;
     }
   }
@@ -158,9 +175,24 @@ public:
     Badge<AssetReloader>) const -> VkDescriptorSetLayout;
   static auto get_white_texture() { return white_texture.get(); }
   static auto get_black_texture() { return black_texture.get(); }
+  static auto is_default_texture(const Image* image) -> bool
+  {
+    return image == white_texture.get() || image == black_texture.get();
+  }
+  [[nodiscard]] auto get_point_light_system() -> PointLightSystem&
+  {
+    return point_light_system;
+  }
+
+  [[nodiscard]] auto get_frame_index() const -> std::uint32_t
+  {
+    return frame_index;
+  }
 
 private:
   const Device* device{ nullptr };
+  const Swapchain* swapchain{ nullptr };
+  std::uint32_t frame_index{ 0 };
   BS::priority_thread_pool* thread_pool{ nullptr };
   std::unique_ptr<DescriptorSetManager> descriptor_set_manager;
 
@@ -171,6 +203,7 @@ private:
   Frustum light_frustum;
   LightEnvironment light_environment;
   CameraEnvironment camera_environment{};
+  PointLightSystem point_light_system{ *device };
 
   string_hash_map<Assets::Pointer<IFullscreenTechnique>> techniques;
 
@@ -251,9 +284,9 @@ private:
   auto run_geometry_pass(std::uint32_t, const DrawList&) -> void;
   auto run_composite_pass(std::uint32_t) -> void;
   auto run_colour_correction_pass(std::uint32_t) -> void;
-  auto run_postprocess_passes(const std::uint32_t frame_index) -> void
+  auto run_postprocess_passes(const std::uint32_t fi) -> void
   {
-    run_colour_correction_pass(frame_index);
+    run_colour_correction_pass(fi);
   }
   auto run_identifier_pass(std::uint32_t, const DrawList&) -> void;
 
