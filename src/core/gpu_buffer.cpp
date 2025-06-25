@@ -29,7 +29,7 @@ upload_to_device_buffer(const Device& device,
 
 auto
 GPUBuffer::zero_initialise(const Device& device,
-                           std::size_t bytes,
+                           const std::size_t bytes,
                            const VkBufferUsageFlags usage,
                            const bool mapped_on_create,
                            const std::string_view name)

@@ -13,15 +13,16 @@ layout(set = 1, binding = 1, rgba32f) uniform
 void
 main()
 {
-  ivec2 size = imageSize(input_image);
   ivec2 coord = ivec2(gl_GlobalInvocationID.xy);
+  ivec2 size = imageSize(input_image); // same size as output_image
 
   if (coord.x >= size.x || coord.y >= size.y)
     return;
 
   vec4 sum = vec4(0.0);
   for (int i = 0; i < N; ++i) {
-    ivec2 offset = ivec2(0, 1) * (i - M);
+    // Vertical offset
+    ivec2 offset = ivec2(0, i - M);
     ivec2 sample_coord = clamp(coord + offset, ivec2(0), size - 1);
     sum += coeffs[i] * imageLoad(input_image, sample_coord);
   }

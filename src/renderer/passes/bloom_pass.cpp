@@ -8,11 +8,57 @@
 
 #include <cassert>
 
+auto
+barrier(const Image& image, const auto cmd)
+{
+  VkImageMemoryBarrier barrier{};
+  barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+  barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT; // Previous write access
+  barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;  // Next read access
+  barrier.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
+  barrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+  barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+  barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+  barrier.image = image.get_image();
+  barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  barrier.subresourceRange.baseMipLevel = 0;
+  barrier.subresourceRange.levelCount = 1;
+  barrier.subresourceRange.baseArrayLayer = 0;
+  barrier.subresourceRange.layerCount = 1;
+
+  vkCmdPipelineBarrier(
+    cmd,
+    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, // From compute shader writing
+    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, // To compute shader reading
+    0,
+    0,
+    nullptr,
+    0,
+    nullptr,
+    1,
+    &barrier);
+}
+
 BloomPass::BloomPass(const Device& d, const Image* fb, int mips)
   : device(&d)
   , source_image(fb)
 {
   assert(mips >= 3 && mips < 6);
+
+  // Setup sampler config with CLAMP_TO_EDGE for all address modes
+  SamplerConfiguration clamp_to_edge_sampler_config;
+  clamp_to_edge_sampler_config.mag_filter = VK_FILTER_LINEAR;
+  clamp_to_edge_sampler_config.min_filter = VK_FILTER_LINEAR;
+  clamp_to_edge_sampler_config.mipmap_mode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+  clamp_to_edge_sampler_config.address_mode_u =
+    VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+  clamp_to_edge_sampler_config.address_mode_v =
+    VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+  clamp_to_edge_sampler_config.address_mode_w =
+    VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+  clamp_to_edge_sampler_config.border_color =
+    VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK;
+  clamp_to_edge_sampler_config.unnormalized_coordinates = VK_FALSE;
 
   extract_image = Image::create(
     *device,
@@ -21,7 +67,7 @@ BloomPass::BloomPass(const Device& d, const Image* fb, int mips)
       .format = VK_FORMAT_R32G32B32A32_SFLOAT,
       .usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
       .initial_layout = VK_IMAGE_LAYOUT_GENERAL,
-      .sampler_config = SamplerConfiguration{},
+      .sampler_config = clamp_to_edge_sampler_config,
       .debug_name = "bloom_extract_image",
     });
 
@@ -38,7 +84,7 @@ BloomPass::BloomPass(const Device& d, const Image* fb, int mips)
         .format = VK_FORMAT_R32G32B32A32_SFLOAT,
         .usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
         .initial_layout = VK_IMAGE_LAYOUT_GENERAL,
-        .sampler_config = SamplerConfiguration{},
+        .sampler_config = clamp_to_edge_sampler_config,
         .debug_name = "bloom_mip_" + std::to_string(i),
       });
 
@@ -51,20 +97,22 @@ BloomPass::BloomPass(const Device& d, const Image* fb, int mips)
       .upsample_material = Material::create(*device, "bloom_upsample").value(),
     };
 
+    auto blur_temp = Image::create(
+      *device,
+      {
+        .extent = current_size,
+        .format = VK_FORMAT_R32G32B32A32_SFLOAT,
+        .usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+        .initial_layout = VK_IMAGE_LAYOUT_GENERAL,
+        .sampler_config = clamp_to_edge_sampler_config,
+        .debug_name = "blur_temp_" + std::to_string(i),
+      });
+
+    blur_temp_chain.push_back(std::move(blur_temp));
+
     current_size = glm::max(current_size / 2u, glm::uvec2(1));
     mip_chain.emplace_back(std::move(mip));
   }
-
-  blur_temp = Image::create(
-    *device,
-    {
-      .extent = current_size,
-      .format = VK_FORMAT_R32G32B32A32_SFLOAT,
-      .usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-      .initial_layout = VK_IMAGE_LAYOUT_GENERAL,
-      .sampler_config = SamplerConfiguration{},
-      .debug_name = "blur_temp",
-    });
 
   final_upsample_material = Material::create(*device, "bloom_upsample").value();
 }
@@ -78,17 +126,17 @@ BloomPass::resize(const glm::uvec2& new_size)
 
   glm::uvec2 current_size = glm::max(new_size / 2u, glm::uvec2(1));
 
-  for (auto& mip : mip_chain) {
-    mip.image->resize(current_size.x, current_size.y);
-    mip.downsample_material->invalidate(mip.image.get());
-    mip.blur_horizontal->invalidate(mip.image.get());
-    mip.blur_vertical->invalidate(mip.image.get());
-    mip.upsample_material->invalidate(mip.image.get());
+  for (std::size_t i = 0; i < mip_chain.size(); ++i) {
+    mip_chain[i].image->resize(current_size.x, current_size.y);
+    mip_chain[i].downsample_material->invalidate(mip_chain[i].image.get());
+    mip_chain[i].blur_horizontal->invalidate(mip_chain[i].image.get());
+    mip_chain[i].blur_vertical->invalidate(mip_chain[i].image.get());
+    mip_chain[i].upsample_material->invalidate(mip_chain[i].image.get());
+
+    blur_temp_chain[i]->resize(current_size.x, current_size.y);
 
     current_size = glm::max(current_size / 2u, glm::uvec2(1));
   }
-
-  blur_temp->resize(current_size.x, current_size.y);
 
   final_upsample_material->invalidate(extract_image.get());
   final_upsample_material->invalidate(mip_chain[0].image.get());
@@ -98,6 +146,52 @@ void
 BloomPass::update_source(const Image* image)
 {
   source_image = image;
+}
+
+auto
+BloomPass::reload_pipeline(const PipelineBlueprint& blueprint,
+                           BloomPipeline pipeline_type) -> void
+{
+  for (const auto& mip : mip_chain) {
+    switch (pipeline_type) {
+      case BloomPipeline::Horizontal: {
+        mip.blur_horizontal->reload(blueprint);
+        mip.blur_horizontal->upload("input_image", mip.image.get());
+        mip.blur_horizontal->upload(
+          "output_image", blur_temp_chain[mip_chain.size() - 1].get());
+        mip.blur_horizontal->invalidate(mip.image.get());
+        mip.blur_horizontal->invalidate(
+          blur_temp_chain[mip_chain.size() - 1].get());
+        break;
+      }
+      case BloomPipeline::Vertical: {
+        mip.blur_vertical->reload(blueprint);
+        mip.blur_vertical->upload("input_image",
+                                  blur_temp_chain[mip_chain.size() - 1].get());
+        mip.blur_vertical->upload("output_image", mip.image.get());
+        mip.blur_vertical->invalidate(
+          blur_temp_chain[mip_chain.size() - 1].get());
+        mip.blur_vertical->invalidate(mip.image.get());
+        break;
+      }
+      case BloomPipeline::FinalUpsample: {
+        final_upsample_material->reload(blueprint);
+        final_upsample_material->upload("input_image", mip.image.get());
+        final_upsample_material->upload("output_image", extract_image.get());
+        final_upsample_material->invalidate(mip.image.get());
+        final_upsample_material->invalidate(extract_image.get());
+        break;
+      }
+      case BloomPipeline::Downsample: {
+        mip.downsample_material->reload(blueprint);
+        mip.downsample_material->upload("input_image", extract_image.get());
+        mip.downsample_material->upload("output_image", mip.image.get());
+        mip.downsample_material->invalidate(extract_image.get());
+        mip.downsample_material->invalidate(mip.image.get());
+        break;
+      }
+    }
+  }
 }
 
 void
@@ -162,6 +256,7 @@ BloomPass::downsample_and_blur(const VkCommandBuffer cmd,
 
   for (std::size_t i = 0; i < mip_chain.size(); ++i) {
     auto& mip = mip_chain[i];
+    auto& blur_temp = blur_temp_chain[i];
 
     const std::string mip_label = "Mip Level " + std::to_string(i);
     Util::Vulkan::cmd_begin_debug_label(
@@ -191,8 +286,9 @@ BloomPass::downsample_and_blur(const VkCommandBuffer cmd,
         mip.downsample_material->prepare_for_rendering(frame_index),
       },
       { mip.image->width(), mip.image->height() });
+    // TODO: Should this be input_image or mip.image?
+    barrier(*mip.image, cmd);
 
-    vkQueueWaitIdle(device->compute_queue());
     Util::Vulkan::cmd_end_debug_label(cmd); // Downsample
 
     Util::Vulkan::cmd_begin_debug_label(
@@ -215,8 +311,10 @@ BloomPass::downsample_and_blur(const VkCommandBuffer cmd,
                      },
                      { mip.image->width(), mip.image->height() });
 
-    vkQueueWaitIdle(device->compute_queue());
     Util::Vulkan::cmd_end_debug_label(cmd); // Blur Horizontal
+
+    // TODO: Should this be blur_temp or mip.image?
+    barrier(*mip.image, cmd);
 
     Util::Vulkan::cmd_begin_debug_label(
       cmd,
@@ -237,8 +335,9 @@ BloomPass::downsample_and_blur(const VkCommandBuffer cmd,
                        mip.blur_vertical->prepare_for_rendering(frame_index),
                      },
                      { mip.image->width(), mip.image->height() });
+    // TODO: Should this be blur_temp or mip.image?
+    barrier(*mip.image, cmd);
 
-    vkQueueWaitIdle(device->compute_queue());
     Util::Vulkan::cmd_end_debug_label(cmd); // Blur Vertical
 
     Util::Vulkan::cmd_end_debug_label(cmd); // Mip Level

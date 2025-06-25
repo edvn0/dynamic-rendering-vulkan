@@ -3,6 +3,8 @@
 #include "core/fs.hpp"
 #include "pipeline/blueprint_registry.hpp"
 
+#include "renderer/renderer.hpp"
+
 #include <assimp/Importer.hpp>
 #include <assimp/postprocess.h>
 #include <assimp/scene.h>
@@ -123,7 +125,10 @@ try_upload_texture(TextureContext ctx,
   }
 
   ctx.mat.upload(slot, image);
-  setter(ctx.mat);
+
+  if (!Renderer::is_default_texture(image)) {
+    setter(ctx.mat);
+  }
 }
 
 struct LoadedSubmesh
@@ -290,7 +295,9 @@ upload_materials_impl_secondary(
 
         auto thread_safe_try_upload = [&](const aiTextureType type,
                                           const std::string& slot,
-                                          auto&& setter) {
+                                          auto&& setter,
+                                          VkFormat image_format =
+                                            VK_FORMAT_R8G8B8A8_SRGB) {
           aiString tex_path;
           if (ai_mat->GetTexture(type, 0, &tex_path) != AI_SUCCESS)
             return;
@@ -307,7 +314,7 @@ upload_materials_impl_secondary(
             } else {
               // Load image with staging buffer
               auto image_result = Image::load_from_file_with_staging(
-                device, full_path, false, true, result.cmd);
+                device, full_path, false, true, result.cmd, image_format);
               if (!image_result.image)
                 return;
 
@@ -327,22 +334,31 @@ upload_materials_impl_secondary(
           // Upload to material
           if (image != nullptr) {
             result.mat->upload(slot, image);
-            setter(*result.mat);
+
+            if (!Renderer::is_default_texture(image)) {
+              setter(*result.mat);
+            }
           }
         };
 
         thread_safe_try_upload(aiTextureType_DIFFUSE,
                                "albedo_map",
                                [](Material& m) { m.use_albedo_map(); });
-        thread_safe_try_upload(aiTextureType_NORMALS,
-                               "normal_map",
-                               [](Material& m) { m.use_normal_map(); });
-        thread_safe_try_upload(aiTextureType_METALNESS,
-                               "metallic_map",
-                               [](Material& m) { m.use_metallic_map(); });
-        thread_safe_try_upload(aiTextureType_DIFFUSE_ROUGHNESS,
-                               "roughness_map",
-                               [](Material& m) { m.use_roughness_map(); });
+        thread_safe_try_upload(
+          aiTextureType_NORMALS,
+          "normal_map",
+          [](Material& m) { m.use_normal_map(); },
+          VK_FORMAT_R8G8B8A8_UNORM);
+        thread_safe_try_upload(
+          aiTextureType_METALNESS,
+          "metallic_map",
+          [](Material& m) { m.use_metallic_map(); },
+          VK_FORMAT_R8G8B8A8_UNORM);
+        thread_safe_try_upload(
+          aiTextureType_DIFFUSE_ROUGHNESS,
+          "roughness_map",
+          [](Material& m) { m.use_roughness_map(); },
+          VK_FORMAT_R8G8B8A8_UNORM);
         thread_safe_try_upload(aiTextureType_AMBIENT_OCCLUSION,
                                "ao_map",
                                [](Material& m) { m.use_ao_map(); });

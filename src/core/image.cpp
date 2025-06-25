@@ -447,11 +447,13 @@ Image::load_from_file(const Device& device,
     return nullptr;
   }
 
+  const auto mip_levels = 1 + static_cast<std::uint32_t>(
+                                std::floor(std::log2(std::max(width, height))));
+
   const auto img_config = ImageConfiguration{
     .extent = { static_cast<uint32_t>(width), static_cast<uint32_t>(height) },
     .format = VK_FORMAT_R8G8B8A8_SRGB,
-    .mip_levels = 1 + static_cast<std::uint32_t>(
-                        std::floor(std::log2(std::max(width, height)))),
+    .mip_levels =mip_levels,
     .array_layers = 1,
     .usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT |
              VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
@@ -459,8 +461,7 @@ Image::load_from_file(const Device& device,
     .sample_count = VK_SAMPLE_COUNT_1_BIT,
     .sampler_config = {
       .min_lod = 0.0f,
-      .max_lod = static_cast<float>(1.0F + static_cast<float>(
-                        std::floor(std::log2(std::max(width, height))))),
+      .max_lod = static_cast<float>(mip_levels),
     },
     .allow_in_ui = true,
     .debug_name = std::filesystem::path{ path }.filename().string(),
@@ -741,7 +742,8 @@ Image::load_from_file_with_staging(const Device& dev,
                                    const std::string& path,
                                    bool flip_y,
                                    bool ui_allow,
-                                   VkCommandBuffer cmd) -> ImageWithStaging
+                                   VkCommandBuffer cmd,
+                                   VkFormat image_format) -> ImageWithStaging
 {
   stbi_set_flip_vertically_on_load(flip_y ? 1 : 0);
 
@@ -760,11 +762,13 @@ Image::load_from_file_with_staging(const Device& dev,
   const size_t byte_count = static_cast<size_t>(width * height * 4);
   std::span<const std::uint8_t> rgba_data{ pixels, byte_count };
 
+  const auto mip_levels =
+    1 + static_cast<uint32_t>(std::floor(std::log2(std::max(width, height))));
   const auto config = ImageConfiguration{
     .extent = { static_cast<uint32_t>(width), static_cast<uint32_t>(height) },
-    .format = VK_FORMAT_R8G8B8A8_SRGB,
+    .format = image_format,
     .mip_levels =
-      1 + static_cast<uint32_t>(std::floor(std::log2(std::max(width, height)))),
+      mip_levels,
     .array_layers = 1,
     .usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT |
              VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
@@ -772,8 +776,7 @@ Image::load_from_file_with_staging(const Device& dev,
     .sample_count = VK_SAMPLE_COUNT_1_BIT,
     .sampler_config = {
       .min_lod = 0.0f,
-      .max_lod = static_cast<float>(1.0F + static_cast<float>(
-                        std::floor(std::log2(std::max(width, height))))),
+      .max_lod =static_cast<float>(mip_levels),
     },
     .allow_in_ui = ui_allow,
     .debug_name = std::filesystem::path{ path }.filename().string(),

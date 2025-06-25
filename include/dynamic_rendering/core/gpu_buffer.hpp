@@ -157,6 +157,11 @@ public:
     return true;
   }
 
+  [[nodiscard]] auto get_allocation() const -> const VmaAllocation&
+  {
+    return allocation;
+  }
+
 private:
   auto recreate(size_t size) -> void;
 

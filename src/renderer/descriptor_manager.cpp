@@ -13,6 +13,7 @@ DescriptorLayoutBuilder::create_layout(const Device& device) const
   -> VkDescriptorSetLayout
 {
   std::vector<VkDescriptorSetLayoutBinding> layout_bindings;
+  layout_bindings.reserve(bindings.size());
   for (const auto& meta : bindings) {
     layout_bindings.push_back({
       .binding = meta.binding,
@@ -22,7 +23,7 @@ DescriptorLayoutBuilder::create_layout(const Device& device) const
     });
   }
 
-  VkDescriptorSetLayoutCreateInfo layout_info{
+  const VkDescriptorSetLayoutCreateInfo layout_info{
     .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
     .bindingCount = static_cast<uint32_t>(layout_bindings.size()),
     .pBindings = layout_bindings.data(),
@@ -39,6 +40,7 @@ DescriptorLayoutBuilder::get_pool_sizes(const std::uint32_t count) const
   -> std::vector<VkDescriptorPoolSize>
 {
   std::vector<VkDescriptorPoolSize> sizes;
+  sizes.reserve(bindings.size());
   for (const auto& meta : bindings) {
     sizes.push_back({
       .type = meta.descriptor_type,
@@ -80,8 +82,8 @@ DescriptorSetManager::~DescriptorSetManager()
 }
 
 auto
-DescriptorSetManager::allocate_sets(std::span<GPUBuffer*> buffers,
-                                    std::span<Image*> images) -> void
+DescriptorSetManager::allocate_sets(const std::span<GPUBuffer*> buffers,
+                                    const std::span<Image*> images) -> void
 {
   // Allocate descriptor sets
   std::vector layouts(frames_in_flight, descriptor_set_layout);
@@ -123,6 +125,16 @@ DescriptorSetManager::allocate_sets(std::span<GPUBuffer*> buffers,
       }
       assert(meta.image && "DescriptorSetManager::allocate_sets: no matching "
                            "Image for descriptor");
+    } else if (meta.descriptor_type == VK_DESCRIPTOR_TYPE_STORAGE_BUFFER) {
+      meta.buffer = nullptr;
+      for (auto* buf : buffers) {
+        if (buf->get_name() == meta.name) {
+          meta.buffer = buf;
+          meta.element_size = divided_by_image_count(buf->get_size());
+        }
+      }
+      assert(meta.buffer && "DescriptorSetManager::allocate_sets: no matching "
+                            "GPUBuffer for descriptor");
     }
   }
 
@@ -151,7 +163,8 @@ DescriptorSetManager::update_sets(const std::span<VkDescriptorSet> sets) const
         .descriptorType = meta.descriptor_type,
       };
 
-      if (meta.descriptor_type == VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER) {
+      if (meta.descriptor_type == VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER ||
+          meta.descriptor_type == VK_DESCRIPTOR_TYPE_STORAGE_BUFFER) {
         buffers[index] = {
           .buffer = meta.buffer->get(),
           .offset = i * meta.element_size,

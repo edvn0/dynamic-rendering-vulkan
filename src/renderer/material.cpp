@@ -52,7 +52,10 @@ static auto
 merge_descriptor_binding(BindingSet& dst, VkDescriptorSetLayoutBinding& binding)
   -> void
 {
-  if (binding.descriptorType == VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER) {
+  ;
+  if (any(binding.descriptorType,
+          VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+          VK_DESCRIPTOR_TYPE_STORAGE_BUFFER)) {
     static constexpr auto stages = VK_SHADER_STAGE_VERTEX_BIT |
                                    VK_SHADER_STAGE_FRAGMENT_BIT |
                                    VK_SHADER_STAGE_COMPUTE_BIT;
@@ -571,7 +574,7 @@ Material::rebuild_pipeline(const PipelineBlueprint& blueprint)
   // Store the new layouts
   descriptor_set_layouts = std::move(new_layouts);
 
-  return std::move(*result);
+  return std::move(result.value());
 }
 
 auto
@@ -721,6 +724,7 @@ Material::prepare_for_rendering(const std::uint32_t frame_index)
   dirty.clear();
   return descriptor_sets[frame_index];
 }
+
 auto
 Material::generate_push_constant_data() const -> PushConstantInformation
 {
