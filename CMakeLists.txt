@@ -26,6 +26,7 @@ function(dynamic_rendering_set_target_options target)
 
     target_compile_definitions(${target} PRIVATE
             GLM_FORCE_LEFT_HANDED
+            GLM_FORCE_DEPTH_ZERO_TO_ONE
     )
 endfunction()
 

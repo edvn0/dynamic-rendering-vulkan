@@ -2,13 +2,13 @@
 
 #include <dynamic_rendering/dynamic_rendering.hpp>
 
-class AppLayer final
-  : public ILayer
-  , public DynamicRendering::IRayPickListener
-  , public DynamicRendering::ViewportBoundsListener
+struct FrametimeSmoother;
+struct FrameTimePlotter;
+
+class AppLayer final : public ILayer
 {
 public:
-  explicit AppLayer(const Device&, BS::priority_thread_pool*);
+  explicit AppLayer(const Device&, Renderer&, BS::priority_thread_pool*);
   ~AppLayer() override;
 
   auto on_destroy() -> void override;
@@ -20,22 +20,14 @@ public:
   auto on_initialise(const InitialisationParameters&) -> void override;
   auto get_camera_matrices(CameraMatrices&) const -> bool override;
 
-  auto on_viewport_bounds_changed(
-    const DynamicRendering::ViewportBounds& new_viewport_bounds)
-    -> void override
-  {
-    active_scene->update_viewport_bounds(new_viewport_bounds);
-  }
-  auto on_ray_pick(const glm::vec3& origin, const glm::vec3& direction)
-    -> void override;
-
 private:
-  const DynamicRendering::App* app{ nullptr };
+  Renderer* renderer{ nullptr };
   BS::priority_thread_pool* thread_pool{ nullptr };
 
-  void generate_scene();
-
+  void generate_scene(PointLightSystem&);
+  DynamicRendering::ViewportBounds viewport_bounds;
   glm::vec2 bounds{};
+  std::unique_ptr<EditorCamera> camera;
 
   std::shared_ptr<Scene> active_scene;
 
@@ -44,4 +36,9 @@ private:
 
   std::vector<glm::mat4> transforms;
   std::vector<Material> materials;
+
+  std::unique_ptr<FrametimeSmoother> smoother;
+  std::unique_ptr<FrameTimePlotter> plotter;
+
+  auto on_ray_pick(const glm::vec3& origin, const glm::vec3& direction) -> void;
 };

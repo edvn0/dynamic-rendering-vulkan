@@ -4,11 +4,8 @@
 
 struct InitialisationParameters
 {
-  const DynamicRendering::App& app;
-  const Device& device;
   const Window& window;
   const Swapchain& swapchain;
-  const EditorCamera& camera;
   const AssetFileWatcher& file_watcher;
   const AssetReloader& asset_reloader;
 };
