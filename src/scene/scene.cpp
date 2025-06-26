@@ -584,11 +584,12 @@ Scene::on_render(Renderer& renderer) -> void
       light.dirty = false;
     }
 
-    if constexpr (is_debug) {
+    if constexpr (!is_debug) {
       auto mesh = Assets::builtin_cube();
       renderer.submit(
         {
           .mesh = mesh.get(),
+          .override_material = point_light_system.get_material(),
         },
         transform.compute(),
         entt::to_integral(entity));

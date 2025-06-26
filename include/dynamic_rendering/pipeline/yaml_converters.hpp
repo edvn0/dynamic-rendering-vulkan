@@ -233,6 +233,74 @@ std::expected<ShaderStage, ConversionError> inline string_to_shader_stage(
     ConversionError("Unsupported shader stage: " + stage_str));
 }
 
+inline std::expected<VkBlendFactor, ConversionError>
+string_to_blend_factor(const std::string& str)
+{
+  if (str == "zero")
+    return VK_BLEND_FACTOR_ZERO;
+  if (str == "one")
+    return VK_BLEND_FACTOR_ONE;
+  if (str == "src_color")
+    return VK_BLEND_FACTOR_SRC_COLOR;
+  if (str == "one_minus_src_color")
+    return VK_BLEND_FACTOR_ONE_MINUS_SRC_COLOR;
+  if (str == "dst_color")
+    return VK_BLEND_FACTOR_DST_COLOR;
+  if (str == "one_minus_dst_color")
+    return VK_BLEND_FACTOR_ONE_MINUS_DST_COLOR;
+  if (str == "src_alpha")
+    return VK_BLEND_FACTOR_SRC_ALPHA;
+  if (str == "one_minus_src_alpha")
+    return VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+  if (str == "dst_alpha")
+    return VK_BLEND_FACTOR_DST_ALPHA;
+  if (str == "one_minus_dst_alpha")
+    return VK_BLEND_FACTOR_ONE_MINUS_DST_ALPHA;
+  return std::unexpected(ConversionError("Unsupported blend factor: " + str));
+}
+
+inline std::expected<VkBlendOp, ConversionError>
+string_to_blend_op(const std::string& str)
+{
+  if (str == "add")
+    return VK_BLEND_OP_ADD;
+  if (str == "subtract")
+    return VK_BLEND_OP_SUBTRACT;
+  if (str == "reverse_subtract")
+    return VK_BLEND_OP_REVERSE_SUBTRACT;
+  if (str == "min")
+    return VK_BLEND_OP_MIN;
+  if (str == "max")
+    return VK_BLEND_OP_MAX;
+  return std::unexpected(ConversionError("Unsupported blend op: " + str));
+}
+
+inline std::expected<VkColorComponentFlags, ConversionError>
+string_to_color_mask(const std::string& str)
+{
+  VkColorComponentFlags flags = 0;
+  for (const auto& ch : str) {
+    switch (ch) {
+      case 'r':
+        flags |= VK_COLOR_COMPONENT_R_BIT;
+        break;
+      case 'g':
+        flags |= VK_COLOR_COMPONENT_G_BIT;
+        break;
+      case 'b':
+        flags |= VK_COLOR_COMPONENT_B_BIT;
+        break;
+      case 'a':
+        flags |= VK_COLOR_COMPONENT_A_BIT;
+        break;
+      default:
+        return std::unexpected(ConversionError(
+          "Invalid color mask character: " + std::string(1, ch)));
+    }
+  }
+  return flags;
+}
+
 // YAML converters that use the expected-based helpers
 inline void
 log_error(const std::string& msg)
@@ -285,6 +353,145 @@ struct convert<VkFormat>
 };
 
 template<>
+struct convert<AttachmentBlendState>
+{
+  static bool decode(const Node& node, AttachmentBlendState& out)
+  {
+    const auto get_factor = [](const Node& n,
+                               const std::string& key,
+                               VkBlendFactor& out_val) -> bool {
+      if (!n[key])
+        return true; // optional
+      auto result = string_to_blend_factor(n[key].as<std::string>());
+      if (!result) {
+        log_error(result.error().message);
+        return false;
+      }
+      out_val = result.value();
+      return true;
+    };
+
+    const auto get_op =
+      [](const Node& n, const std::string& key, VkBlendOp& out_val) -> bool {
+      if (!n[key])
+        return true;
+      auto result = string_to_blend_op(n[key].as<std::string>());
+      if (!result) {
+        log_error(result.error().message);
+        return false;
+      }
+      out_val = result.value();
+      return true;
+    };
+
+    if (node["enabled"] && node["enabled"].as<bool>(false) == false) {
+      out = AttachmentBlendState{}; // Reset to default
+      return true;
+    }
+    out.enabled = node["enabled"].as<bool>(true);
+    if (!get_factor(node, "src_color", out.src_color_factor))
+      return false;
+    if (!get_factor(node, "dst_color", out.dst_color_factor))
+      return false;
+    if (!get_op(node, "color_op", out.color_op))
+      return false;
+    if (!get_factor(node, "src_alpha", out.src_alpha_factor))
+      return false;
+    if (!get_factor(node, "dst_alpha", out.dst_alpha_factor))
+      return false;
+    if (!get_op(node, "alpha_op", out.alpha_op))
+      return false;
+
+    if (node["color_mask"]) {
+      auto result = string_to_color_mask(node["color_mask"].as<std::string>());
+      if (!result) {
+        log_error(result.error().message);
+        return false;
+      }
+      out.color_write_mask = result.value();
+    }
+
+    return true;
+  }
+
+  static Node encode(const AttachmentBlendState& in)
+  {
+    Node node;
+    // Only encode if not default
+    if (in.is_default())
+      return node;
+
+    const auto encode_blend_factor = [](VkBlendFactor factor) -> std::string {
+      switch (factor) {
+        case VK_BLEND_FACTOR_ZERO:
+          return "zero";
+        case VK_BLEND_FACTOR_ONE:
+          return "one";
+        case VK_BLEND_FACTOR_SRC_COLOR:
+          return "src_color";
+        case VK_BLEND_FACTOR_ONE_MINUS_SRC_COLOR:
+          return "one_minus_src_color";
+        case VK_BLEND_FACTOR_DST_COLOR:
+          return "dst_color";
+        case VK_BLEND_FACTOR_ONE_MINUS_DST_COLOR:
+          return "one_minus_dst_color";
+        case VK_BLEND_FACTOR_SRC_ALPHA:
+          return "src_alpha";
+        case VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA:
+          return "one_minus_src_alpha";
+        case VK_BLEND_FACTOR_DST_ALPHA:
+          return "dst_alpha";
+        case VK_BLEND_FACTOR_ONE_MINUS_DST_ALPHA:
+          return "one_minus_dst_alpha";
+        default:
+          return "unknown";
+      }
+    };
+
+    const auto encode_blend_op = [](VkBlendOp op) -> std::string {
+      switch (op) {
+        case VK_BLEND_OP_ADD:
+          return "add";
+        case VK_BLEND_OP_SUBTRACT:
+          return "subtract";
+        case VK_BLEND_OP_REVERSE_SUBTRACT:
+          return "reverse_subtract";
+        case VK_BLEND_OP_MIN:
+          return "min";
+        case VK_BLEND_OP_MAX:
+          return "max";
+        default:
+          return "unknown";
+      }
+    };
+
+    const auto encode_mask = [](VkColorComponentFlags mask) -> std::string {
+      std::string result;
+      if (mask & VK_COLOR_COMPONENT_R_BIT)
+        result += "r";
+      if (mask & VK_COLOR_COMPONENT_G_BIT)
+        result += "g";
+      if (mask & VK_COLOR_COMPONENT_B_BIT)
+        result += "b";
+      if (mask & VK_COLOR_COMPONENT_A_BIT)
+        result += "a";
+      return result;
+    };
+
+    node["enabled"] = true; // Always encode enabled as true if not default
+    node["src_color"] = encode_blend_factor(in.src_color_factor);
+    node["dst_color"] = encode_blend_factor(in.dst_color_factor);
+    node["color_op"] = encode_blend_op(in.color_op);
+    node["src_alpha"] = encode_blend_factor(in.src_alpha_factor);
+    node["dst_alpha"] = encode_blend_factor(in.dst_alpha_factor);
+    node["alpha_op"] = encode_blend_op(in.alpha_op);
+    node["color_mask"] = encode_mask(in.color_write_mask);
+
+    return node;
+  }
+};
+
+template<>
 struct convert<ShaderStageInfo>
 {
   static bool decode(const Node& node, ShaderStageInfo& info)
@@ -322,12 +529,6 @@ struct convert<Attachment>
     }
 
     out.format = format_result.value();
-
-    if (node["blend_enable"])
-      out.blend_enable = node["blend_enable"].as<bool>();
-
-    if (node["write_mask_rgba"])
-      out.write_mask_rgba = node["write_mask_rgba"].as<bool>();
 
     return true;
   }
@@ -439,9 +640,6 @@ struct convert<PipelineBlueprint>
     }
     rhs.topology = topology_result.value();
 
-    if (node["blend"])
-      rhs.blend_enable = node["blend"]["enable"].as<bool>(false);
-
     if (node["depth_stencil"]) {
       auto& depth_stencil = node["depth_stencil"];
       rhs.depth_test = depth_stencil["depth_test"].as<bool>(false);
@@ -509,6 +707,20 @@ struct convert<PipelineBlueprint>
         rhs.msaa_samples = VK_SAMPLE_COUNT_64_BIT;
       else {
         log_error("Invalid sample count specified: " + samples);
+        return false;
+      }
+
+      if (node["blend_states"]) {
+        rhs.color_blend_states =
+          node["blend_states"].as<std::vector<AttachmentBlendState>>();
+      } else {
+        // Default blend state
+        rhs.color_blend_states.resize(rhs.attachments.size());
+      }
+
+      if (rhs.color_blend_states.size() != rhs.attachments.size()) {
+        log_error(
+          "Number of blend states does not match number of attachments");
         return false;
       }
     }

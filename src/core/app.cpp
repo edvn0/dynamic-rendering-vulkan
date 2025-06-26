@@ -83,6 +83,17 @@ App::App(const ApplicationArguments& args)
   }
 
   {
+    ZoneScopedN("Initialise Renderer textures");
+    Renderer::initialise_textures(*device);
+  }
+
+  {
+    ZoneScopedN("Init MeshCache and Asset Manager");
+    MeshCache::initialise(*device);
+    Assets::Manager::initialise(*device, &thread_pool);
+  }
+
+  {
     ZoneScopedN("Create renderer");
     renderer =
       std::make_unique<Renderer>(*device, *swapchain, *window, thread_pool);
@@ -104,12 +115,6 @@ App::App(const ApplicationArguments& args)
     file_watcher->start_monitoring();
 
     asset_reloader = std::make_unique<AssetReloader>(*device, *renderer);
-  }
-
-  {
-    ZoneScopedN("Init MeshCache and Asset Manager");
-    MeshCache::initialise(*device);
-    Assets::Manager::initialise(*device, &thread_pool);
   }
 }
 

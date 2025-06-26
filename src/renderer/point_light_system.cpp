@@ -1,5 +1,6 @@
 #include "renderer/point_light_system.hpp"
 
+#include "assets/manager.hpp"
 #include "core/allocator.hpp"
 #include "core/config.hpp"
 #include "core/device.hpp"
@@ -18,6 +19,9 @@ static constexpr auto size_buffer = sizeof(PointLightSSBO);
 PointLightSystem::PointLightSystem(const Device& d)
   : device(&d)
 {
+  point_light_material =
+    Assets::Manager::the().load<::Material>("main_geometry");
+
   static constexpr auto size = frames_in_flight * size_buffer;
   point_lights_gpu =
     GPUBuffer::zero_initialise(*device,

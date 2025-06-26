@@ -659,6 +659,13 @@ StaticMesh::load_from_file(const Device& device, const std::string& path)
     std::make_unique<VertexBuffer>(device, false, name + "_vertex_buffer");
   index_buffer = std::make_unique<IndexBuffer>(
     device, VK_INDEX_TYPE_UINT32, name + "_index_buffer");
+  position_only_vertex_buffer = std::make_unique<VertexBuffer>(
+    device, false, name + "_position_only_vertex_buffer");
+
+  auto only_positions = vertices | std::views::transform([](const Vertex& v) {
+                          return v.position;
+                        });
+  position_only_vertex_buffer->upload_vertices(only_positions);
 
   vertex_buffer->upload_vertices(std::span(vertices.data(), vertices.size()));
   index_buffer->upload_indices(std::span(indices.data(), indices.size()));
@@ -818,6 +825,14 @@ StaticMesh::load_from_file(const Device& device,
     std::make_unique<VertexBuffer>(device, false, name + "_vertex_buffer");
   index_buffer = std::make_unique<IndexBuffer>(
     device, VK_INDEX_TYPE_UINT32, name + "_index_buffer");
+  position_only_vertex_buffer = std::make_unique<VertexBuffer>(
+    device, false, name + "_position_only_vertex_buffer");
+
+  auto only_positions = vertices | std::views::transform([](const Vertex& v) {
+                          return v.position;
+                        });
+  position_only_vertex_buffer->upload_vertices(only_positions);
+
   vertex_buffer->upload_vertices(std::span(vertices.data(), vertices.size()));
   index_buffer->upload_indices(std::span(indices.data(), indices.size()));
 

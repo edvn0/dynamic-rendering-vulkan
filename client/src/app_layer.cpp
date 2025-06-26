@@ -651,6 +651,15 @@ auto
 AppLayer::generate_scene(PointLightSystem& pls) -> void
 {
   {
+    auto sponza = active_scene->create_entity("Sponza");
+    auto& mesh = sponza.add_component<Component::Mesh>("sponza/sponza.gltf");
+    mesh.casts_shadows = true;
+    auto& transform = sponza.get_component<Component::Transform>();
+    transform.scale = glm::vec3(0.01f, 0.01f, 0.01f);
+    // sponza.add_component<Component::Material>("main_geometry");
+  }
+
+  {
     auto entity = active_scene->create_entity("Ground");
     auto& transform = entity.get_component<Component::Transform>();
     auto& cube_mesh =
@@ -684,14 +693,14 @@ AppLayer::generate_scene(PointLightSystem& pls) -> void
   }
 
   auto all_lights = active_scene->create_entity("AllLightsParent");
-  for (auto i : std::views::iota(0, 128)) {
+  for (auto i : std::views::iota(0, 2048)) {
     auto point_light =
       active_scene->create_entity(std::format("PointLight_{}", i));
     auto& light = point_light.add_component<Component::PointLight>();
     auto& transform = point_light.get_component<Component::Transform>();
-    transform.position = glm::vec3(Utils::Random::random_float(-3.0f, 3.0f),
-                                   Utils::Random::random_float(-5.0f, 5.0F),
-                                   Utils::Random::random_float(-3.0f, 3.0f));
+    transform.position = glm::vec3(Utils::Random::random_float(-12.0f, 12.0f),
+                                   Utils::Random::random_float(-12.0f, 12.0f),
+                                   Utils::Random::random_float(-12.0f, 12.0f));
     transform.scale = 0.1F * glm::vec3(1.0f, 1.0f, 1.0f);
 
     light.color = Utils::Random::random_single_channel_colour();

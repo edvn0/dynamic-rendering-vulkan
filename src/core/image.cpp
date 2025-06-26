@@ -99,12 +99,15 @@ Image::recreate() -> void
   VmaAllocationCreateInfo alloc_info{};
   alloc_info.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
 
-  vmaCreateImage(device->get_allocator().get(),
-                 &image_info,
-                 &alloc_info,
-                 &image,
-                 &allocation,
-                 nullptr);
+  if (vmaCreateImage(device->get_allocator().get(),
+                     &image_info,
+                     &alloc_info,
+                     &image,
+                     &allocation,
+                     nullptr) != VK_SUCCESS) {
+    assert(false && "Failed to create image");
+    return;
+  }
 
   const bool is_array = array_layers > 1;
   VkImageViewType view_type = VK_IMAGE_VIEW_TYPE_2D;

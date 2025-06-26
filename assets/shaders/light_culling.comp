@@ -3,108 +3,184 @@
 #include "set0.glsl"
 #include "tiling_constants.glsl"
 
+#extension GL_EXT_debug_printf : enable
+
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 4) in;
 
-layout(std430, set = 1, binding = 1) restrict buffer writeonly LightIndexList {
-    uint lightIndices[];
+layout(std430, set = 1, binding = 1) restrict buffer writeonly LightIndexList
+{
+  uint light_indices[];
 };
 
-struct LightGridEntry {
-    uint offset;
-    uint count;
-    uint pad0;
-    uint pad1;
+struct LightGridEntry
+{
+  uint offset;
+  uint count;
+  uint pad0;
+  uint pad1;
 };
-layout(std430, set = 1, binding = 2) restrict buffer writeonly LightGridData {
-    LightGridEntry tileLightGrids[];
+layout(std430, set = 1, binding = 2) restrict buffer writeonly LightGridData
+{
+  LightGridEntry tile_light_grids[];
 };
 
-layout(std430, set = 1, binding = 3) restrict buffer writeonly LightIndexAllocator {
-    uint globalLightListCounter;
+layout(std430,
+       set = 1,
+       binding = 3) restrict buffer writeonly LightIndexAllocator
+{
+  uint global_light_list_counter;
 };
 
 // Shared memory for light culling per workgroup
-shared uint sharedLightIndices[MAX_LIGHTS_PER_TILE];
-shared uint sharedCount;
+shared uint shared_light_indices[MAX_LIGHTS_PER_TILE];
+shared uint shared_count;
 
-uint getTileIndex(uvec3 tileCoord, uvec3 tileGridSize) {
-    return tileCoord.z * tileGridSize.x * tileGridSize.y +
-    tileCoord.y * tileGridSize.x +
-    tileCoord.x;
+uint
+get_tile_index(uvec3 tile_coord, uvec3 tile_grid_size)
+{
+  return tile_coord.z * tile_grid_size.x * tile_grid_size.y +
+         tile_coord.y * tile_grid_size.x + tile_coord.x;
 }
 
-float linearDepth(uint slice, uint numSlices, float nearZ, float farZ) {
-    float sliceZ = float(slice) / float(numSlices);
-    return nearZ * pow(farZ / nearZ, sliceZ);
+float
+linear_depth(uint slice, uint num_slices, float near_z, float far_z)
+{
+  float slice_z = float(slice) / float(num_slices);
+  return near_z * pow(far_z / near_z, slice_z);
 }
 
-vec3 ndcToView(vec2 ndc, float z_clip) {
-    vec4 clip = vec4(ndc * 2.0 - 1.0, z_clip * 2.0 - 1.0, 1.0); // NDC Z from [0,1] → [-1,1]
-    vec4 view = camera_ubo.inverse_projection * clip;
-    return view.xyz / view.w;
+vec3
+ndc_to_view(vec2 ndc, float z_clip)
+{
+  // Fix for Vulkan: Y-axis is flipped compared to OpenGL
+  vec4 clip =
+    vec4(ndc.x * 2.0 - 1.0, -(ndc.y * 2.0 - 1.0), z_clip * 2.0 - 1.0, 1.0);
+  vec4 view = camera_ubo.inverse_projection * clip;
+  return view.xyz / view.w;
 }
 
-void main() {
-    uvec3 tileCoord = gl_GlobalInvocationID.xyz;
-    uvec2 tileCountXY = uvec2(ceil(camera_ubo.screen_size_near_far.xy / TILE_SIZE));
-    uvec3 tileGridSize = uvec3(tileCountXY, NUM_Z_SLICES);
+// Create frustum from tile bounds and depth slice
+struct Frustum
+{
+  vec3 corners[8];
+  vec3 center;
+  float radius;
+};
 
-    if (tileCoord.x >= tileGridSize.x ||
-    tileCoord.y >= tileGridSize.y ||
-    tileCoord.z >= tileGridSize.z) return;
+Frustum
+create_tile_frustum(vec2 tile_min,
+                    vec2 tile_max,
+                    float near_depth,
+                    float far_depth)
+{
+  Frustum frustum;
 
-    uint tileIndex = getTileIndex(tileCoord, tileGridSize);
+  // Calculate all 8 corners of the frustum
+  frustum.corners[0] = ndc_to_view(tile_min, near_depth); // near bottom-left
+  frustum.corners[1] =
+    ndc_to_view(vec2(tile_max.x, tile_min.y), near_depth); // near bottom-right
+  frustum.corners[2] = ndc_to_view(tile_max, near_depth);  // near top-right
+  frustum.corners[3] =
+    ndc_to_view(vec2(tile_min.x, tile_max.y), near_depth); // near top-left
+  frustum.corners[4] = ndc_to_view(tile_min, far_depth);   // far bottom-left
+  frustum.corners[5] =
+    ndc_to_view(vec2(tile_max.x, tile_min.y), far_depth); // far bottom-right
+  frustum.corners[6] = ndc_to_view(tile_max, far_depth);  // far top-right
+  frustum.corners[7] =
+    ndc_to_view(vec2(tile_min.x, tile_max.y), far_depth); // far top-left
 
-    vec2 tileMin = vec2(tileCoord.xy) * TILE_SIZE / camera_ubo.screen_size_near_far.xy;
-    vec2 tileMax = (vec2(tileCoord.xy) + 1.0) * TILE_SIZE / camera_ubo.screen_size_near_far.xy;
+  // Calculate center as average of all corners
+  frustum.center = vec3(0.0);
+  for (int i = 0; i < 8; ++i) {
+    frustum.center += frustum.corners[i];
+  }
+  frustum.center /= 8.0;
 
-   /* float far_plane = camera_ubo.screen_size_near_far.w;
-    float near_plane = camera_ubo.screen_size_near_far.z;
-    float nearD = linearDepth(tileCoord.z, NUM_Z_SLICES, far_plane, near_plane);
-    float farD = linearDepth(tileCoord.z + 1, NUM_Z_SLICES, far_plane, near_plane);
-    */
+  // Calculate bounding sphere radius
+  frustum.radius = 0.0;
+  for (int i = 0; i < 8; ++i) {
+    float dist = length(frustum.corners[i] - frustum.center);
+    frustum.radius = max(frustum.radius, dist);
+  }
 
-    vec3 center = 0.25 * (
-    ndcToView(tileMin, 1.0) +
-    ndcToView(vec2(tileMax.x, tileMin.y), 1.0) +
-    ndcToView(tileMax, 1.0) +
-    ndcToView(vec2(tileMin.x, tileMax.y), 1.0)
-    );
+  return frustum;
+}
 
-    float radius = length(ndcToView(tileMin, 1.0) - center);
+void
+main()
+{
+  uvec3 tile_coord = gl_GlobalInvocationID.xyz;
+  uvec2 tile_count_xy =
+    uvec2(ceil(camera_ubo.screen_size_near_far.xy / TILE_SIZE));
+  debugPrintfEXT(
+    "Tile coord %u %u %u", tile_coord.x, tile_coord.y, tile_coord.z);
+  uvec3 tile_grid_size = uvec3(tile_count_xy, NUM_Z_SLICES);
 
-    // Init shared memory
-    if (gl_LocalInvocationIndex == 0) {
-        sharedCount = 0;
+  if (tile_coord.x >= tile_grid_size.x || tile_coord.y >= tile_grid_size.y ||
+      tile_coord.z >= tile_grid_size.z)
+    return;
+
+  uint tile_index = get_tile_index(tile_coord, tile_grid_size);
+
+  vec2 tile_min =
+    vec2(tile_coord.xy) * TILE_SIZE / camera_ubo.screen_size_near_far.xy;
+  vec2 tile_max = (vec2(tile_coord.xy) + 1.0) * TILE_SIZE /
+                  camera_ubo.screen_size_near_far.xy;
+
+  // Calculate proper depth bounds for this Z-slice
+  float far_plane = camera_ubo.screen_size_near_far.w;
+  float near_plane = camera_ubo.screen_size_near_far.z;
+  float near_depth =
+    linear_depth(tile_coord.z, NUM_Z_SLICES, near_plane, far_plane);
+  float far_depth =
+    linear_depth(tile_coord.z + 1, NUM_Z_SLICES, near_plane, far_plane);
+
+  // Convert to NDC depth [0,1]
+  vec4 near_clip = camera_ubo.projection * vec4(0, 0, -near_depth, 1.0);
+  vec4 far_clip = camera_ubo.projection * vec4(0, 0, -far_depth, 1.0);
+  float near_ndc = (near_clip.z / near_clip.w) * 0.5 + 0.5;
+  float far_ndc = (far_clip.z / far_clip.w) * 0.5 + 0.5;
+
+  // Create frustum for this tile
+  Frustum tile_frustum =
+    create_tile_frustum(tile_min, tile_max, near_ndc, far_ndc);
+
+  // Initialize shared memory
+  if (gl_LocalInvocationIndex == 0) {
+    shared_count = 0;
+  }
+  memoryBarrierShared();
+  barrier();
+
+  // Light culling - test each light against the tile frustum
+  uint step_size = gl_WorkGroupSize.x * gl_WorkGroupSize.y * gl_WorkGroupSize.z;
+  for (uint i = gl_LocalInvocationIndex; i < point_light_buffer.light_count;
+       i += step_size) {
+    vec3 light_pos = point_light_buffer.lights[i].position;
+    float light_radius = point_light_buffer.lights[i].radius;
+
+    // Sphere-frustum intersection test using bounding sphere
+    float dist = distance(light_pos, tile_frustum.center);
+    if (dist < light_radius + tile_frustum.radius) {
+      uint index = atomicAdd(shared_count, 1);
+      if (index < MAX_LIGHTS_PER_TILE) {
+        shared_light_indices[index] = i;
+      }
     }
-    memoryBarrierShared();
-    barrier();
+  }
 
-    uint stepSize =gl_WorkGroupSize.x * gl_WorkGroupSize.y * gl_WorkGroupSize.z;
-    for (uint i = gl_LocalInvocationIndex; i < point_light_buffer.light_count; i += stepSize) {
-        vec3 lp = point_light_buffer.lights[i].position;
-        float lr = point_light_buffer.lights[i].radius;
-        float dist = distance(lp, center);
-        if (dist < lr + radius) {
-            uint index = atomicAdd(sharedCount, 1);
-            if (index < MAX_LIGHTS_PER_TILE) {
-                sharedLightIndices[index] = i;
-            }
-        }
+  barrier(); // All threads must complete writing to shared memory
+
+  // Write results to global buffers
+  if (gl_LocalInvocationIndex == 0) {
+    uint count = min(shared_count, MAX_LIGHTS_PER_TILE);
+    uint offset = atomicAdd(global_light_list_counter, count);
+
+    tile_light_grids[tile_index].offset = offset;
+    tile_light_grids[tile_index].count = count;
+
+    for (uint j = 0; j < count; ++j) {
+      light_indices[offset + j] = shared_light_indices[j];
     }
-
-    barrier(); // All threads must complete writing shared
-
-    // Write to global buffers
-    if (gl_LocalInvocationIndex == 0) {
-        uint count = min(sharedCount, MAX_LIGHTS_PER_TILE);
-        uint offset = atomicAdd(globalLightListCounter, count);
-
-        tileLightGrids[tileIndex].offset = offset;
-        tileLightGrids[tileIndex].count = count;
-
-        for (uint j = 0; j < count; ++j) {
-            lightIndices[offset + j] = sharedLightIndices[j];
-        }
-    }
+  }
 }

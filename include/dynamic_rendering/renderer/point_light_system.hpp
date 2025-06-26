@@ -35,19 +35,24 @@ public:
   auto update_light_component(std::uint32_t entity_id,
                               const Component::PointLight&) -> void;
   auto remove_light(std::uint32_t entity_id) -> void;
+  [[nodiscard]] auto get_material() const -> Assets::Handle<Material>
+  {
+    return point_light_material;
+  }
 
 private:
   const Device* device{ nullptr };
   std::unique_ptr<GPUBuffer> point_lights_gpu{ nullptr };
 
-  std::vector<std::uint32_t> light_index_to_entity;
-  std::vector<std::uint32_t> entity_to_light_index;
-  std::vector<glm::vec3> positions;
-  std::vector<glm::vec3> colors;
-  std::vector<float> intensities;
-  std::vector<float> radii;
-  std::vector<bool> cast_shadows;
-  std::vector<bool> dirty_flags;
+  Assets::Handle<Material> point_light_material{};
+  std::vector<std::uint32_t> light_index_to_entity{};
+  std::vector<std::uint32_t> entity_to_light_index{};
+  std::vector<glm::vec3> positions{};
+  std::vector<glm::vec3> colors{};
+  std::vector<float> intensities{};
+  std::vector<float> radii{};
+  std::vector<bool> cast_shadows{};
+  std::vector<bool> dirty_flags{};
 
   std::uint32_t active_light_count{ 0 };
   std::bitset<frames_in_flight> gpu_buffer_dirty{ false };

@@ -129,11 +129,55 @@ Renderer::initialise_techniques()
   image_technique_map["shadow_depth_image"] = shadow_depth_image.get();
   image_technique_map["scene_depth"] = geometry_depth_image.get();
 
-  buffer_technique_map["point_light_buffer"] = point_light_system.get_ssbo({});
+  buffer_technique_map["point_light_buffer"] = point_light_system->get_ssbo({});
 
   for (const auto& t : techniques | std::views::values) {
     t->initialise(*this, image_technique_map, buffer_technique_map);
   }
+}
+
+auto
+Renderer::initialise_textures(const Device& device) -> void
+{
+  static bool called = false;
+  if (called) {
+    return;
+  }
+
+  white_texture = Image::create(device,
+                                {
+                                  .extent = { 1, 1 },
+                                  .format = VK_FORMAT_R8G8B8A8_SRGB,
+                                  .usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
+                                           VK_IMAGE_USAGE_SAMPLED_BIT |
+                                           VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                                  .sample_count = VK_SAMPLE_COUNT_1_BIT,
+                                  .allow_in_ui = false,
+                                  .debug_name = "white_texture",
+                                });
+  static constexpr std::array<unsigned char, 4> white_pixel = {
+    0xff, 0xff, 0xff, 0xff
+  };
+  white_texture->upload_rgba(white_pixel);
+
+  black_texture = Image::create(device,
+                                {
+                                  .extent = { 1, 1 },
+                                  .format = VK_FORMAT_R8G8B8A8_SRGB,
+                                  .usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
+                                           VK_IMAGE_USAGE_SAMPLED_BIT |
+                                           VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                                  .sample_count = VK_SAMPLE_COUNT_1_BIT,
+                                  .allow_in_ui = false,
+                                  .debug_name = "black_texture",
+                                });
+
+  static constexpr std::array<unsigned char, 4> black_pixel = {
+    0x0, 0x0, 0x0, 0x0
+  };
+  black_texture->upload_rgba(black_pixel);
+
+  called = true;
 }
 
 Renderer::Renderer(const Device& dev,
@@ -144,6 +188,9 @@ Renderer::Renderer(const Device& dev,
   , swapchain(&sc)
   , thread_pool(&p)
 {
+
+  point_light_system = std::make_unique<PointLightSystem>(*device);
+
   DescriptorLayoutBuilder builder(renderer_bindings_metadata);
   descriptor_set_manager =
     std::make_unique<DescriptorSetManager>(*device, std::move(builder));
@@ -191,7 +238,8 @@ Renderer::Renderer(const Device& dev,
                     ImageConfiguration{
                       .extent = win.framebuffer_size(),
                       .format = VK_FORMAT_D32_SFLOAT,
-                      .usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+                      .usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT |
+                               VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT,
                       .aspect = VK_IMAGE_ASPECT_DEPTH_BIT,
                       .sample_count = sample_count,
                       .allow_in_ui = false,
@@ -492,34 +540,38 @@ Renderer::Renderer(const Device& dev,
   {
     light_culling_material = Material::create(*device, "light_culling").value();
 
+    // Buffer for atomic counter (binding = 3)
     global_light_counter_buffer = GPUBuffer::zero_initialise(
       *device,
       sizeof(std::uint32_t), // Just one uint32_t
       VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT |
-        VK_BUFFER_USAGE_TRANSFER_SRC_BIT // Optional, for CPU readback
-    );
-
-    constexpr std::size_t num_tiles = 9216;
+        VK_BUFFER_USAGE_TRANSFER_SRC_BIT, // Optional, for CPU readback,
+      true);
+    static constexpr auto tile_size = 16;
+    // Buffer for light grid data (binding = 2)
+    std::size_t num_tiles =
+      (geometry_image->width() * geometry_image->height()) / tile_size;
     light_grid_buffer = GPUBuffer::zero_initialise(
       *device,
       num_tiles * sizeof(uint32_t) * 4, // offset, count, pad0, pad1
       VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
 
-    constexpr std::size_t max_total_indices = 9216 * 256;
+    // Buffer for light indices (binding = 1)
+    constexpr std::size_t max_lights_per_tile = 64;
+    std::size_t max_total_indices = num_tiles * max_lights_per_tile;
     light_index_list_buffer = GPUBuffer::zero_initialise(
       *device,
       max_total_indices * sizeof(std::uint32_t),
       VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
 
-    // Bind this buffer to your light culling material
-    light_culling_material->upload("LightIndexList",
-                                   global_light_counter_buffer);
-    light_culling_material->upload("LightIndexAllocator",
-                                   light_index_list_buffer);
+    // CORRECTED: Bind buffers to correct bindings
+    light_culling_material->upload("LightIndexList", light_index_list_buffer);
     light_culling_material->upload("LightGridData", light_grid_buffer);
+    light_culling_material->upload("LightIndexAllocator",
+                                   global_light_counter_buffer);
 
-    geometry_material->upload("LightIndexList", global_light_counter_buffer);
-    geometry_material->upload("LightIndexAllocator", light_index_list_buffer);
+    // CORRECTED: Same fix for geometry material
+    geometry_material->upload("LightIndexList", light_index_list_buffer);
     geometry_material->upload("LightGridData", light_grid_buffer);
   }
 
@@ -545,42 +597,9 @@ Renderer::Renderer(const Device& dev,
   std::array uniforms{ camera_uniform_buffer.get(),
                        shadow_camera_buffer.get(),
                        frustum_buffer.get(),
-                       point_light_system.get_ssbo({}) };
+                       point_light_system->get_ssbo({}) };
   std::array images{ shadow_depth_image.get() };
   descriptor_set_manager->allocate_sets(std::span(uniforms), std::span(images));
-
-  white_texture = Image::create(*device,
-                                {
-                                  .extent = { 1, 1 },
-                                  .format = VK_FORMAT_R8G8B8A8_SRGB,
-                                  .usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
-                                           VK_IMAGE_USAGE_SAMPLED_BIT |
-                                           VK_IMAGE_USAGE_TRANSFER_DST_BIT,
-                                  .sample_count = VK_SAMPLE_COUNT_1_BIT,
-                                  .allow_in_ui = false,
-                                  .debug_name = "white_texture",
-                                });
-  static constexpr std::array<unsigned char, 4> white_pixel = {
-    0xff, 0xff, 0xff, 0xff
-  };
-  white_texture->upload_rgba(white_pixel);
-
-  black_texture = Image::create(*device,
-                                {
-                                  .extent = { 1, 1 },
-                                  .format = VK_FORMAT_R8G8B8A8_SRGB,
-                                  .usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
-                                           VK_IMAGE_USAGE_SAMPLED_BIT |
-                                           VK_IMAGE_USAGE_TRANSFER_DST_BIT,
-                                  .sample_count = VK_SAMPLE_COUNT_1_BIT,
-                                  .allow_in_ui = false,
-                                  .debug_name = "black_texture",
-                                });
-
-  static constexpr std::array<unsigned char, 4> black_pixel = {
-    0x0, 0x0, 0x0, 0x0
-  };
-  black_texture->upload_rgba(black_pixel);
 
   VkSemaphoreCreateInfo semaphore_create_info{
     .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
@@ -945,7 +964,7 @@ Renderer::begin_frame(const VP& matrices) -> void
   update_frustum(vp);
   update_identifiers();
 
-  point_light_system.upload_to_gpu(frame_index);
+  point_light_system->upload_to_gpu(frame_index);
 
   draw_commands.clear();
   shadow_draw_commands.clear();
@@ -1286,11 +1305,10 @@ Renderer::run_skybox_pass(std::uint32_t fi) -> void
                           0,
                           nullptr);
 
-  if (const auto mesh_expected =
-        MeshCache::the().get_mesh<MeshType::CubeOnlyPosition>();
+  if (const auto mesh_expected = MeshCache::the().get_mesh<MeshType::Cube>();
       mesh_expected.has_value()) {
     const auto& mesh = mesh_expected.value();
-    const auto& vertex_buffer = mesh->get_vertex_buffer();
+    const auto& vertex_buffer = mesh->get_position_only_vertex_buffer();
     const auto& index_buffer = mesh->get_index_buffer();
 
     const std::array vertex_buffers = {
@@ -1400,10 +1418,11 @@ Renderer::run_z_prepass(std::uint32_t fi, const DrawList& draw_list) -> void
     if (!submesh)
       continue;
 
-    const auto& vb = cmd_info.mesh->get_vertex_buffer();
+    const auto& vb = cmd_info.mesh->get_position_only_vertex_buffer();
     const auto& ib = cmd_info.mesh->get_index_buffer();
 
-    const VkDeviceSize vb_offset = submesh->vertex_offset * sizeof(Vertex);
+    const VkDeviceSize vb_offset =
+      submesh->vertex_offset * sizeof(PositionOnlyVertex);
     const std::array vertex_buffers = { vb->get(),
                                         instance_vertex_buffer->get() };
     const std::array offsets = { vb_offset, 0ULL };
@@ -1530,7 +1549,6 @@ Renderer::run_geometry_pass(std::uint32_t fi, const DrawList& draw_list) -> void
         : *submesh_material;
 
     material.upload("LightIndexList", global_light_counter_buffer);
-    material.upload("LightIndexAllocator", light_index_list_buffer);
     material.upload("LightGridData", light_grid_buffer);
 
     const auto& material_set = material.prepare_for_rendering(fi);
@@ -1715,10 +1733,11 @@ Renderer::run_identifier_pass(const std::uint32_t fi, const DrawList& draw_list)
     if (!submesh)
       continue;
 
-    const auto& vb = cmd_info.mesh->get_vertex_buffer();
+    const auto& vb = cmd_info.mesh->get_position_only_vertex_buffer();
     const auto& ib = cmd_info.mesh->get_index_buffer();
 
-    const VkDeviceSize vb_offset = submesh->vertex_offset * sizeof(Vertex);
+    const VkDeviceSize vb_offset =
+      submesh->vertex_offset * sizeof(PositionOnlyVertex);
     const std::array vertex_buffers = { vb->get(),
                                         instance_vertex_buffer->get() };
     const std::array offsets = { vb_offset, 0ULL };
@@ -1762,19 +1781,19 @@ Renderer::run_light_culling_pass() -> void
   const auto cmd = compute_command_buffer->get(frame_index);
   Util::Vulkan::cmd_begin_debug_label(
     cmd, "Light culling pass", { 1.0, 0.0, 0.0, 1.0 });
-  // Reset atomic counter (light list allocator)
 
+  // CORRECTED: Reset the COUNTER buffer, not the indices buffer
   {
     ZoneScopedN("Upload via one time buffer");
     static constexpr std::uint32_t zero = 0;
-    light_index_list_buffer->upload(
-      std::span{ &zero, 1 }); // make sure to flush it before dispatch
+    global_light_counter_buffer->upload(
+      std::span{ &zero, 1 }); // Reset atomic counter to 0
   }
 
-  // Tile group dimensions (screen size should be aligned with TILE_SIZE used
-  // in shader)
+  // Tile group dimensions (screen size should be aligned with TILE_SIZE used in
+  // shader)
   constexpr std::uint32_t tile_size = 16;
-  constexpr std::uint32_t num_z_slices = 64;
+  constexpr std::uint32_t num_z_slices = 24;
 
   const std::uint32_t tiles_x =
     (geometry_image->width() + tile_size - 1) / tile_size;
@@ -1782,7 +1801,10 @@ Renderer::run_light_culling_pass() -> void
     (geometry_image->height() + tile_size - 1) / tile_size;
   constexpr std::uint32_t tiles_z = num_z_slices;
 
-  // Bind and dispatch light culling compute
+  const std::uint32_t total_tiles = tiles_x * tiles_y * tiles_z;
+  assert(total_tiles <= 522240);
+  (void)total_tiles;
+
   compute_command_buffer->begin_timer(frame_index, "light_culling");
 
   const auto& pipeline = light_culling_material->get_pipeline();
@@ -1800,18 +1822,36 @@ Renderer::run_light_culling_pass() -> void
                           sets.data(),
                           0,
                           nullptr);
-  vkCmdDispatch(cmd, tiles_x, tiles_y, tiles_z);
+
+  // CORRECTED: Dispatch with proper workgroup sizing
+  // Your compute shader uses local_size_x = 8, local_size_y = 8, local_size_z =
+  // 4 So you need to dispatch ceil(tiles_x/8), ceil(tiles_y/8), ceil(tiles_z/4)
+  const std::uint32_t dispatch_x =
+    (tiles_x + 7) / 8; // Round up for workgroup size 8
+  const std::uint32_t dispatch_y =
+    (tiles_y + 7) / 8; // Round up for workgroup size 8
+  const std::uint32_t dispatch_z =
+    (tiles_z + 3) / 4; // Round up for workgroup size 4
+
+  vkCmdDispatch(cmd, dispatch_x, dispatch_y, dispatch_z);
+
+  // IMPROVED: Better pipeline barrier for compute->compute dependency
+  VkMemoryBarrier memory_barrier = {};
+  memory_barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+  memory_barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+  memory_barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
 
   vkCmdPipelineBarrier(cmd,
                        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
                        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
                        0,
-                       0,
-                       nullptr,
+                       1,
+                       &memory_barrier,
                        0,
                        nullptr,
                        0,
                        nullptr);
+
   compute_command_buffer->end_timer(frame_index, "light_culling");
   Util::Vulkan::cmd_end_debug_label(cmd);
 }
@@ -1983,10 +2023,11 @@ Renderer::run_shadow_pass(std::uint32_t fi, const DrawList& draw_list) -> void
     if (!submesh)
       continue;
 
-    const auto& vb = cmd_info.mesh->get_vertex_buffer();
+    const auto& vb = cmd_info.mesh->get_position_only_vertex_buffer();
     const auto& ib = cmd_info.mesh->get_index_buffer();
 
-    const VkDeviceSize vb_offset = submesh->vertex_offset * sizeof(Vertex);
+    const VkDeviceSize vb_offset =
+      submesh->vertex_offset * sizeof(PositionOnlyVertex);
     const std::array vertex_buffers = { vb->get(),
                                         instance_vertex_buffer->get() };
     const std::array offsets = { vb_offset, 0ULL };
@@ -2185,4 +2226,4 @@ Renderer::run_composite_pass(const std::uint32_t fi) -> void
   Util::Vulkan::cmd_end_debug_label(cmd);
 }
 
-#pragma endregion RenderPasses
+#pragma endregion RenderPas

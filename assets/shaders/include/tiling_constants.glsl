@@ -2,8 +2,8 @@
 #define _TILING_CONSTANTS_GLSL
 
 #define TILE_SIZE 16
-#define NUM_Z_SLICES 64
+#define NUM_Z_SLICES 24
 #define MAX_LIGHTS 4096
-#define MAX_LIGHTS_PER_TILE 256
+#define MAX_LIGHTS_PER_TILE 64
 
 #endif

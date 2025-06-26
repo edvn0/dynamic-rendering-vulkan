@@ -122,20 +122,30 @@ public:
 
   [[nodiscard]] auto get_renderer_descriptor_set_layout(
     Badge<AssetReloader>) const -> VkDescriptorSetLayout;
-  static auto get_white_texture() { return white_texture.get(); }
-  static auto get_black_texture() { return black_texture.get(); }
   static auto is_default_texture(const Image* image) -> bool
   {
     return image == white_texture.get() || image == black_texture.get();
   }
   [[nodiscard]] auto get_point_light_system() -> PointLightSystem&
   {
-    return point_light_system;
+    return *point_light_system;
   }
 
   [[nodiscard]] auto get_frame_index() const -> std::uint32_t
   {
     return frame_index;
+  }
+
+  static auto initialise_textures(const Device& device) -> void;
+  static auto get_white_texture()
+  {
+    assert(white_texture);
+    return white_texture.get();
+  }
+  static auto get_black_texture()
+  {
+    assert(black_texture);
+    return black_texture.get();
   }
 
 private:
@@ -152,7 +162,7 @@ private:
   Frustum light_frustum;
   LightEnvironment light_environment;
   CameraEnvironment camera_environment{};
-  PointLightSystem point_light_system{ *device };
+  std::unique_ptr<PointLightSystem> point_light_system;
 
   string_hash_map<Assets::Pointer<IFullscreenTechnique>> techniques;
 

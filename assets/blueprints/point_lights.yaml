@@ -4,12 +4,11 @@ shaders:
   - stage: fragment
     path: point_lights.frag
 vertex_input:
-  bindings: [ ]
-  attributes: [ ]
+  bindings: []
+  attributes: []
 attachments:
   - format: b8g8r8a8_srgb
     blend_enable: false
-    write_mask_rgba: true
 depth_stencil:
   depth_test: true
   depth_write: false

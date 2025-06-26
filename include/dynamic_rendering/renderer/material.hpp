@@ -74,6 +74,7 @@ public:
   {
     return upload(name, image.get());
   }
+  auto upload_default_textures() -> void;
 
   auto use_albedo_map(const bool val = true)
   {
@@ -171,8 +172,6 @@ private:
   auto rebuild_pipeline(const PipelineBlueprint&)
     -> std::expected<std::unique_ptr<CompiledPipeline>, MaterialError>;
   auto upload_storage_image(std::string_view, const Image*) -> void;
-
-  auto upload_default_textures() -> void;
 
   static auto create(const Device&, const PipelineBlueprint&)
     -> std::expected<std::unique_ptr<Material>, MaterialError>;
