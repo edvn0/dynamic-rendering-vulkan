@@ -1,0 +1,110 @@
+#version 450
+
+#include "set0.glsl"
+#include "tiling_constants.glsl"
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 4) in;
+
+layout(std430, set = 1, binding = 1) restrict buffer writeonly LightIndexList {
+    uint lightIndices[];
+};
+
+struct LightGridEntry {
+    uint offset;
+    uint count;
+    uint pad0;
+    uint pad1;
+};
+layout(std430, set = 1, binding = 2) restrict buffer writeonly LightGridData {
+    LightGridEntry tileLightGrids[];
+};
+
+layout(std430, set = 1, binding = 3) restrict buffer writeonly LightIndexAllocator {
+    uint globalLightListCounter;
+};
+
+// Shared memory for light culling per workgroup
+shared uint sharedLightIndices[MAX_LIGHTS_PER_TILE];
+shared uint sharedCount;
+
+uint getTileIndex(uvec3 tileCoord, uvec3 tileGridSize) {
+    return tileCoord.z * tileGridSize.x * tileGridSize.y +
+    tileCoord.y * tileGridSize.x +
+    tileCoord.x;
+}
+
+float linearDepth(uint slice, uint numSlices, float nearZ, float farZ) {
+    float sliceZ = float(slice) / float(numSlices);
+    return nearZ * pow(farZ / nearZ, sliceZ);
+}
+
+vec3 ndcToView(vec2 ndc, float z_clip) {
+    vec4 clip = vec4(ndc * 2.0 - 1.0, z_clip * 2.0 - 1.0, 1.0); // NDC Z from [0,1] → [-1,1]
+    vec4 view = camera_ubo.inverse_projection * clip;
+    return view.xyz / view.w;
+}
+
+void main() {
+    uvec3 tileCoord = gl_GlobalInvocationID.xyz;
+    uvec2 tileCountXY = uvec2(ceil(camera_ubo.screen_size_near_far.xy / TILE_SIZE));
+    uvec3 tileGridSize = uvec3(tileCountXY, NUM_Z_SLICES);
+
+    if (tileCoord.x >= tileGridSize.x ||
+    tileCoord.y >= tileGridSize.y ||
+    tileCoord.z >= tileGridSize.z) return;
+
+    uint tileIndex = getTileIndex(tileCoord, tileGridSize);
+
+    vec2 tileMin = vec2(tileCoord.xy) * TILE_SIZE / camera_ubo.screen_size_near_far.xy;
+    vec2 tileMax = (vec2(tileCoord.xy) + 1.0) * TILE_SIZE / camera_ubo.screen_size_near_far.xy;
+
+   /* float far_plane = camera_ubo.screen_size_near_far.w;
+    float near_plane = camera_ubo.screen_size_near_far.z;
+    float nearD = linearDepth(tileCoord.z, NUM_Z_SLICES, far_plane, near_plane);
+    float farD = linearDepth(tileCoord.z + 1, NUM_Z_SLICES, far_plane, near_plane);
+    */
+
+    vec3 center = 0.25 * (
+    ndcToView(tileMin, 1.0) +
+    ndcToView(vec2(tileMax.x, tileMin.y), 1.0) +
+    ndcToView(tileMax, 1.0) +
+    ndcToView(vec2(tileMin.x, tileMax.y), 1.0)
+    );
+
+    float radius = length(ndcToView(tileMin, 1.0) - center);
+
+    // Init shared memory
+    if (gl_LocalInvocationIndex == 0) {
+        sharedCount = 0;
+    }
+    memoryBarrierShared();
+    barrier();
+
+    uint stepSize =gl_WorkGroupSize.x * gl_WorkGroupSize.y * gl_WorkGroupSize.z;
+    for (uint i = gl_LocalInvocationIndex; i < point_light_buffer.light_count; i += stepSize) {
+        vec3 lp = point_light_buffer.lights[i].position;
+        float lr = point_light_buffer.lights[i].radius;
+        float dist = distance(lp, center);
+        if (dist < lr + radius) {
+            uint index = atomicAdd(sharedCount, 1);
+            if (index < MAX_LIGHTS_PER_TILE) {
+                sharedLightIndices[index] = i;
+            }
+        }
+    }
+
+    barrier(); // All threads must complete writing shared
+
+    // Write to global buffers
+    if (gl_LocalInvocationIndex == 0) {
+        uint count = min(sharedCount, MAX_LIGHTS_PER_TILE);
+        uint offset = atomicAdd(globalLightListCounter, count);
+
+        tileLightGrids[tileIndex].offset = offset;
+        tileLightGrids[tileIndex].count = count;
+
+        for (uint j = 0; j < count; ++j) {
+            lightIndices[offset + j] = sharedLightIndices[j];
+        }
+    }
+}

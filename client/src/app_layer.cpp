@@ -306,14 +306,16 @@ AppLayer::on_interface() -> void
     ImGui::DragFloat(
       "Far Plane", &light_environment.far_plane, 0.1f, 1.f, 500.f);
 
-    static constexpr std::array<const char*, 2> view_mode_names = {
-      "LookAtRH", "LookAtLH"
+    static constexpr std::array<const char*, 3> view_mode_names = {
+      "LookAtRH",
+      "LookAtLH",
+      "Default",
     };
-    static constexpr std::array<const char*, 4> projection_names = {
-      "OrthoRH_ZO", "OrthoRH_NO", "OrthoLH_ZO", "OrthoLH_NO"
+    static constexpr std::array<const char*, 5> projection_names = {
+      "OrthoRH_ZO", "OrthoRH_NO", "OrthoLH_ZO", "OrthoLH_NO", "Default",
     };
     int proj_index = static_cast<int>(light_environment.projection_mode);
-    assert(proj_index >= 0 && proj_index < 4);
+    assert(proj_index >= 0 && proj_index < 5);
     if (ImGui::Combo("Projection Mode",
                      &proj_index,
                      projection_names.data(),
@@ -323,7 +325,7 @@ AppLayer::on_interface() -> void
     }
 
     int view_index = static_cast<int>(light_environment.view_mode);
-    assert(view_index >= 0 && view_index < 2);
+    assert(view_index >= 0 && view_index < 3);
     if (ImGui::Combo("View Mode",
                      &view_index,
                      view_mode_names.data(),
@@ -366,9 +368,17 @@ AppLayer::on_interface() -> void
     ImVec2 cursor = ImGui::GetCursorPos();
     ImGui::SetCursorPos(ImVec2(cursor.x + (available.x - image_size.x) * 0.5f,
                                cursor.y + (available.y - image_size.y) * 0.5f));
+    ImGui::SetNextItemAllowOverlap(); // Optional but helps avoid warning
     if (auto texture_id = image.get_texture_id<ImTextureID>()) {
       ImGui::Image(*texture_id, ImVec2(image_size.x, image_size.y));
     }
+
+    ImGui::SetCursorScreenPos(ImGui::GetItemRectMin());
+    ImGui::InvisibleButton("ViewportInputRegion",
+                           ImVec2(image_size.x, image_size.y),
+                           ImGuiButtonFlags_MouseButtonLeft |
+                             ImGuiButtonFlags_MouseButtonRight |
+                             ImGuiButtonFlags_MouseButtonMiddle);
 
     const auto image_top_left =
       glm::vec2(ImGui::GetItemRectMin().x, ImGui::GetItemRectMin().y);
@@ -404,7 +414,7 @@ AppLayer::on_interface() -> void
       ImGuizmo::SetOrthographic(false);
 
       // Draws inside the renderer output.
-      ImGuizmo::SetDrawlist();
+      ImGuizmo::SetDrawlist(ImGui::GetWindowDrawList());
       ImGuizmo::SetRect(ImGui::GetWindowPos().x,
                         ImGui::GetWindowPos().y,
                         ImGui::GetWindowWidth(),
@@ -448,11 +458,22 @@ AppLayer::on_interface() -> void
     ImGui::End();
   }
 
-  if (ImGui::Begin("Shadow Output", nullptr, flags)) {
+  if (const auto* image = renderer->get_shadow_image();
+      image && ImGui::Begin("Shadow Output", nullptr, flags)) {
     ZoneScopedN("Shadow Output");
     auto size = ImGui::GetWindowSize();
-    auto texture_id =
-      renderer->get_shadow_image().get_texture_id<ImTextureID>();
+    auto texture_id = image->get_texture_id<ImTextureID>();
+    if (texture_id) {
+      ImGui::Image(*texture_id, size);
+    }
+    ImGui::End();
+  }
+
+  if (const auto* image = renderer->get_point_lights_image();
+      image && ImGui::Begin("Point lights", nullptr, flags)) {
+    ZoneScopedN("Point lights (GUI)");
+    auto size = ImGui::GetWindowSize();
+    auto texture_id = image->get_texture_id<ImTextureID>();
     if (texture_id) {
       ImGui::Image(*texture_id, size);
     }
@@ -606,7 +627,7 @@ AppLayer::on_initialise(const InitialisationParameters& params) -> void
 auto
 AppLayer::get_camera_matrices(CameraMatrices& out) const -> bool
 {
-  static constexpr auto prefer_editor = bool(IS_DEBUG);
+  static constexpr auto prefer_editor = true;
 
   if (prefer_editor) {
     return false;
@@ -632,7 +653,10 @@ AppLayer::generate_scene(PointLightSystem& pls) -> void
   {
     auto entity = active_scene->create_entity("Ground");
     auto& transform = entity.get_component<Component::Transform>();
-    entity.add_component<Component::Mesh>(Assets::builtin_cube());
+    auto& cube_mesh =
+      entity.add_component<Component::Mesh>(Assets::builtin_cube());
+    cube_mesh.casts_shadows = true;
+
     transform.position = glm::vec3(6.0f, -1.0f, 6.0f);
     transform.scale = glm::vec3(24.0f, 1.0f, 24.0f);
   }
@@ -642,7 +666,9 @@ AppLayer::generate_scene(PointLightSystem& pls) -> void
     for (int x = 0; x < 4; ++x) {
       auto entity =
         active_scene->create_entity(std::format("Cube_{}_{}", x, z));
-      entity.add_component<Component::Mesh>(Assets::builtin_cube());
+      auto& cube_mesh =
+        entity.add_component<Component::Mesh>(Assets::builtin_cube());
+      cube_mesh.casts_shadows = true;
       entity.add_component<CubeComponent>();
       entity.set_parent(cube_parent);
       auto& transform = entity.get_component<Component::Transform>();
@@ -658,14 +684,15 @@ AppLayer::generate_scene(PointLightSystem& pls) -> void
   }
 
   auto all_lights = active_scene->create_entity("AllLightsParent");
-  for (auto i : std::views::iota(0, 32)) {
+  for (auto i : std::views::iota(0, 128)) {
     auto point_light =
       active_scene->create_entity(std::format("PointLight_{}", i));
     auto& light = point_light.add_component<Component::PointLight>();
     auto& transform = point_light.get_component<Component::Transform>();
-    transform.position = glm::vec3(Utils::Random::random_float(-10.0f, 10.0f),
-                                   Utils::Random::random_float(1.0f, 5.0f),
-                                   Utils::Random::random_float(-10.0f, 10.0f));
+    transform.position = glm::vec3(Utils::Random::random_float(-3.0f, 3.0f),
+                                   Utils::Random::random_float(-5.0f, 5.0F),
+                                   Utils::Random::random_float(-3.0f, 3.0f));
+    transform.scale = 0.1F * glm::vec3(1.0f, 1.0f, 1.0f);
 
     light.color = Utils::Random::random_single_channel_colour();
     light.intensity = Utils::Random::random_float(0.5f, 7.0f);

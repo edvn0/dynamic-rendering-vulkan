@@ -8,3 +8,9 @@ static constexpr std::uint32_t frames_in_flight = 3;
 
 template<class T>
 using frame_array = std::array<T, frames_in_flight>;
+
+#ifdef IS_DEBUG
+static constexpr auto is_debug = true;
+#else
+static constexpr auto is_debug = false;
+#endif

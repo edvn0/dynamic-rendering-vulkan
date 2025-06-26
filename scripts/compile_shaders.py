@@ -27,6 +27,8 @@ def compile_shader(args: tuple[pathlib.Path, pathlib.Path, pathlib.Path, bool, b
             str(shader_path),
             '-o', str(output_spv),
             '-g',
+            '-O',
+            '-fpreserve-bindings',
             '-I', str(include_dir),
             '--target-env=vulkan1.4',
             '-x', 'glsl',

@@ -1,4 +1,4 @@
-#include "renderer/techniques/shadow_gui_technique.hpp"
+#include "renderer/techniques/point_lights_technique.hpp"
 
 #include "core/command_buffer.hpp"
 #include "core/image.hpp"
@@ -10,20 +10,49 @@
 #include <tracy/Tracy.hpp>
 
 void
-ShadowGUITechnique::initialise(Renderer& renderer,
-                               const string_hash_map<const Image*>& values,
-                               const string_hash_map<const GPUBuffer*>& pairs)
+PointLightsTechnique::initialise(
+  Renderer& renderer,
+  const string_hash_map<const Image*>& values,
+  const string_hash_map<const GPUBuffer*>& buffers)
 {
-  FullscreenTechniqueBase::initialise(renderer, values, pairs);
+  FullscreenTechniqueBase::initialise(renderer, values, buffers);
 
-  auto&& [binding, source] = desc.inputs.at(0);
-  auto& image = values.at(source);
+  const Image* first_image_for_extent = nullptr;
+  bool any_resource_bound = false;
+
+  for (const auto& [binding, source] : desc.inputs) {
+    bool found = false;
+
+    if (const auto image_it = values.find(source); image_it != values.end()) {
+      material->upload(binding, image_it->second);
+      if (!first_image_for_extent) {
+        first_image_for_extent = image_it->second;
+      }
+      found = true;
+    }
+
+    if (const auto buffer_it = buffers.find(source);
+        buffer_it != buffers.end()) {
+      material->upload(binding, buffer_it->second);
+      found = true;
+    }
+
+    if (found) {
+      any_resource_bound = true;
+    }
+  }
+
+  assert(any_resource_bound &&
+         "No matching image or buffer resources found for any inputs");
+  assert(
+    first_image_for_extent &&
+    "At least one image input is required to determine framebuffer extent");
 
   glm::uvec2 extent{};
-  assert(desc.output.extent == "framebuffer" &&
-         "Needs to be framebuffer for now");
   if (desc.output.extent == "framebuffer") {
-    extent = image->size();
+    extent = first_image_for_extent->size();
+  } else {
+    assert(false && "Only 'framebuffer' extent output is currently supported");
   }
 
   output_image = Image::create(*device,
@@ -33,31 +62,27 @@ ShadowGUITechnique::initialise(Renderer& renderer,
                                  .usage = desc.output.usage,
                                  .debug_name = desc.output.name.c_str(),
                                });
-
-  renderer_camera_environment = &renderer.get_camera_environment();
-
-  material->upload(binding, image);
 }
 
 auto
-ShadowGUITechnique::on_resize(const std::uint32_t width,
-                              const std::uint32_t height) -> void
+PointLightsTechnique::on_resize(const std::uint32_t width,
+                                const std::uint32_t height) -> void
 {
   output_image->resize(width, height);
   material->invalidate_all();
 }
 
 void
-ShadowGUITechnique::perform(const CommandBuffer& command_buffer,
-                            const std::uint32_t frame_index) const
+PointLightsTechnique::perform(const CommandBuffer& command_buffer,
+                              const std::uint32_t frame_index) const
 {
-  ZoneScopedN("shadow_gui");
+  ZoneScopedN("point_lights");
 
   const auto cmd = command_buffer.get(frame_index);
-  command_buffer.begin_timer(frame_index, "shadow_gui");
+  command_buffer.begin_timer(frame_index, "point_lights");
 
   Util::Vulkan::cmd_begin_debug_label(
-    cmd, "Shadow GUI", { 0.1, 1.0, 1.0, 1.0 });
+    cmd, "Point Light GUI", { 1.0f, 1.0f, 0.0f, 1.0f });
 
   CoreUtils::cmd_transition_to_color_attachment(cmd, *output_image);
 
@@ -73,10 +98,7 @@ ShadowGUITechnique::perform(const CommandBuffer& command_buffer,
   const VkRenderingInfo rendering_info{
     .sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
     .renderArea = { { 0, 0 },
-                    {
-                      output_image->width(),
-                      output_image->height(),
-                    }, },
+                    { output_image->width(), output_image->height() } },
     .layerCount = 1,
     .colorAttachmentCount = 1,
     .pColorAttachments = &attachment_info,
@@ -112,11 +134,23 @@ ShadowGUITechnique::perform(const CommandBuffer& command_buffer,
                           0,
                           nullptr);
 
+  struct PointLightPushConstants
+  {
+    glm::vec2 screen_size;
+  } constants{ glm::vec2(output_image->width(), output_image->height()) };
+
+  vkCmdPushConstants(cmd,
+                     pipeline.layout,
+                     VK_SHADER_STAGE_FRAGMENT_BIT,
+                     0,
+                     sizeof(PointLightPushConstants),
+                     &constants);
+
   vkCmdDraw(cmd, 3, 1, 0, 0);
   vkCmdEndRendering(cmd);
 
   CoreUtils::cmd_transition_to_shader_read(cmd, *output_image);
-  command_buffer.end_timer(frame_index, "shadow_gui");
+  command_buffer.end_timer(frame_index, "point_lights");
 
   Util::Vulkan::cmd_end_debug_label(cmd);
 }

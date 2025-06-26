@@ -1,14 +1,16 @@
 #ifndef _SET0_GLSL_
 #define _SET0_GLSL_
 
-layout(set = 0, binding = 0) uniform CameraUBO
+layout(std140, set = 0, binding = 0) uniform CameraUBO
 {
     mat4 vp;
     mat4 inverse_vp;
     mat4 projection;
     mat4 view;
+    mat4 inverse_projection;
     vec4 camera_position;
-    vec4 _padding_[3];
+    vec4 screen_size_near_far;
+    float _padding[2];
 }
 camera_ubo;
 

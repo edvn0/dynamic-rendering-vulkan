@@ -30,6 +30,8 @@ class Material;
 class StaticMesh;
 struct InitialisationParameters;
 
+struct IFullscreenTechnique;
+
 class Renderer;
 class BlueprintRegistry;
 struct PipelineBlueprint;

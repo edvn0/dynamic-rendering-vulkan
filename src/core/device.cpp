@@ -42,6 +42,7 @@ Device::create(const Core::Instance& instance, const VkSurfaceKHR& surface)
   VkPhysicalDeviceFeatures features{
     .depthClamp = VK_TRUE,
     .depthBiasClamp = VK_TRUE,
+    .fragmentStoresAndAtomics = VK_TRUE,
   };
 
   auto phys_result = selector.set_surface(surface)

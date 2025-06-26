@@ -3,6 +3,7 @@
 #include "material.glsl"
 #include "matrix_math.glsl"
 #include "set0.glsl"
+#include "tiling_constants.glsl"
 
 layout(set = 1, binding = 0) uniform sampler2D albedo_map;
 layout(set = 1, binding = 1) uniform sampler2D normal_map;
@@ -10,6 +11,24 @@ layout(set = 1, binding = 2) uniform sampler2D roughness_map;
 layout(set = 1, binding = 3) uniform sampler2D metallic_map;
 layout(set = 1, binding = 4) uniform sampler2D ao_map;
 layout(set = 1, binding = 5) uniform sampler2D emissive_map;
+
+layout(std430, set = 1, binding = 6) restrict buffer LightIndexList {
+    uint lightIndices[];
+};
+
+struct LightGridEntry {
+    uint offset;
+    uint count;
+    uint pad0;
+    uint pad1;
+};
+layout(std430, set = 1, binding = 7) restrict buffer LightGridData {
+    LightGridEntry tileLightGrids[];
+};
+
+layout(std430, set = 1, binding = 8) restrict buffer LightIndexAllocator {
+    uint globalLightListCounter;
+};
 
 layout(location = 0) in vec3 v_normal;
 layout(location = 1) in vec3 v_world_pos;
@@ -136,13 +155,53 @@ void main()
     vec3 ambient =
         vec3(shadow_ubo.ambient_color.rgb) * AMBIENT_LIGHT * albedo * ao;
 
-    vec3 color = ambient + shadow * lighting;
+    // --- Forward+ tiled lights integration ---
 
-    vec3 emissive_tex =
-        has_emissive_map() ? texture(emissive_map, v_uv).rgb : vec3(1.0);
-    vec3 emission =
-        material.emissive_color * material.emissive_strength * emissive_tex;
-    color += emission;
+    uint tile_x = uint(gl_FragCoord.x) / TILE_SIZE;
+    uint tile_y = uint(gl_FragCoord.y) / TILE_SIZE;
+    uint num_tiles_x = (uint(camera_ubo.screen_size_near_far.x) + TILE_SIZE - 1u) / TILE_SIZE;
+    uint tile_index = tile_y * num_tiles_x + tile_x;
 
-    frag_colour = vec4(color, 1.0F);
+    LightGridEntry tile_entry = tileLightGrids[tile_index];
+    uint offset = tile_entry.offset;
+    uint count = tile_entry.count;
+
+    for (uint i = 0u; i < count; ++i)
+    {
+        uint light_index = lightIndices[offset + i];
+        if (light_index >= point_light_buffer.light_count) {
+            continue;
+        }
+        PointLight light = point_light_buffer.lights[light_index];
+
+        vec3 light_dir = light.position - v_world_pos;
+        float dist = length(light_dir);
+        if (dist < light.radius) {
+            light_dir /= dist;
+
+            float att = light.intensity / (dist * dist);
+            vec3 rad = light.color * att;
+
+            vec3 h_light = normalize(v + light_dir);
+
+            float ndotl_light = max(dot(n, light_dir), 0.0);
+
+            vec3 f_light = fresnel_schlick(max(dot(h_light, v), 0.0), f0);
+            float ndf_light = distribution_ggx(n, h_light, roughness);
+            float g_light = geometry_smith(n, v, light_dir, roughness);
+            float denom_light = 4.0 * ndotv * ndotl_light + 0.001;
+
+            vec3 spec_light = (ndf_light * g_light * f_light) / denom_light;
+            vec3 kd_light = (1.0 - f_light) * (1.0 - metallic);
+            vec3 diff_light = kd_light * albedo / PI;
+
+            lighting += (diff_light + spec_light) * rad * ndotl_light;
+        }
+    }
+
+    vec3 emissive_tex = has_emissive_map() ? texture(emissive_map, v_uv).rgb : vec3(1.0);
+    vec3 emission = material.emissive_color * material.emissive_strength * emissive_tex;
+
+    vec3 color = ambient + shadow * lighting + emission;
+    frag_colour = vec4(color, 1.0);
 }

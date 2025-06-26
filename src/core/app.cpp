@@ -138,7 +138,7 @@ App::run() -> std::error_code
     if (window->framebuffer_resized()) {
       swapchain->request_recreate();
       auto&& [w, h] = window->framebuffer_size();
-      renderer->resize(w, h);
+      renderer->on_resize(w, h);
       layer->on_resize(w, h);
       window->set_resize_flag(false);
       continue;
@@ -165,7 +165,7 @@ App::run() -> std::error_code
   }
 
   vkDeviceWaitIdle(device->get_device());
-  Assets::Manager::the().clear_all<StaticMesh, Image, Material, GPUBuffer>();
+  Assets::Manager::the().clear_all<StaticMesh, Image, Material>();
   MeshCache::destroy();
   Image::destroy_samplers();
   layer->on_destroy();

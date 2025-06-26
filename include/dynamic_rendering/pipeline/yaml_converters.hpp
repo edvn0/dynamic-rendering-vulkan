@@ -246,6 +246,18 @@ log_warning(const std::string& msg)
   Logger::log_warning("[Pipeline YAML Warning] {}", msg);
 }
 
+inline void
+log_debug(const std::string& msg)
+{
+  Logger::log_debug("[Pipeline YAML Warning] {}", msg);
+}
+
+inline void
+log_trace(const std::string& msg)
+{
+  Logger::log_trace("[Pipeline YAML Warning] {}", msg);
+}
+
 template<>
 struct convert<VkFormat>
 {
@@ -462,18 +474,17 @@ struct convert<PipelineBlueprint>
       }
 
       if (depth_stencil["compare_op"] && !rhs.depth_test) {
-        log_warning(rhs.name +
-                    "- Using depth compare_op without depth_test may lead to "
-                    "undefined behavior");
+        log_trace(rhs.name +
+                  "- Using depth compare_op without depth_test may lead to "
+                  "undefined behavior");
       }
 
       if ((rhs.depth_compare_op == VK_COMPARE_OP_GREATER ||
            rhs.depth_compare_op == VK_COMPARE_OP_GREATER_OR_EQUAL) &&
           !rhs.depth_write) {
-        log_warning(
-          rhs.name +
-          "- Greater depth compare used but depth_write is false. This "
-          "may be unintended.");
+        log_trace(rhs.name +
+                  "- Greater depth compare used but depth_write is false. This "
+                  "may be unintended.");
       }
     }
 

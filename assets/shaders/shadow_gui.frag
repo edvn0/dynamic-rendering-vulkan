@@ -2,11 +2,6 @@
 
 layout(set = 1, binding = 0) uniform sampler2D u_input_shadow;
 
-layout(push_constant) uniform PushConstants {
-    float z_near;
-    float z_far;
-} pc;
-
 layout(location = 0) out vec4 out_color;
 
 void main() {

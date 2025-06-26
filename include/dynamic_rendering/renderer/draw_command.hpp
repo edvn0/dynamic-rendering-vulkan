@@ -15,7 +15,6 @@ struct DrawCommand
   StaticMesh* mesh{ nullptr };
   Assets::Handle<Material> override_material{};
   std::int32_t submesh_index{ -1 };
-  glm::vec4 colour{ 1.0F, 1.0F, 1.0F, 1.0F };
 
   bool operator==(const DrawCommand& rhs) const = default;
 };

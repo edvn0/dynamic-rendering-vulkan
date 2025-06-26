@@ -130,8 +130,9 @@ add_library(DynamicRendering_Renderer STATIC
         src/renderer/mesh.cpp
         src/renderer/mesh_cache.cpp
         src/renderer/passes/bloom_pass.cpp
-        src/renderer/techniques/shadow_gui_technique.cpp
         src/renderer/techniques/fullscreen_technique.cpp
+        src/renderer/techniques/shadow_gui_technique.cpp
+        src/renderer/techniques/point_lights_technique.cpp
         src/renderer/point_light_system.cpp
 )
 

@@ -584,21 +584,20 @@ Scene::on_render(Renderer& renderer) -> void
       light.dirty = false;
     }
 
-    if (IS_DEBUG) {
-      const glm::vec4 colour = { light.intensity * light.color, 1.0F };
+    if constexpr (is_debug) {
       auto mesh = Assets::builtin_cube();
       renderer.submit(
         {
           .mesh = mesh.get(),
         },
         transform.compute(),
-        colour,
         entt::to_integral(entity));
     }
   }
 
   for (const auto view =
-         registry.view<Component::Mesh, const Component::Transform>();
+         registry.view<Component::Mesh, const Component::Transform>(
+           entt::exclude<Component::PointLight>);
        auto&& [entity, mesh, transform] : view.each()) {
     const auto* material_component =
       registry.try_get<Component::Material>(entity);

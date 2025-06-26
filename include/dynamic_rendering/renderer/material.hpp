@@ -115,6 +115,13 @@ public:
     invalidate(std::span{ &image, 1 });
   }
   auto invalidate(std::span<const Image*> images) -> void;
+  template<std::size_t Extent = std::dynamic_extent>
+  auto invalidate(const std::span<const Image*, Extent> images) -> void
+  {
+    invalidate(std::span{ &images, Extent });
+  }
+
+  auto invalidate_all() -> void;
   auto reload(const PipelineBlueprint&) -> void;
   auto prepare_for_rendering(std::uint32_t frame_index)
     -> const VkDescriptorSet&;

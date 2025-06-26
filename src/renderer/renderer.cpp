@@ -24,6 +24,7 @@
 #include "renderer/editor_camera.hpp"
 #include "renderer/mesh.hpp"
 #include "renderer/techniques/fullscreen_technique.hpp"
+#include "renderer/techniques/point_lights_technique.hpp"
 #include "renderer/techniques/shadow_gui_technique.hpp"
 #include "window/swapchain.hpp"
 #include "window/window.hpp"
@@ -33,12 +34,14 @@
 
 struct CameraBuffer
 {
-  alignas(16) const glm::mat4 vp;
-  alignas(16) const glm::mat4 inverse_vp;
-  alignas(16) const glm::mat4 projection;
-  alignas(16) const glm::mat4 view;
-  alignas(16) const glm::vec4 camera_position;
-  std::array<glm::vec4, 3> padding{};
+  alignas(16) glm::mat4 vp;
+  alignas(16) glm::mat4 inverse_vp;
+  alignas(16) glm::mat4 projection;
+  alignas(16) glm::mat4 view;
+  alignas(16) glm::mat4 inverse_projection;
+  alignas(16) glm::vec4 camera_position;
+  alignas(16) glm::vec4 screen_size_near_far;
+  alignas(16) std::array<float, 8> _padding{};
 };
 ASSERT_VULKAN_UBO_COMPATIBLE(CameraBuffer);
 
@@ -105,56 +108,32 @@ static constexpr std::array renderer_bindings_metadata{
   },
 };
 
-auto
-to_renderpass(const std::string_view name) -> RenderPass
+void
+Renderer::initialise_techniques()
 {
-  auto lowercase = std::string(name);
-  std::ranges::transform(
-    lowercase.begin(), lowercase.end(), lowercase.begin(), ::tolower);
-  if (lowercase == "main_geometry") {
-    return RenderPass::MainGeometry;
+  {
+    auto&& [tech, could] = techniques.try_emplace("shadow_gui");
+    tech->second = FullscreenTechniqueFactory::create(
+      "shadow_gui", *device, *descriptor_set_manager);
   }
-  if (lowercase == "shadow") {
-    return RenderPass::Shadow;
-  }
-  if (lowercase == "line") {
-    return RenderPass::Line;
-  }
-  if (lowercase == "z_prepass") {
-    return RenderPass::ZPrepass;
-  }
-  if (lowercase == "colour_correction") {
-    return RenderPass::ColourCorrection;
-  }
-  if (lowercase == "skybox") {
-    return RenderPass::Skybox;
-  }
-  if (lowercase == "cull_prefix_sum_first") {
-    return RenderPass::ComputePrefixCullingFirst;
-  }
-  if (lowercase == "cull_prefix_sum_second") {
-    return RenderPass::ComputePrefixCullingSecond;
-  }
-  if (lowercase == "cull_prefix_sum_distribute") {
-    return RenderPass::ComputePrefixCullingDistribute;
-  }
-  if (lowercase == "cull_scatter") {
-    return RenderPass::ComputeCullingScatter;
-  }
-  if (lowercase == "cull_visibility") {
-    return RenderPass::ComputeCullingVisibility;
-  }
-  if (lowercase == "shadow_gui") {
-    return RenderPass::ShadowGUI;
-  }
-  if (lowercase == "composite")
-    return RenderPass::Composite;
-  if (lowercase == "bloom_horizontal")
-    return RenderPass::BloomBlurHorizontal;
-  if (lowercase == "bloom_vertical")
-    return RenderPass::BloomBlurVertical;
+  /*
+    {
+      auto&& [tech, could] = techniques.try_emplace("point_lights");
+      tech->second = FullscreenTechniqueFactory::create(
+        "point_lights", *device, *descriptor_set_manager);
+    }
+    */
 
-  return RenderPass::Invalid;
+  string_hash_map<const Image*> image_technique_map;
+  string_hash_map<const GPUBuffer*> buffer_technique_map;
+  image_technique_map["shadow_depth_image"] = shadow_depth_image.get();
+  image_technique_map["scene_depth"] = geometry_depth_image.get();
+
+  buffer_technique_map["point_light_buffer"] = point_light_system.get_ssbo({});
+
+  for (const auto& t : techniques | std::views::values) {
+    t->initialise(*this, image_technique_map, buffer_technique_map);
+  }
 }
 
 Renderer::Renderer(const Device& dev,
@@ -200,7 +179,8 @@ Renderer::Renderer(const Device& dev,
                     ImageConfiguration{
                       .extent = win.framebuffer_size(),
                       .format = VK_FORMAT_D32_SFLOAT,
-                      .usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+                      .usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT |
+                               VK_IMAGE_USAGE_SAMPLED_BIT,
                       .aspect = VK_IMAGE_ASPECT_DEPTH_BIT,
                       .sample_count = VK_SAMPLE_COUNT_1_BIT,
                       .allow_in_ui = false,
@@ -509,6 +489,40 @@ Renderer::Renderer(const Device& dev,
       "WorkgroupPrefix", workgroup_sum_prefix_buffer.get());
   }
 
+  {
+    light_culling_material = Material::create(*device, "light_culling").value();
+
+    global_light_counter_buffer = GPUBuffer::zero_initialise(
+      *device,
+      sizeof(std::uint32_t), // Just one uint32_t
+      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT |
+        VK_BUFFER_USAGE_TRANSFER_SRC_BIT // Optional, for CPU readback
+    );
+
+    constexpr std::size_t num_tiles = 9216;
+    light_grid_buffer = GPUBuffer::zero_initialise(
+      *device,
+      num_tiles * sizeof(uint32_t) * 4, // offset, count, pad0, pad1
+      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+
+    constexpr std::size_t max_total_indices = 9216 * 256;
+    light_index_list_buffer = GPUBuffer::zero_initialise(
+      *device,
+      max_total_indices * sizeof(std::uint32_t),
+      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+
+    // Bind this buffer to your light culling material
+    light_culling_material->upload("LightIndexList",
+                                   global_light_counter_buffer);
+    light_culling_material->upload("LightIndexAllocator",
+                                   light_index_list_buffer);
+    light_culling_material->upload("LightGridData", light_grid_buffer);
+
+    geometry_material->upload("LightIndexList", global_light_counter_buffer);
+    geometry_material->upload("LightIndexAllocator", light_index_list_buffer);
+    geometry_material->upload("LightGridData", light_grid_buffer);
+  }
+
   camera_uniform_buffer =
     GPUBuffer::zero_initialise(*device,
                                sizeof(CameraBuffer) * frames_in_flight,
@@ -583,17 +597,7 @@ Renderer::Renderer(const Device& dev,
       device->get_device(), &semaphore_create_info, nullptr, &sema);
   }
 
-  auto&& [tech, could] = techniques.try_emplace("shadow_gui");
-  tech->second = FullscreenTechniqueFactory::create(
-    "shadow_gui", *device, *descriptor_set_manager);
-
-  string_hash_map<const Image*> image_technique_map;
-  string_hash_map<const GPUBuffer*> buffer_technique_map;
-  image_technique_map["shadow_depth_image"] = shadow_depth_image.get();
-
-  for (auto& t : techniques | std::views::values) {
-    t->initialise(*this, image_technique_map, buffer_technique_map);
-  }
+  initialise_techniques();
 
 #pragma region Material reload
 #define REGISTER_MATERIAL(name_str, mat_ptr)                                   \
@@ -646,6 +650,9 @@ Renderer::Renderer(const Device& dev,
   };
 
 #pragma endregion
+
+  composite_attachment_material->upload("point_lights_input",
+                                        get_point_lights_image());
 }
 
 auto
@@ -677,7 +684,6 @@ Renderer::~Renderer()
 auto
 Renderer::submit(const RendererSubmit& cmd,
                  const glm::mat4& transform,
-                 const glm::vec4& colour,
                  const std::uint32_t optional_identifier) -> void
 {
   if (cmd.mesh == nullptr) {
@@ -691,7 +697,6 @@ Renderer::submit(const RendererSubmit& cmd,
       .mesh = cmd.mesh,
       .override_material = cmd.override_material,
       .submesh_index = cmd.mesh->get_submesh_index(submesh),
-      .colour = colour,
     };
     draw_commands[command].emplace_back(transform);
     if (has_optional_identifier) {
@@ -842,6 +847,10 @@ Renderer::update_shadow_buffers(const std::uint32_t fi) -> void
       view = glm::lookAtLH(
         light_environment.light_position, light_environment.target, up);
       break;
+    case ShadowViewMode::Default:
+      view = glm::lookAt(
+        light_environment.light_position, light_environment.target, up);
+      break;
   }
 
   const float s = light_environment.ortho_size;
@@ -861,6 +870,9 @@ Renderer::update_shadow_buffers(const std::uint32_t fi) -> void
       break;
     case ShadowProjectionMode::OrthoLH_NO:
       proj = glm::orthoLH_NO(-s, s, -s, s, n, f);
+      break;
+    case ShadowProjectionMode::Default:
+      proj = glm::ortho(-s, s, -s, s, n, f);
       break;
   }
 
@@ -907,11 +919,12 @@ Renderer::update_uniform_buffers(const std::uint32_t fi,
     .inverse_vp = inverse_projection * view,
     .projection = projection,
     .view = view,
+    .inverse_projection = glm::inverse(projection),
     .camera_position = { camera_position, 1.0F },
+    .screen_size_near_far = {geometry_image->width(), geometry_image->height(), camera_environment.z_near, camera_environment.z_far,},
   };
   camera_uniform_buffer->upload_with_offset(std::span{ &buffer, 1 },
                                             sizeof(CameraBuffer) * fi);
-
   const FrustumBuffer frustum{ camera_frustum.planes };
   frustum_buffer->upload_with_offset(std::span{ &frustum, 1 },
                                      sizeof(FrustumBuffer) * fi);
@@ -1058,10 +1071,9 @@ Renderer::end_frame(const std::uint32_t fi) -> void
   run_z_prepass(fi, flat_draw_commands);
   run_geometry_pass(fi, flat_draw_commands);
 
-#if IS_DEBUG
-  run_identifier_pass(fi, flat_draw_commands);
-#endif
-
+  if constexpr (is_debug) {
+    run_identifier_pass(fi, flat_draw_commands);
+  }
   // Add image barrier to prepare geometry_image for compute shader read
   {
     ZoneScopedN("Geometry to Compute Barrier");
@@ -1097,6 +1109,7 @@ Renderer::end_frame(const std::uint32_t fi) -> void
   // Begin compute work
   compute_command_buffer->begin_frame(fi);
 
+  run_light_culling_pass();
   run_bloom_pass(fi);
 
   compute_command_buffer->submit_and_end(
@@ -1105,17 +1118,18 @@ Renderer::end_frame(const std::uint32_t fi) -> void
   // Begin final graphics work
   command_buffer->begin_frame_persist_query_pools(fi);
 
+  run_technique_passes(techniques, *command_buffer, fi);
+
   run_composite_pass(fi);
   run_postprocess_passes(fi);
-
-  run_technique_passes(techniques, *command_buffer, fi);
 
   command_buffer->submit_and_end(
     fi, bloom_complete_semaphores.at(fi), VK_NULL_HANDLE);
 }
 
 auto
-Renderer::resize(const std::uint32_t width, const std::uint32_t height) -> void
+Renderer::on_resize(const std::uint32_t width, const std::uint32_t height)
+  -> void
 {
   geometry_image->resize(width, height);
   geometry_msaa_image->resize(width, height);
@@ -1128,13 +1142,20 @@ Renderer::resize(const std::uint32_t width, const std::uint32_t height) -> void
 
   bloom_pass->resize(width, height);
 
+  for (const auto& t : techniques | std::views::values) {
+    t->on_resize(width, height);
+  }
+
   if (skybox_material)
     skybox_material->invalidate(skybox_attachment_texture.get());
 
   if (composite_attachment_material) {
-    composite_attachment_material->invalidate(skybox_attachment_texture.get());
-    composite_attachment_material->invalidate(geometry_image.get());
-    composite_attachment_material->invalidate(&bloom_pass->get_output_image());
+    std::array<const Image*, 3> images = {
+      skybox_attachment_texture.get(),
+      geometry_image.get(),
+      &bloom_pass->get_output_image(),
+    };
+    composite_attachment_material->invalidate(images);
   }
 
   if (colour_corrected_material)
@@ -1145,6 +1166,20 @@ auto
 Renderer::get_output_image() const -> const Image&
 {
   return *colour_corrected_image;
+}
+
+auto
+Renderer::get_shadow_image() const -> const Image*
+{
+  return techniques.at("shadow_gui")->get_output();
+}
+
+auto
+Renderer::get_point_lights_image() const -> const Image*
+{
+  if (!techniques.contains("point_lights"))
+    return nullptr;
+  return techniques.at("point_lights")->get_output();
 }
 
 auto
@@ -1308,6 +1343,8 @@ Renderer::run_z_prepass(std::uint32_t fi, const DrawList& draw_list) -> void
 
   CoreUtils::cmd_transition_to_depth_attachment(
     cmd, geometry_depth_msaa_image->get_image());
+  CoreUtils::cmd_transition_to_depth_attachment(
+    cmd, geometry_depth_image->get_image());
 
   constexpr VkClearValue depth_clear = { .depthStencil = { 0.0f, 0 } };
   VkRenderingAttachmentInfo depth_attachment = {
@@ -1387,6 +1424,8 @@ Renderer::run_z_prepass(std::uint32_t fi, const DrawList& draw_list) -> void
   }
 
   vkCmdEndRendering(cmd);
+  CoreUtils::cmd_transition_depth_to_shader_read(
+    cmd, geometry_depth_image->get_image());
   command_buffer->end_timer(fi, "z_prepass");
 
   Util::Vulkan::cmd_end_debug_label(cmd);
@@ -1490,6 +1529,10 @@ Renderer::run_geometry_pass(std::uint32_t fi, const DrawList& draw_list) -> void
         ? *Assets::Manager::the().get(cmd_info.override_material)
         : *submesh_material;
 
+    material.upload("LightIndexList", global_light_counter_buffer);
+    material.upload("LightIndexAllocator", light_index_list_buffer);
+    material.upload("LightGridData", light_grid_buffer);
+
     const auto& material_set = material.prepare_for_rendering(fi);
 
     std::array descriptor_sets{
@@ -1523,11 +1566,6 @@ Renderer::run_geometry_pass(std::uint32_t fi, const DrawList& draw_list) -> void
 
     auto&& [pc_stage, pc_offset, pc_size, pc_pointer] =
       material.generate_push_constant_data();
-
-    auto material_data = std::bit_cast<MaterialData*>(pc_pointer);
-    if (cmd_info.colour != glm::vec4{ 1.0F }) {
-      material_data->albedo = cmd_info.colour;
-    }
 
     vkCmdPushConstants(
       cmd, pipeline.layout, pc_stage, pc_offset, pc_size, pc_pointer);
@@ -1714,6 +1752,67 @@ Renderer::run_identifier_pass(const std::uint32_t fi, const DrawList& draw_list)
 
   command_buffer->end_timer(fi, "identifier_pass");
 
+  Util::Vulkan::cmd_end_debug_label(cmd);
+}
+
+auto
+Renderer::run_light_culling_pass() -> void
+{
+  ZoneScopedN("Light culling pass");
+  const auto cmd = compute_command_buffer->get(frame_index);
+  Util::Vulkan::cmd_begin_debug_label(
+    cmd, "Light culling pass", { 1.0, 0.0, 0.0, 1.0 });
+  // Reset atomic counter (light list allocator)
+
+  {
+    ZoneScopedN("Upload via one time buffer");
+    static constexpr std::uint32_t zero = 0;
+    light_index_list_buffer->upload(
+      std::span{ &zero, 1 }); // make sure to flush it before dispatch
+  }
+
+  // Tile group dimensions (screen size should be aligned with TILE_SIZE used
+  // in shader)
+  constexpr std::uint32_t tile_size = 16;
+  constexpr std::uint32_t num_z_slices = 64;
+
+  const std::uint32_t tiles_x =
+    (geometry_image->width() + tile_size - 1) / tile_size;
+  const std::uint32_t tiles_y =
+    (geometry_image->height() + tile_size - 1) / tile_size;
+  constexpr std::uint32_t tiles_z = num_z_slices;
+
+  // Bind and dispatch light culling compute
+  compute_command_buffer->begin_timer(frame_index, "light_culling");
+
+  const auto& pipeline = light_culling_material->get_pipeline();
+  const std::array sets = {
+    descriptor_set_manager->get_set(frame_index),
+    light_culling_material->prepare_for_rendering(frame_index),
+  };
+
+  vkCmdBindPipeline(cmd, pipeline.bind_point, pipeline.pipeline);
+  vkCmdBindDescriptorSets(cmd,
+                          pipeline.bind_point,
+                          pipeline.layout,
+                          0,
+                          static_cast<std::uint32_t>(sets.size()),
+                          sets.data(),
+                          0,
+                          nullptr);
+  vkCmdDispatch(cmd, tiles_x, tiles_y, tiles_z);
+
+  vkCmdPipelineBarrier(cmd,
+                       VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                       VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                       0,
+                       0,
+                       nullptr,
+                       0,
+                       nullptr,
+                       0,
+                       nullptr);
+  compute_command_buffer->end_timer(frame_index, "light_culling");
   Util::Vulkan::cmd_end_debug_label(cmd);
 }
 

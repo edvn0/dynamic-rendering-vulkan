@@ -1,5 +1,6 @@
 #pragma once
 
+#include "environments.hpp"
 #include "mesh.hpp"
 #include "point_light_system.hpp"
 
@@ -21,8 +22,6 @@
 #include "renderer/draw_command.hpp"
 #include "renderer/frustum.hpp"
 #include "renderer/material.hpp"
-#include "techniques/fullscreen_technique.hpp"
-#include "techniques/shadow_gui_technique.hpp"
 
 #include <BS_thread_pool.hpp>
 
@@ -45,8 +44,6 @@ enum class RenderPass : std::uint8_t
   BloomBlurHorizontal,
   BloomBlurVertical,
 };
-auto
-to_renderpass(std::string_view name) -> RenderPass;
 
 struct LineInstanceData
 {
@@ -67,16 +64,9 @@ public:
            BS::priority_thread_pool&);
   ~Renderer();
 
-  auto submit(const RendererSubmit&,
-              const glm::mat4& = glm::mat4{ 1.0F },
-              const glm::vec4& = glm::vec4{ 1.0F },
-              std::uint32_t optional_identifier = 0) -> void;
   auto submit(const RendererSubmit& cmd,
               const glm::mat4& transform = glm::mat4{ 1.0F },
-              std::uint32_t optional_identifier = 0) -> void
-  {
-    return submit(cmd, transform, glm::vec4{ 1.0F }, optional_identifier);
-  }
+              std::uint32_t optional_identifier = 0) -> void;
   auto submit_lines(const glm::vec3&, const glm::vec3&, float, const glm::vec4&)
     -> void;
   auto submit_aabb(const glm::vec3& min,
@@ -85,7 +75,7 @@ public:
                    float width = 1.f) -> void;
   auto submit_aabb(const AABB& aabb,
                    const glm::vec4& color = { 1.f, 1.f, 0.f, 1.f },
-                   float width = 1.f)
+                   const float width = 1.f)
   {
     submit_aabb(aabb.min(), aabb.max(), color, width);
   }
@@ -98,16 +88,11 @@ public:
   };
   auto begin_frame(const VP&) -> void;
   auto end_frame(std::uint32_t) -> void;
-  auto resize(std::uint32_t, std::uint32_t) -> void;
+  auto on_resize(std::uint32_t, std::uint32_t) -> void;
   [[nodiscard]] auto get_output_image() const -> const Image&;
-  [[nodiscard]] auto get_shadow_image() const -> const Image&
-  {
-    auto* shadow_mapped = techniques.at("shadow_gui").get();
-    if (const auto* p = dynamic_cast<ShadowGUITechnique*>(shadow_mapped)) {
-      return p->get_output();
-    }
-    throw;
-  }
+  [[nodiscard]] auto get_shadow_image() const -> const Image*;
+  [[nodiscard]] auto get_point_lights_image() const -> const Image*;
+
   [[nodiscard]] auto get_command_buffer() const -> CommandBuffer&
   {
     return *command_buffer;
@@ -134,43 +119,7 @@ public:
   }
   auto update_material_by_name(const std::string& name,
                                const PipelineBlueprint&) -> bool;
-  [[nodiscard]] auto get_material_by_name(const std::string& name) const
-    -> Material*
-  {
-    switch (to_renderpass(name)) {
-      using enum RenderPass;
-      case Invalid:
-        return nullptr;
-      case MainGeometry:
-        return geometry_material.get();
-      case Shadow:
-        return shadow_material.get();
-      case Line:
-        return line_material.get();
-      case ZPrepass:
-        return z_prepass_material.get();
-      case ColourCorrection:
-        return colour_corrected_material.get();
-      case Skybox:
-        return skybox_material.get();
-      case ComputePrefixCullingFirst:
-        return cull_prefix_sum_material_first.get();
-      case ComputePrefixCullingSecond:
-        return cull_prefix_sum_material_second.get();
-      case ComputePrefixCullingDistribute:
-        return cull_prefix_sum_material_distribute.get();
-      case ComputeCullingScatter:
-        return cull_scatter_material.get();
-      case ComputeCullingVisibility:
-        return cull_visibility_material.get();
-      case ShadowGUI:
-        return techniques.at("shadow_gui")->get_material();
-      case Composite:
-        return composite_attachment_material.get();
-      default:
-        return nullptr;
-    }
-  }
+
   [[nodiscard]] auto get_renderer_descriptor_set_layout(
     Badge<AssetReloader>) const -> VkDescriptorSetLayout;
   static auto get_white_texture() { return white_texture.get(); }
@@ -257,6 +206,11 @@ private:
   std::uint32_t line_instance_count_this_frame{};
   auto upload_line_instance_data() -> void;
 
+  Assets::Pointer<Material> light_culling_material;
+  std::unique_ptr<GPUBuffer> global_light_counter_buffer;
+  std::unique_ptr<GPUBuffer> light_grid_buffer;
+  std::unique_ptr<GPUBuffer> light_index_list_buffer;
+
   std::unique_ptr<GPUBuffer> identifier_buffer;
 
   std::unique_ptr<BloomPass> bloom_pass;
@@ -297,7 +251,9 @@ private:
     run_colour_correction_pass(fi);
   }
   auto run_identifier_pass(std::uint32_t, const DrawList&) -> void;
+  auto run_light_culling_pass() -> void;
 
+  auto initialise_techniques() -> void;
   auto destroy() -> void;
 
   static inline Assets::Pointer<Image> white_texture{ nullptr };
