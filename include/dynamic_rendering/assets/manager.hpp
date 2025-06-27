@@ -123,6 +123,8 @@ private:
   template<typename T>
   auto clear()
   {
+    Logger::log_info("Destroying storage for: {}", typeid(T).name());
+
     auto& data = storage<T>();
     data.clear();
   }

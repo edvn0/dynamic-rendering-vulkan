@@ -17,7 +17,6 @@ PipelineBlueprint::hash() const -> std::size_t
   hash_combine(static_cast<std::uint32_t>(polygon_mode));
   hash_combine(static_cast<std::uint32_t>(topology));
   hash_combine(static_cast<std::uint32_t>(winding));
-  hash_combine(blend_enable);
   hash_combine(depth_test);
   hash_combine(depth_write);
 
@@ -49,15 +48,21 @@ PipelineBlueprint::hash() const -> std::size_t
 
   for (const auto& att : attachments) {
     hash_combine(static_cast<std::uint32_t>(att.format));
-    hash_combine(att.blend_enable);
-    hash_combine(att.write_mask_rgba);
+  }
+
+  for (const auto& blend : color_blend_states) {
+    hash_combine(static_cast<std::uint32_t>(blend.src_color_factor));
+    hash_combine(static_cast<std::uint32_t>(blend.dst_color_factor));
+    hash_combine(static_cast<std::uint32_t>(blend.color_op));
+    hash_combine(static_cast<std::uint32_t>(blend.src_alpha_factor));
+    hash_combine(static_cast<std::uint32_t>(blend.dst_alpha_factor));
+    hash_combine(static_cast<std::uint32_t>(blend.alpha_op));
+    hash_combine(blend.enabled);
   }
 
   if (depth_attachment.has_value()) {
     const auto& d = depth_attachment.value();
     hash_combine(static_cast<std::uint32_t>(d.format));
-    hash_combine(d.blend_enable);
-    hash_combine(d.write_mask_rgba);
   }
 
   hash_combine(static_cast<std::uint32_t>(msaa_samples));

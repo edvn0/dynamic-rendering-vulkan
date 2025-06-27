@@ -5,14 +5,16 @@
 enum class ShadowViewMode
 {
   LookAtRH,
-  LookAtLH
+  LookAtLH,
+  Default,
 };
 enum class ShadowProjectionMode
 {
   OrthoRH_ZO,
   OrthoRH_NO,
   OrthoLH_ZO,
-  OrthoLH_NO
+  OrthoLH_NO,
+  Default,
 };
 
 struct LightEnvironment
@@ -26,8 +28,8 @@ struct LightEnvironment
   float far_plane{ 100.f };
   glm::vec3 target{ 0.F };
 
-  ShadowProjectionMode projection_mode{ ShadowProjectionMode::OrthoRH_ZO };
-  ShadowViewMode view_mode{ ShadowViewMode::LookAtRH };
+  ShadowProjectionMode projection_mode{ ShadowProjectionMode::Default };
+  ShadowViewMode view_mode{ ShadowViewMode::Default };
 };
 
 struct CameraEnvironment

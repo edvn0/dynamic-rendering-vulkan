@@ -42,7 +42,25 @@ struct Tag
 struct Hierarchy
 {
   entt::entity parent{ entt::null };
-  std::vector<entt::entity> children;
+  std::vector<entt::entity> children{};
+
+  explicit Hierarchy(entt::entity p)
+    : parent(p)
+  {
+  }
+
+  Hierarchy(entt::entity p, std::vector<entt::entity> c)
+    : parent(p)
+    , children(std::move(c))
+  {
+  }
+
+  explicit Hierarchy(std::vector<entt::entity> c)
+    : children(std::move(c))
+  {
+  }
+
+  Hierarchy() = default;
 };
 
 struct Mesh
@@ -71,12 +89,13 @@ struct Material
 struct Camera
 {
   float fov{ 60.0f };
-  float aspect{ 16.0f / 9.0f };
+  float aspect{ 1920.0f / 1080.0f };
   float znear{ 0.1f };
   float zfar{ 1000.0f };
 
   glm::mat4 projection{ 1.0f };
   glm::mat4 inverse_projection{ 1.0f };
+  glm::mat4 view{ 1.0f };
 
   bool dirty{ true };
   [[nodiscard]] auto clean() const { return !dirty; }
@@ -94,6 +113,15 @@ struct FlyController
   float move_speed{ 5.0f };
   float rotation_speed{ 0.1f };
   bool active{ true };
+};
+
+struct PointLight
+{
+  glm::vec3 color{ 1.0f, 1.0f, 1.0f };
+  float intensity{ 1.0f };
+  float radius{ 10.0f };
+  bool cast_shadows{ false };
+  bool dirty{ true }; // Flag for GPU updates
 };
 
 } // namespace Component

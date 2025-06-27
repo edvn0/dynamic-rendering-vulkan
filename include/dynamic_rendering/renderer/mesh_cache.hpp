@@ -15,7 +15,6 @@
 enum class MeshType : std::uint8_t
 {
   Cube,
-  CubeOnlyPosition,
   Quad,
   Sphere,
   Cylinder,

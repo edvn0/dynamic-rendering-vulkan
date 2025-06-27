@@ -6,28 +6,29 @@
 layout(local_size_x = 8, local_size_y = 8) in;
 
 layout(set = 1, binding = 0, rgba32f) uniform
-restrict readonly image2D input_image;
+  restrict readonly image2D input_image;
 layout(set = 1, binding = 1, rgba32f) uniform
-restrict writeonly image2D output_image;
+  restrict writeonly image2D output_image;
 
-void main()
+void
+main()
 {
-    ivec2 output_size = imageSize(output_image);// 160x90
-    ivec2 output_coord = ivec2(gl_GlobalInvocationID.xy);// 0-159, 0-89
+  ivec2 output_size = imageSize(output_image);          // 160x90
+  ivec2 output_coord = ivec2(gl_GlobalInvocationID.xy); // 0-159, 0-89
 
-    if (output_coord.x >= output_size.x || output_coord.y >= output_size.y)
+  if (output_coord.x >= output_size.x || output_coord.y >= output_size.y)
     return;
 
-    // Scale up to input image coordinates (2x scaling for downsampling)
-    ivec2 input_coord = output_coord * 2;// Maps to 0-319, 0-179
-    ivec2 input_size = imageSize(input_image);// 320x180
+  // Scale up to input image coordinates (2x scaling for downsampling)
+  ivec2 input_coord = output_coord;
+  ivec2 input_size = imageSize(input_image); // 320x180
 
-    vec4 sum = vec4(0.0);
-    for (int i = 0; i < N; ++i) {
-        ivec2 offset = ivec2(1, 0) * (i - M);
-        ivec2 sample_coord = clamp(input_coord + offset, ivec2(0), input_size - 1);
-        sum += coeffs[i] * imageLoad(input_image, sample_coord);
-    }
+  vec4 sum = vec4(0.0);
+  for (int i = 0; i < N; ++i) {
+    ivec2 offset = ivec2(-1, 0) * (i - M);
+    ivec2 sample_coord = clamp(input_coord + offset, ivec2(0), input_size - 1);
+    sum += 2 * coeffs[i] * imageLoad(input_image, sample_coord);
+  }
 
-    imageStore(output_image, output_coord, sum);
+  imageStore(output_image, output_coord, sum);
 }

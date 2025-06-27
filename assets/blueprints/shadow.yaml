@@ -5,6 +5,36 @@ shaders:
 rasterization:
   cull_mode: back
 
+vertex_input:
+  bindings:
+    - binding: 0
+      stride: 12
+      input_rate: vertex
+    - binding: 1
+      stride: 64
+      input_rate: instance
+  attributes:
+    - location: 0
+      binding: 0
+      format: vec3
+      offset: 0
+    - location: 1
+      binding: 1
+      format: vec4
+      offset: 0
+    - location: 2
+      binding: 1
+      format: vec4
+      offset: 16
+    - location: 3
+      binding: 1
+      format: vec4
+      offset: 32
+    - location: 4
+      binding: 1
+      format: vec4
+      offset: 48
+
 depth_stencil:
   depth_test: true
   depth_write: true

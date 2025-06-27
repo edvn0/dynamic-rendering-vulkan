@@ -115,6 +115,11 @@ struct Vertex
 };
 static_assert(std::is_trivially_copyable_v<Vertex>);
 
+struct PositionOnlyVertex
+{
+  glm::vec3 position;
+};
+
 struct Submesh
 {
   std::uint32_t vertex_offset;
@@ -144,6 +149,10 @@ public:
   [[nodiscard]] auto get_vertex_buffer() const -> VertexBuffer*
   {
     return vertex_buffer.get();
+  }
+  [[nodiscard]] auto get_position_only_vertex_buffer() const -> VertexBuffer*
+  {
+    return position_only_vertex_buffer.get();
   }
   [[nodiscard]] auto get_index_buffer() const -> IndexBuffer*
   {
@@ -222,6 +231,7 @@ private:
   string_hash_map<Assets::Pointer<Image>> loaded_textures;
 
   std::unique_ptr<VertexBuffer> vertex_buffer;
+  std::unique_ptr<VertexBuffer> position_only_vertex_buffer;
   std::unique_ptr<IndexBuffer> index_buffer;
 
   glm::mat4 transform{ 1.0f };

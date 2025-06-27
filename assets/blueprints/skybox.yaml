@@ -5,8 +5,7 @@ shaders:
     path: skybox.frag
 attachments:
   - format: r32g32b32a32_sfloat
-    blend_enable: false
-    write_mask_rgba: true
+    blend_enable: true
 depth_stencil:
   depth_test: false
   depth_write: false

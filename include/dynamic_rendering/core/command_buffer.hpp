@@ -78,8 +78,8 @@ public:
                        std::uint32_t query_count) const
     -> std::optional<std::vector<double>>;
 
-  void begin_timer(std::uint32_t, std::string_view name);
-  void end_timer(std::uint32_t, std::string_view name);
+  void begin_timer(std::uint32_t, std::string_view name) const;
+  void end_timer(std::uint32_t, std::string_view name) const;
   auto resolve_timers(std::uint32_t) const -> std::vector<TimedSection>;
 
   static auto create(const Device& device,

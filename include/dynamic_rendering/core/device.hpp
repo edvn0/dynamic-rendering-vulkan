@@ -30,6 +30,12 @@ public:
   {
     return device.physical_device.physical_device;
   }
+  auto get_physical_device_properties() const
+    -> const VkPhysicalDeviceProperties&
+  {
+    assert(props.has_value() && "Physical device properties not initialized");
+    return *props;
+  }
   auto get_timestamp_period() const -> double;
   auto get_max_sample_count(VkSampleCountFlags = 0) const
     -> VkSampleCountFlagBits;

@@ -3,12 +3,6 @@
 #include <VkBootstrap.h>
 #include <iostream>
 
-#ifdef IS_DEBUG
-static constexpr bool is_debug = true;
-#else
-static constexpr bool is_debug = false;
-#endif
-
 namespace Core {
 
 #ifdef IS_DEBUG
@@ -54,7 +48,7 @@ public:
   [[nodiscard]] auto raw() const -> VkInstance { return instance.instance; }
   [[nodiscard]] auto vkb() const -> const auto& { return instance; }
 
-  auto destroy() -> void { vkb::destroy_instance(instance); }
+  auto destroy() const -> void { vkb::destroy_instance(instance); }
 
 private:
   explicit Instance(const vkb::Instance& inst)

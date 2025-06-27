@@ -37,6 +37,7 @@ public:
     , usage_flags(usage)
     , mapped_on_create(mapped_on_create)
   {
+    assert(!name.empty());
     if (!name.empty()) {
       set_name(name);
     }
@@ -147,14 +148,18 @@ public:
     if (!mapped)
       return false;
 
-    const auto size = sizeof(T);
-    if (offset_bytes + size > current_size)
+    if (const auto size = sizeof(T); offset_bytes + size > current_size)
       return false;
 
     std::memcpy(&user_allocated,
                 static_cast<const std::byte*>(mapped) + offset_bytes,
                 sizeof(T));
     return true;
+  }
+
+  [[nodiscard]] auto get_allocation() const -> const VmaAllocation&
+  {
+    return allocation;
   }
 
 private:
@@ -247,6 +252,20 @@ public:
   auto upload_vertices(std::span<T, N> data) -> void
   {
     buffer.upload(std::span<const T, N>{ data });
+  }
+
+  template<std::ranges::input_range R>
+    requires AdmitsGPUBuffer<std::ranges::range_value_t<R>>
+  auto upload_vertices(R&& r) -> void
+  {
+    using T = std::ranges::range_value_t<R>;
+    std::vector<T> temp;
+    temp.reserve(std::ranges::distance(
+      r)); // optional, if you can compute distance efficiently
+    for (const auto& item : r) {
+      temp.push_back(item);
+    }
+    upload_vertices(std::span<T>{ temp });
   }
 
   [[nodiscard]] auto get_buffer() const -> const GPUBuffer& { return buffer; }

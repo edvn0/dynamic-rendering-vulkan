@@ -52,7 +52,10 @@ static auto
 merge_descriptor_binding(BindingSet& dst, VkDescriptorSetLayoutBinding& binding)
   -> void
 {
-  if (binding.descriptorType == VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER) {
+  ;
+  if (any(binding.descriptorType,
+          VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+          VK_DESCRIPTOR_TYPE_STORAGE_BUFFER)) {
     static constexpr auto stages = VK_SHADER_STAGE_VERTEX_BIT |
                                    VK_SHADER_STAGE_FRAGMENT_BIT |
                                    VK_SHADER_STAGE_COMPUTE_BIT;
@@ -451,6 +454,15 @@ Material::invalidate(const std::span<const Image*> images) -> void
     }
   }
 }
+auto
+Material::invalidate_all() -> void
+{
+  for (const auto& key : bindings | std::views::keys) {
+    for (auto& dirty_set : per_frame_dirty_flags) {
+      dirty_set.insert(key);
+    }
+  }
+}
 
 auto
 Material::reload(const PipelineBlueprint& blueprint) -> void
@@ -571,7 +583,7 @@ Material::rebuild_pipeline(const PipelineBlueprint& blueprint)
   // Store the new layouts
   descriptor_set_layouts = std::move(new_layouts);
 
-  return std::move(*result);
+  return std::move(result.value());
 }
 
 auto
@@ -602,8 +614,10 @@ Material::upload(const std::string_view name, const GPUBuffer* buffer) -> void
                                     : VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
 
   const auto binding_it = binding_info.find(key);
-  if (binding_it == binding_info.end())
+  if (binding_it == binding_info.end()) {
+    Logger::log_warning("Could not find binding with name: {}", name);
     return;
+  }
 
   const uint32_t binding_index = std::get<1>(binding_it->second);
 
@@ -721,6 +735,7 @@ Material::prepare_for_rendering(const std::uint32_t frame_index)
   dirty.clear();
   return descriptor_sets[frame_index];
 }
+
 auto
 Material::generate_push_constant_data() const -> PushConstantInformation
 {

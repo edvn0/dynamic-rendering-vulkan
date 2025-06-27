@@ -24,19 +24,24 @@
 #include "renderer/editor_camera.hpp"
 #include "renderer/mesh.hpp"
 #include "renderer/techniques/fullscreen_technique.hpp"
+#include "renderer/techniques/point_lights_technique.hpp"
 #include "renderer/techniques/shadow_gui_technique.hpp"
+#include "window/swapchain.hpp"
 #include "window/window.hpp"
 
 #include <glm/gtx/quaternion.hpp>
+#include <glm/gtx/string_cast.hpp>
 
 struct CameraBuffer
 {
-  alignas(16) const glm::mat4 vp;
-  alignas(16) const glm::mat4 inverse_vp;
-  alignas(16) const glm::mat4 projection;
-  alignas(16) const glm::mat4 view;
-  alignas(16) const glm::vec4 camera_position;
-  std::array<glm::vec4, 3> padding{};
+  alignas(16) glm::mat4 vp;
+  alignas(16) glm::mat4 inverse_vp;
+  alignas(16) glm::mat4 projection;
+  alignas(16) glm::mat4 view;
+  alignas(16) glm::mat4 inverse_projection;
+  alignas(16) glm::vec4 camera_position;
+  alignas(16) glm::vec4 screen_size_near_far;
+  alignas(16) std::array<float, 8> _padding{};
 };
 ASSERT_VULKAN_UBO_COMPATIBLE(CameraBuffer);
 
@@ -95,60 +100,97 @@ static constexpr std::array renderer_bindings_metadata{
     .stage_flags = VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT,
     .name = "shadow_depth",
   },
+  DescriptorBindingMetadata{
+    .binding = 4,
+    .descriptor_type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+    .stage_flags = stages,
+    .name = "point_lights_ssbo",
+  },
 };
 
-auto
-to_renderpass(const std::string_view name) -> RenderPass
+void
+Renderer::initialise_techniques()
 {
-  auto lowercase = std::string(name);
-  std::ranges::transform(
-    lowercase.begin(), lowercase.end(), lowercase.begin(), ::tolower);
-  if (lowercase == "main_geometry") {
-    return RenderPass::MainGeometry;
+  {
+    auto&& [tech, could] = techniques.try_emplace("shadow_gui");
+    tech->second = FullscreenTechniqueFactory::create(
+      "shadow_gui", *device, *descriptor_set_manager);
   }
-  if (lowercase == "shadow") {
-    return RenderPass::Shadow;
+  /*
+    {
+      auto&& [tech, could] = techniques.try_emplace("point_lights");
+      tech->second = FullscreenTechniqueFactory::create(
+        "point_lights", *device, *descriptor_set_manager);
+    }
+    */
+
+  string_hash_map<const Image*> image_technique_map;
+  string_hash_map<const GPUBuffer*> buffer_technique_map;
+  image_technique_map["shadow_depth_image"] = shadow_depth_image.get();
+  image_technique_map["scene_depth"] = geometry_depth_image.get();
+
+  buffer_technique_map["point_light_buffer"] = point_light_system->get_ssbo({});
+
+  for (const auto& t : techniques | std::views::values) {
+    t->initialise(*this, image_technique_map, buffer_technique_map);
   }
-  if (lowercase == "line") {
-    return RenderPass::Line;
-  }
-  if (lowercase == "z_prepass") {
-    return RenderPass::ZPrepass;
-  }
-  if (lowercase == "colour_correction") {
-    return RenderPass::ColourCorrection;
-  }
-  if (lowercase == "skybox") {
-    return RenderPass::Skybox;
-  }
-  if (lowercase == "cull_prefix_sum_first") {
-    return RenderPass::ComputePrefixCullingFirst;
-  }
-  if (lowercase == "cull_prefix_sum_second") {
-    return RenderPass::ComputePrefixCullingSecond;
-  }
-  if (lowercase == "cull_prefix_sum_distribute") {
-    return RenderPass::ComputePrefixCullingDistribute;
-  }
-  if (lowercase == "cull_scatter") {
-    return RenderPass::ComputeCullingScatter;
-  }
-  if (lowercase == "cull_visibility") {
-    return RenderPass::ComputeCullingVisibility;
-  }
-  if (lowercase == "shadow_gui") {
-    return RenderPass::ShadowGUI;
+}
+
+auto
+Renderer::initialise_textures(const Device& device) -> void
+{
+  static bool called = false;
+  if (called) {
+    return;
   }
 
-  return RenderPass::Invalid;
+  white_texture = Image::create(device,
+                                {
+                                  .extent = { 1, 1 },
+                                  .format = VK_FORMAT_R8G8B8A8_SRGB,
+                                  .usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
+                                           VK_IMAGE_USAGE_SAMPLED_BIT |
+                                           VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                                  .sample_count = VK_SAMPLE_COUNT_1_BIT,
+                                  .allow_in_ui = false,
+                                  .debug_name = "white_texture",
+                                });
+  static constexpr std::array<unsigned char, 4> white_pixel = {
+    0xff, 0xff, 0xff, 0xff
+  };
+  white_texture->upload_rgba(white_pixel);
+
+  black_texture = Image::create(device,
+                                {
+                                  .extent = { 1, 1 },
+                                  .format = VK_FORMAT_R8G8B8A8_SRGB,
+                                  .usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
+                                           VK_IMAGE_USAGE_SAMPLED_BIT |
+                                           VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                                  .sample_count = VK_SAMPLE_COUNT_1_BIT,
+                                  .allow_in_ui = false,
+                                  .debug_name = "black_texture",
+                                });
+
+  static constexpr std::array<unsigned char, 4> black_pixel = {
+    0x0, 0x0, 0x0, 0x0
+  };
+  black_texture->upload_rgba(black_pixel);
+
+  called = true;
 }
 
 Renderer::Renderer(const Device& dev,
+                   const Swapchain& sc,
                    const Window& win,
                    BS::priority_thread_pool& p)
   : device(&dev)
+  , swapchain(&sc)
   , thread_pool(&p)
 {
+
+  point_light_system = std::make_unique<PointLightSystem>(*device);
+
   DescriptorLayoutBuilder builder(renderer_bindings_metadata);
   descriptor_set_manager =
     std::make_unique<DescriptorSetManager>(*device, std::move(builder));
@@ -184,7 +226,8 @@ Renderer::Renderer(const Device& dev,
                     ImageConfiguration{
                       .extent = win.framebuffer_size(),
                       .format = VK_FORMAT_D32_SFLOAT,
-                      .usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+                      .usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT |
+                               VK_IMAGE_USAGE_SAMPLED_BIT,
                       .aspect = VK_IMAGE_ASPECT_DEPTH_BIT,
                       .sample_count = VK_SAMPLE_COUNT_1_BIT,
                       .allow_in_ui = false,
@@ -195,7 +238,8 @@ Renderer::Renderer(const Device& dev,
                     ImageConfiguration{
                       .extent = win.framebuffer_size(),
                       .format = VK_FORMAT_D32_SFLOAT,
-                      .usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+                      .usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT |
+                               VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT,
                       .aspect = VK_IMAGE_ASPECT_DEPTH_BIT,
                       .sample_count = sample_count,
                       .allow_in_ui = false,
@@ -389,21 +433,30 @@ Renderer::Renderer(const Device& dev,
     identifier_buffer = GPUBuffer::zero_initialise(
       *device,
       1'000'000 * sizeof(std::uint32_t),
-      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+      false,
+      "identifier_buffer");
     identifier_material->upload("identifiers", identifier_buffer);
   }
 
   {
 
-    culled_instance_count_buffer = std::make_unique<GPUBuffer>(
-      *device, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, true);
+    culled_instance_count_buffer = GPUBuffer::zero_initialise(
+      *device,
+      sizeof(std::uint32_t),
+      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT |
+        VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+      true,
+      "culled_instance_count_buffer");
     static constexpr std::uint32_t zero = 0;
     culled_instance_count_buffer->upload(std::span{ &zero, 1 });
 
-    culled_instance_vertex_buffer = std::make_unique<GPUBuffer>(
+    culled_instance_vertex_buffer = GPUBuffer::zero_initialise(
       *device,
-      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-      true);
+      sizeof(InstanceData) * 1'000'000,
+      VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+      true,
+      "culled_instance_vertex_buffer");
 
     {
       auto&& [bytes, instance_size_bytes] =
@@ -493,6 +546,49 @@ Renderer::Renderer(const Device& dev,
       "WorkgroupPrefix", workgroup_sum_prefix_buffer.get());
   }
 
+  {
+    light_culling_material = Material::create(*device, "light_culling").value();
+
+    // Buffer for atomic counter (binding = 3)
+    global_light_counter_buffer = GPUBuffer::zero_initialise(
+      *device,
+      sizeof(std::uint32_t), // Just one uint32_t
+      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT |
+        VK_BUFFER_USAGE_TRANSFER_SRC_BIT, // Optional, for CPU readback,
+      true,
+      "global_light_counter_buffer");
+    static constexpr auto tile_size = 16;
+    // Buffer for light grid data (binding = 2)
+    std::size_t num_tiles =
+      (geometry_image->width() * geometry_image->height()) / tile_size;
+    light_grid_buffer = GPUBuffer::zero_initialise(
+      *device,
+      num_tiles * sizeof(uint32_t) * 4, // offset, count, pad0, pad1
+      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+      false,
+      "light_grid_buffer");
+
+    // Buffer for light indices (binding = 1)
+    constexpr std::size_t max_lights_per_tile = 64;
+    std::size_t max_total_indices = num_tiles * max_lights_per_tile;
+    light_index_list_buffer = GPUBuffer::zero_initialise(
+      *device,
+      max_total_indices * sizeof(std::uint32_t),
+      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+      false,
+      "light_index_list_buffer");
+
+    // CORRECTED: Bind buffers to correct bindings
+    light_culling_material->upload("LightIndexList", light_index_list_buffer);
+    light_culling_material->upload("LightGridData", light_grid_buffer);
+    light_culling_material->upload("LightIndexAllocator",
+                                   global_light_counter_buffer);
+
+    // CORRECTED: Same fix for geometry material
+    geometry_material->upload("LightIndexList", light_index_list_buffer);
+    geometry_material->upload("LightGridData", light_grid_buffer);
+  }
+
   camera_uniform_buffer =
     GPUBuffer::zero_initialise(*device,
                                sizeof(CameraBuffer) * frames_in_flight,
@@ -514,42 +610,10 @@ Renderer::Renderer(const Device& dev,
 
   std::array uniforms{ camera_uniform_buffer.get(),
                        shadow_camera_buffer.get(),
-                       frustum_buffer.get() };
+                       frustum_buffer.get(),
+                       point_light_system->get_ssbo({}) };
   std::array images{ shadow_depth_image.get() };
   descriptor_set_manager->allocate_sets(std::span(uniforms), std::span(images));
-
-  white_texture = Image::create(*device,
-                                {
-                                  .extent = { 1, 1 },
-                                  .format = VK_FORMAT_R8G8B8A8_SRGB,
-                                  .usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
-                                           VK_IMAGE_USAGE_SAMPLED_BIT |
-                                           VK_IMAGE_USAGE_TRANSFER_DST_BIT,
-                                  .sample_count = VK_SAMPLE_COUNT_1_BIT,
-                                  .allow_in_ui = false,
-                                  .debug_name = "white_texture",
-                                });
-  static constexpr std::array<unsigned char, 4> white_pixel = {
-    0xff, 0xff, 0xff, 0xff
-  };
-  white_texture->upload_rgba(white_pixel);
-
-  black_texture = Image::create(*device,
-                                {
-                                  .extent = { 1, 1 },
-                                  .format = VK_FORMAT_R8G8B8A8_SRGB,
-                                  .usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
-                                           VK_IMAGE_USAGE_SAMPLED_BIT |
-                                           VK_IMAGE_USAGE_TRANSFER_DST_BIT,
-                                  .sample_count = VK_SAMPLE_COUNT_1_BIT,
-                                  .allow_in_ui = false,
-                                  .debug_name = "black_texture",
-                                });
-
-  static constexpr std::array<unsigned char, 4> black_pixel = {
-    0x0, 0x0, 0x0, 0x0
-  };
-  black_texture->upload_rgba(black_pixel);
 
   VkSemaphoreCreateInfo semaphore_create_info{
     .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
@@ -566,17 +630,62 @@ Renderer::Renderer(const Device& dev,
       device->get_device(), &semaphore_create_info, nullptr, &sema);
   }
 
-  auto&& [tech, could] = techniques.try_emplace("shadow_gui");
-  tech->second = FullscreenTechniqueFactory::create(
-    "shadow_gui", *device, *descriptor_set_manager);
+  initialise_techniques();
 
-  string_hash_map<const Image*> image_technique_map;
-  string_hash_map<const GPUBuffer*> buffer_technique_map;
-  image_technique_map["shadow_depth_image"] = shadow_depth_image.get();
+#pragma region Material reload
+#define REGISTER_MATERIAL(name_str, mat_ptr)                                   \
+  material_registry[name_str] = { mat_ptr,                                     \
+                                  [mat = mat_ptr](                             \
+                                    const PipelineBlueprint& blueprint) {      \
+                                    mat->reload(blueprint);                    \
+                                  } };
 
-  for (auto&& [k, t] : techniques) {
-    t->initialise(*this, image_technique_map, buffer_technique_map);
+#define REGISTER_TECHNIQUE_MATERIAL(name_str)                                  \
+  material_registry[name_str] = { techniques.at(name_str)->get_material(),     \
+                                  [tech = techniques.at(name_str).get()](      \
+                                    const PipelineBlueprint& blueprint) {      \
+                                    tech->get_material()->reload(blueprint);   \
+                                  } };
+
+  REGISTER_MATERIAL("main_geometry", geometry_material.get());
+  REGISTER_MATERIAL("shadow", shadow_material.get());
+  REGISTER_MATERIAL("z_prepass", z_prepass_material.get());
+  REGISTER_MATERIAL("skybox", skybox_material.get());
+  REGISTER_MATERIAL("colour_correction", colour_corrected_material.get());
+  REGISTER_MATERIAL("cull_prefix_sum_first",
+                    cull_prefix_sum_material_first.get());
+  REGISTER_MATERIAL("cull_prefix_sum_second",
+                    cull_prefix_sum_material_second.get());
+  REGISTER_MATERIAL("cull_prefix_sum_distribute",
+                    cull_prefix_sum_material_distribute.get());
+  REGISTER_MATERIAL("cull_scatter", cull_scatter_material.get());
+  REGISTER_MATERIAL("cull_visibility", cull_visibility_material.get());
+  REGISTER_MATERIAL("composite", composite_attachment_material.get());
+  REGISTER_MATERIAL("identifier", identifier_material.get());
+  REGISTER_MATERIAL("line", line_material.get());
+
+  for (const auto& name : techniques | std::views::keys) {
+    REGISTER_TECHNIQUE_MATERIAL(name);
   }
+
+  material_registry["bloom_horizontal"] = {
+    nullptr,
+    [this](const PipelineBlueprint& blueprint) {
+      bloom_pass->reload_pipeline(blueprint, BloomPipeline::Horizontal);
+    }
+  };
+
+  material_registry["bloom_vertical"] = {
+    nullptr,
+    [this](const PipelineBlueprint& blueprint) {
+      bloom_pass->reload_pipeline(blueprint, BloomPipeline::Vertical);
+    }
+  };
+
+#pragma endregion
+
+  composite_attachment_material->upload("point_lights_input",
+                                        get_point_lights_image());
 }
 
 auto
@@ -757,7 +866,7 @@ Renderer::upload_line_instance_data() -> void
 }
 
 auto
-Renderer::update_shadow_buffers(const std::uint32_t frame_index) -> void
+Renderer::update_shadow_buffers(const std::uint32_t fi) -> void
 {
   constexpr glm::vec3 up{ camera_constants::WORLD_UP };
 
@@ -769,6 +878,10 @@ Renderer::update_shadow_buffers(const std::uint32_t frame_index) -> void
       break;
     case ShadowViewMode::LookAtLH:
       view = glm::lookAtLH(
+        light_environment.light_position, light_environment.target, up);
+      break;
+    case ShadowViewMode::Default:
+      view = glm::lookAt(
         light_environment.light_position, light_environment.target, up);
       break;
   }
@@ -791,6 +904,9 @@ Renderer::update_shadow_buffers(const std::uint32_t frame_index) -> void
     case ShadowProjectionMode::OrthoLH_NO:
       proj = glm::orthoLH_NO(-s, s, -s, s, n, f);
       break;
+    case ShadowProjectionMode::Default:
+      proj = glm::ortho(-s, s, -s, s, n, f);
+      break;
   }
 
   const glm::mat4 vp = proj * view;
@@ -803,7 +919,7 @@ Renderer::update_shadow_buffers(const std::uint32_t frame_index) -> void
   };
 
   shadow_camera_buffer->upload_with_offset(std::span{ &shadow_data, 1 },
-                                           sizeof(ShadowBuffer) * frame_index);
+                                           sizeof(ShadowBuffer) * fi);
   light_frustum.update(shadow_data.light_vp);
 }
 
@@ -825,7 +941,7 @@ Renderer::update_identifiers()
 }
 
 auto
-Renderer::update_uniform_buffers(const std::uint32_t frame_index,
+Renderer::update_uniform_buffers(const std::uint32_t fi,
                                  const glm::mat4& view,
                                  const glm::mat4& projection,
                                  const glm::mat4& inverse_projection,
@@ -836,20 +952,21 @@ Renderer::update_uniform_buffers(const std::uint32_t frame_index,
     .inverse_vp = inverse_projection * view,
     .projection = projection,
     .view = view,
+    .inverse_projection = glm::inverse(projection),
     .camera_position = { camera_position, 1.0F },
+    .screen_size_near_far = {geometry_image->width(), geometry_image->height(), camera_environment.z_near, camera_environment.z_far,},
   };
   camera_uniform_buffer->upload_with_offset(std::span{ &buffer, 1 },
-                                            sizeof(CameraBuffer) * frame_index);
-
+                                            sizeof(CameraBuffer) * fi);
   const FrustumBuffer frustum{ camera_frustum.planes };
   frustum_buffer->upload_with_offset(std::span{ &frustum, 1 },
-                                     sizeof(FrustumBuffer) * frame_index);
+                                     sizeof(FrustumBuffer) * fi);
 }
 
 auto
-Renderer::begin_frame(const std::uint32_t frame_index, const VP& matrices)
-  -> void
+Renderer::begin_frame(const VP& matrices) -> void
 {
+  frame_index = swapchain->get_frame_index();
   const auto vp = matrices.projection * matrices.view;
   const auto position = matrices.view[3];
   update_uniform_buffers(frame_index,
@@ -860,6 +977,9 @@ Renderer::begin_frame(const std::uint32_t frame_index, const VP& matrices)
   update_shadow_buffers(frame_index);
   update_frustum(vp);
   update_identifiers();
+
+  point_light_system->upload_to_gpu(frame_index);
+
   draw_commands.clear();
   shadow_draw_commands.clear();
   identifiers.clear();
@@ -877,7 +997,7 @@ static constexpr auto run_technique_passes =
   };
 
 auto
-Renderer::end_frame(const std::uint32_t frame_index) -> void
+Renderer::end_frame(const std::uint32_t fi) -> void
 {
   ZoneScopedN("End frame");
 
@@ -975,19 +1095,18 @@ Renderer::end_frame(const std::uint32_t frame_index) -> void
 
   {
     ZoneScopedN("Begin command buffer");
-    command_buffer->begin_frame(frame_index);
+    command_buffer->begin_frame(fi);
   }
 
-  run_skybox_pass(frame_index);
+  run_skybox_pass(fi);
 
-  run_shadow_pass(frame_index, flat_shadow_draw_commands);
-  run_z_prepass(frame_index, flat_draw_commands);
-  run_geometry_pass(frame_index, flat_draw_commands);
+  run_shadow_pass(fi, flat_shadow_draw_commands);
+  run_z_prepass(fi, flat_draw_commands);
+  run_geometry_pass(fi, flat_draw_commands);
 
-#if IS_DEBUG
-  run_identifier_pass(frame_index, flat_draw_commands);
-#endif
-
+  if constexpr (is_debug) {
+    run_identifier_pass(fi, flat_draw_commands);
+  }
   // Add image barrier to prepare geometry_image for compute shader read
   {
     ZoneScopedN("Geometry to Compute Barrier");
@@ -1004,7 +1123,7 @@ Renderer::end_frame(const std::uint32_t frame_index) -> void
       VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1
     };
 
-    vkCmdPipelineBarrier(command_buffer->get(frame_index),
+    vkCmdPipelineBarrier(command_buffer->get(fi),
                          VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
                          VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
                          0,
@@ -1018,32 +1137,32 @@ Renderer::end_frame(const std::uint32_t frame_index) -> void
 
   // Submit graphics work and signal semaphore
   command_buffer->submit_and_end(
-    frame_index, VK_NULL_HANDLE, geometry_complete_semaphores.at(frame_index));
+    fi, VK_NULL_HANDLE, geometry_complete_semaphores.at(fi));
 
   // Begin compute work
-  compute_command_buffer->begin_frame(frame_index);
+  compute_command_buffer->begin_frame(fi);
 
-  run_bloom_pass(frame_index);
+  run_light_culling_pass();
+  run_bloom_pass(fi);
 
   compute_command_buffer->submit_and_end(
-    frame_index,
-    geometry_complete_semaphores.at(frame_index),
-    bloom_complete_semaphores.at(frame_index));
+    fi, geometry_complete_semaphores.at(fi), bloom_complete_semaphores.at(fi));
 
   // Begin final graphics work
-  command_buffer->begin_frame_persist_query_pools(frame_index);
+  command_buffer->begin_frame_persist_query_pools(fi);
 
-  run_composite_pass(frame_index);
-  run_postprocess_passes(frame_index);
+  run_technique_passes(techniques, *command_buffer, fi);
 
-  run_technique_passes(techniques, *command_buffer, frame_index);
+  run_composite_pass(fi);
+  run_postprocess_passes(fi);
 
   command_buffer->submit_and_end(
-    frame_index, bloom_complete_semaphores.at(frame_index), VK_NULL_HANDLE);
+    fi, bloom_complete_semaphores.at(fi), VK_NULL_HANDLE);
 }
 
 auto
-Renderer::resize(const std::uint32_t width, const std::uint32_t height) -> void
+Renderer::on_resize(const std::uint32_t width, const std::uint32_t height)
+  -> void
 {
   geometry_image->resize(width, height);
   geometry_msaa_image->resize(width, height);
@@ -1052,16 +1171,24 @@ Renderer::resize(const std::uint32_t width, const std::uint32_t height) -> void
   skybox_attachment_texture->resize(width, height);
   composite_attachment_texture->resize(width, height);
   colour_corrected_image->resize(width, height);
+  identifier_image->resize(width, height);
 
   bloom_pass->resize(width, height);
+
+  for (const auto& t : techniques | std::views::values) {
+    t->on_resize(width, height);
+  }
 
   if (skybox_material)
     skybox_material->invalidate(skybox_attachment_texture.get());
 
   if (composite_attachment_material) {
-    composite_attachment_material->invalidate(skybox_attachment_texture.get());
-    composite_attachment_material->invalidate(geometry_image.get());
-    composite_attachment_material->invalidate(&bloom_pass->get_output_image());
+    std::array<const Image*, 3> images = {
+      skybox_attachment_texture.get(),
+      geometry_image.get(),
+      &bloom_pass->get_output_image(),
+    };
+    composite_attachment_material->invalidate(images);
   }
 
   if (colour_corrected_material)
@@ -1072,6 +1199,20 @@ auto
 Renderer::get_output_image() const -> const Image&
 {
   return *colour_corrected_image;
+}
+
+auto
+Renderer::get_shadow_image() const -> const Image*
+{
+  return techniques.at("shadow_gui")->get_output();
+}
+
+auto
+Renderer::get_point_lights_image() const -> const Image*
+{
+  if (!techniques.contains("point_lights"))
+    return nullptr;
+  return techniques.at("point_lights")->get_output();
 }
 
 auto
@@ -1088,16 +1229,31 @@ Renderer::update_camera(const EditorCamera& camera) -> void
   };
 }
 
+auto
+Renderer::update_material_by_name(const std::string& name,
+                                  const PipelineBlueprint& blueprint) -> bool
+{
+  auto it = material_registry.find(name);
+  if (it == material_registry.end()) {
+    Logger::log_error(
+      "Renderer::update_material_by_name: Material '{}' not found.", name);
+    return false;
+  }
+
+  it->second.reload_callback(blueprint);
+  return true;
+}
+
 #pragma region RenderPasses
 
 auto
-Renderer::run_skybox_pass(std::uint32_t frame_index) -> void
+Renderer::run_skybox_pass(std::uint32_t fi) -> void
 {
   ZoneScopedN("Skybox pass");
 
-  command_buffer->begin_timer(frame_index, "skybox_pass");
+  command_buffer->begin_timer(fi, "skybox_pass");
 
-  const VkCommandBuffer& cmd = command_buffer->get(frame_index);
+  const VkCommandBuffer& cmd = command_buffer->get(fi);
   Util::Vulkan::cmd_begin_debug_label(
     cmd, "Skybox", { 0.9F, 0.1F, 0.1F, 1.0F });
 
@@ -1151,8 +1307,8 @@ Renderer::run_skybox_pass(std::uint32_t frame_index) -> void
   vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.pipeline);
 
   const std::array descriptor_sets = {
-    descriptor_set_manager->get_set(frame_index),
-    skybox_material->prepare_for_rendering(frame_index),
+    descriptor_set_manager->get_set(fi),
+    skybox_material->prepare_for_rendering(fi),
   };
   vkCmdBindDescriptorSets(cmd,
                           VK_PIPELINE_BIND_POINT_GRAPHICS,
@@ -1163,11 +1319,10 @@ Renderer::run_skybox_pass(std::uint32_t frame_index) -> void
                           0,
                           nullptr);
 
-  if (const auto mesh_expected =
-        MeshCache::the().get_mesh<MeshType::CubeOnlyPosition>();
+  if (const auto mesh_expected = MeshCache::the().get_mesh<MeshType::Cube>();
       mesh_expected.has_value()) {
     const auto& mesh = mesh_expected.value();
-    const auto& vertex_buffer = mesh->get_vertex_buffer();
+    const auto& vertex_buffer = mesh->get_position_only_vertex_buffer();
     const auto& index_buffer = mesh->get_index_buffer();
 
     const std::array vertex_buffers = {
@@ -1191,7 +1346,7 @@ Renderer::run_skybox_pass(std::uint32_t frame_index) -> void
   CoreUtils::cmd_transition_to_shader_read(
     cmd, skybox_attachment_texture->get_image());
 
-  command_buffer->end_timer(frame_index, "skybox_pass");
+  command_buffer->end_timer(fi, "skybox_pass");
 
   Util::Vulkan::cmd_end_debug_label(cmd);
 }
@@ -1208,19 +1363,20 @@ bind_sets(auto cmd, auto layout, std::ranges::contiguous_range auto sets)
 }
 
 auto
-Renderer::run_z_prepass(std::uint32_t frame_index, const DrawList& draw_list)
-  -> void
+Renderer::run_z_prepass(std::uint32_t fi, const DrawList& draw_list) -> void
 {
   ZoneScopedN("Z Prepass");
 
-  command_buffer->begin_timer(frame_index, "z_prepass");
+  command_buffer->begin_timer(fi, "z_prepass");
 
-  const VkCommandBuffer& cmd = command_buffer->get(frame_index);
+  const VkCommandBuffer& cmd = command_buffer->get(fi);
   Util::Vulkan::cmd_begin_debug_label(
     cmd, "Z Prepass", { 0.1F, 0.9F, 0.1F, 1.0F });
 
   CoreUtils::cmd_transition_to_depth_attachment(
     cmd, geometry_depth_msaa_image->get_image());
+  CoreUtils::cmd_transition_to_depth_attachment(
+    cmd, geometry_depth_image->get_image());
 
   constexpr VkClearValue depth_clear = { .depthStencil = { 0.0f, 0 } };
   VkRenderingAttachmentInfo depth_attachment = {
@@ -1267,8 +1423,8 @@ Renderer::run_z_prepass(std::uint32_t frame_index, const DrawList& draw_list)
     cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, z_prepass_pipeline.pipeline);
 
   const std::array sets = {
-    descriptor_set_manager->get_set(frame_index),
-    z_prepass_material->prepare_for_rendering(frame_index),
+    descriptor_set_manager->get_set(fi),
+    z_prepass_material->prepare_for_rendering(fi),
   };
   bind_sets(cmd, z_prepass_pipeline.layout, sets);
   for (const auto& [cmd_info, offset, instance_count] : draw_list) {
@@ -1276,10 +1432,11 @@ Renderer::run_z_prepass(std::uint32_t frame_index, const DrawList& draw_list)
     if (!submesh)
       continue;
 
-    const auto& vb = cmd_info.mesh->get_vertex_buffer();
+    const auto& vb = cmd_info.mesh->get_position_only_vertex_buffer();
     const auto& ib = cmd_info.mesh->get_index_buffer();
 
-    const VkDeviceSize vb_offset = submesh->vertex_offset * sizeof(Vertex);
+    const VkDeviceSize vb_offset =
+      submesh->vertex_offset * sizeof(PositionOnlyVertex);
     const std::array vertex_buffers = { vb->get(),
                                         instance_vertex_buffer->get() };
     const std::array offsets = { vb_offset, 0ULL };
@@ -1300,20 +1457,21 @@ Renderer::run_z_prepass(std::uint32_t frame_index, const DrawList& draw_list)
   }
 
   vkCmdEndRendering(cmd);
-  command_buffer->end_timer(frame_index, "z_prepass");
+  CoreUtils::cmd_transition_depth_to_shader_read(
+    cmd, geometry_depth_image->get_image());
+  command_buffer->end_timer(fi, "z_prepass");
 
   Util::Vulkan::cmd_end_debug_label(cmd);
 }
 
 auto
-Renderer::run_geometry_pass(std::uint32_t frame_index,
-                            const DrawList& draw_list) -> void
+Renderer::run_geometry_pass(std::uint32_t fi, const DrawList& draw_list) -> void
 {
   ZoneScopedN("Geometry pass");
 
-  command_buffer->begin_timer(frame_index, "geometry_pass");
+  command_buffer->begin_timer(fi, "geometry_pass");
 
-  const VkCommandBuffer& cmd = command_buffer->get(frame_index);
+  const VkCommandBuffer& cmd = command_buffer->get(fi);
   Util::Vulkan::cmd_begin_debug_label(
     cmd, "Geometry Pass", { 0.5F, 0.5F, 0.0F, 1.0F });
   CoreUtils::cmd_transition_image(
@@ -1404,10 +1562,13 @@ Renderer::run_geometry_pass(std::uint32_t frame_index,
         ? *Assets::Manager::the().get(cmd_info.override_material)
         : *submesh_material;
 
-    const auto& material_set = material.prepare_for_rendering(frame_index);
+    material.upload("LightIndexList", global_light_counter_buffer);
+    material.upload("LightGridData", light_grid_buffer);
+
+    const auto& material_set = material.prepare_for_rendering(fi);
 
     std::array descriptor_sets{
-      descriptor_set_manager->get_set(frame_index),
+      descriptor_set_manager->get_set(fi),
       material_set,
     };
     vkCmdBindDescriptorSets(cmd,
@@ -1437,6 +1598,7 @@ Renderer::run_geometry_pass(std::uint32_t frame_index,
 
     auto&& [pc_stage, pc_offset, pc_size, pc_pointer] =
       material.generate_push_constant_data();
+
     vkCmdPushConstants(
       cmd, pipeline.layout, pc_stage, pc_offset, pc_size, pc_pointer);
 
@@ -1460,7 +1622,7 @@ Renderer::run_geometry_pass(std::uint32_t frame_index,
                             line_pipeline.layout,
                             0,
                             1,
-                            &descriptor_set_manager->get_set(frame_index),
+                            &descriptor_set_manager->get_set(fi),
                             0,
                             nullptr);
 
@@ -1475,33 +1637,33 @@ Renderer::run_geometry_pass(std::uint32_t frame_index,
   vkCmdEndRendering(cmd);
   // CoreUtils::cmd_transition_to_shader_read(cmd, geometry_image->get_image());
 
-  command_buffer->end_timer(frame_index, "geometry_pass");
+  command_buffer->end_timer(fi, "geometry_pass");
 
   Util::Vulkan::cmd_end_debug_label(cmd);
 }
 
 auto
-Renderer::run_bloom_pass(uint32_t frame_index) -> void
+Renderer::run_bloom_pass(uint32_t fi) -> void
 {
-  compute_command_buffer->begin_timer(frame_index, "bloom_pass");
+  compute_command_buffer->begin_timer(fi, "bloom_pass");
 
-  const VkCommandBuffer& cmd = compute_command_buffer->get(frame_index);
+  const VkCommandBuffer& cmd = compute_command_buffer->get(fi);
   bloom_pass->update_source(geometry_image.get());
-  bloom_pass->prepare(frame_index);
-  bloom_pass->record(cmd, *descriptor_set_manager, frame_index);
+  bloom_pass->prepare(fi);
+  bloom_pass->record(cmd, *descriptor_set_manager, fi);
 
-  compute_command_buffer->end_timer(frame_index, "bloom_pass");
+  compute_command_buffer->end_timer(fi, "bloom_pass");
 }
 
 auto
-Renderer::run_identifier_pass(const std::uint32_t frame_index,
-                              const DrawList& draw_list) -> void
+Renderer::run_identifier_pass(const std::uint32_t fi, const DrawList& draw_list)
+  -> void
 {
   ZoneScopedN("Identifier pass");
 
-  command_buffer->begin_timer(frame_index, "identifier_pass");
+  command_buffer->begin_timer(fi, "identifier_pass");
 
-  const VkCommandBuffer& cmd = command_buffer->get(frame_index);
+  const VkCommandBuffer& cmd = command_buffer->get(fi);
   Util::Vulkan::cmd_begin_debug_label(
     cmd, "Identifier Pass", { 0.3F, 0.0F, 0.9F, 1.0F });
 
@@ -1568,8 +1730,8 @@ Renderer::run_identifier_pass(const std::uint32_t frame_index,
     cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, identifier_pipeline.pipeline);
 
   const std::vector sets{
-    descriptor_set_manager->get_set(frame_index),
-    identifier_material->prepare_for_rendering(frame_index),
+    descriptor_set_manager->get_set(fi),
+    identifier_material->prepare_for_rendering(fi),
   };
   vkCmdBindDescriptorSets(cmd,
                           VK_PIPELINE_BIND_POINT_GRAPHICS,
@@ -1585,10 +1747,11 @@ Renderer::run_identifier_pass(const std::uint32_t frame_index,
     if (!submesh)
       continue;
 
-    const auto& vb = cmd_info.mesh->get_vertex_buffer();
+    const auto& vb = cmd_info.mesh->get_position_only_vertex_buffer();
     const auto& ib = cmd_info.mesh->get_index_buffer();
 
-    const VkDeviceSize vb_offset = submesh->vertex_offset * sizeof(Vertex);
+    const VkDeviceSize vb_offset =
+      submesh->vertex_offset * sizeof(PositionOnlyVertex);
     const std::array vertex_buffers = { vb->get(),
                                         instance_vertex_buffer->get() };
     const std::array offsets = { vb_offset, 0ULL };
@@ -1605,7 +1768,7 @@ Renderer::run_identifier_pass(const std::uint32_t frame_index,
                             identifier_pipeline.layout,
                             0,
                             1,
-                            &descriptor_set_manager->get_set(frame_index),
+                            &descriptor_set_manager->get_set(fi),
                             0,
                             nullptr);
 
@@ -1620,19 +1783,101 @@ Renderer::run_identifier_pass(const std::uint32_t frame_index,
   vkCmdEndRendering(cmd);
   CoreUtils::cmd_transition_to_shader_read(cmd, identifier_image->get_image());
 
-  command_buffer->end_timer(frame_index, "identifier_pass");
+  command_buffer->end_timer(fi, "identifier_pass");
 
   Util::Vulkan::cmd_end_debug_label(cmd);
 }
 
 auto
-Renderer::run_culling_compute_pass(std::uint32_t frame_index) -> void
+Renderer::run_light_culling_pass() -> void
+{
+  ZoneScopedN("Light culling pass");
+  const auto cmd = compute_command_buffer->get(frame_index);
+  Util::Vulkan::cmd_begin_debug_label(
+    cmd, "Light culling pass", { 1.0, 0.0, 0.0, 1.0 });
+
+  // CORRECTED: Reset the COUNTER buffer, not the indices buffer
+  {
+    ZoneScopedN("Upload via one time buffer");
+    static constexpr std::uint32_t zero = 0;
+    global_light_counter_buffer->upload(
+      std::span{ &zero, 1 }); // Reset atomic counter to 0
+  }
+
+  // Tile group dimensions (screen size should be aligned with TILE_SIZE used in
+  // shader)
+  constexpr std::uint32_t tile_size = 16;
+  constexpr std::uint32_t num_z_slices = 24;
+
+  const std::uint32_t tiles_x =
+    (geometry_image->width() + tile_size - 1) / tile_size;
+  const std::uint32_t tiles_y =
+    (geometry_image->height() + tile_size - 1) / tile_size;
+  constexpr std::uint32_t tiles_z = num_z_slices;
+
+  const std::uint32_t total_tiles = tiles_x * tiles_y * tiles_z;
+  assert(total_tiles <= 522240);
+  (void)total_tiles;
+
+  compute_command_buffer->begin_timer(frame_index, "light_culling");
+
+  const auto& pipeline = light_culling_material->get_pipeline();
+  const std::array sets = {
+    descriptor_set_manager->get_set(frame_index),
+    light_culling_material->prepare_for_rendering(frame_index),
+  };
+
+  vkCmdBindPipeline(cmd, pipeline.bind_point, pipeline.pipeline);
+  vkCmdBindDescriptorSets(cmd,
+                          pipeline.bind_point,
+                          pipeline.layout,
+                          0,
+                          static_cast<std::uint32_t>(sets.size()),
+                          sets.data(),
+                          0,
+                          nullptr);
+
+  // CORRECTED: Dispatch with proper workgroup sizing
+  // Your compute shader uses local_size_x = 8, local_size_y = 8, local_size_z =
+  // 4 So you need to dispatch ceil(tiles_x/8), ceil(tiles_y/8), ceil(tiles_z/4)
+  const std::uint32_t dispatch_x =
+    (tiles_x + 7) / 8; // Round up for workgroup size 8
+  const std::uint32_t dispatch_y =
+    (tiles_y + 7) / 8; // Round up for workgroup size 8
+  const std::uint32_t dispatch_z =
+    (tiles_z + 3) / 4; // Round up for workgroup size 4
+
+  vkCmdDispatch(cmd, dispatch_x, dispatch_y, dispatch_z);
+
+  // IMPROVED: Better pipeline barrier for compute->compute dependency
+  VkMemoryBarrier memory_barrier = {};
+  memory_barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+  memory_barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+  memory_barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+
+  vkCmdPipelineBarrier(cmd,
+                       VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                       VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                       0,
+                       1,
+                       &memory_barrier,
+                       0,
+                       nullptr,
+                       0,
+                       nullptr);
+
+  compute_command_buffer->end_timer(frame_index, "light_culling");
+  Util::Vulkan::cmd_end_debug_label(cmd);
+}
+
+auto
+Renderer::run_culling_compute_pass(std::uint32_t fi) -> void
 {
   ZoneScopedN("Compute pass");
 
-  compute_command_buffer->begin_timer(frame_index, "gpu_culling");
+  compute_command_buffer->begin_timer(fi, "gpu_culling");
 
-  const auto cmd = compute_command_buffer->get(frame_index);
+  const auto cmd = compute_command_buffer->get(fi);
 
   static constexpr std::uint32_t zero = 0;
   culled_instance_count_buffer->upload(std::span{ &zero, 1 });
@@ -1646,12 +1891,12 @@ Renderer::run_culling_compute_pass(std::uint32_t frame_index) -> void
                       const std::string_view label,
                       const std::uint32_t groups,
                       const bool insert_barrier) {
-    compute_command_buffer->begin_timer(frame_index, label);
+    compute_command_buffer->begin_timer(fi, label);
 
     const auto& pipeline = mat.get_pipeline();
     const std::array sets = {
-      descriptor_set_manager->get_set(frame_index),
-      mat.prepare_for_rendering(frame_index),
+      descriptor_set_manager->get_set(fi),
+      mat.prepare_for_rendering(fi),
     };
 
     vkCmdBindPipeline(cmd, pipeline.bind_point, pipeline.pipeline);
@@ -1664,7 +1909,7 @@ Renderer::run_culling_compute_pass(std::uint32_t frame_index) -> void
                             0,
                             nullptr);
     vkCmdDispatch(cmd, groups, 1, 1);
-    compute_command_buffer->end_timer(frame_index, label);
+    compute_command_buffer->end_timer(fi, label);
 
     if (insert_barrier) {
       vkCmdPipelineBarrier(cmd,
@@ -1704,7 +1949,7 @@ Renderer::run_culling_compute_pass(std::uint32_t frame_index) -> void
     ZoneScopedN("Scatter pass");
     dispatch(*cull_scatter_material, "scatter_pass", group_count, false);
   }
-  compute_command_buffer->end_timer(frame_index, "gpu_culling");
+  compute_command_buffer->end_timer(fi, "gpu_culling");
 
   std::uint32_t culled_count = 0;
   if (!culled_instance_count_buffer->read_into_with_offset(culled_count, 0)) {
@@ -1713,14 +1958,13 @@ Renderer::run_culling_compute_pass(std::uint32_t frame_index) -> void
 }
 
 auto
-Renderer::run_shadow_pass(std::uint32_t frame_index, const DrawList& draw_list)
-  -> void
+Renderer::run_shadow_pass(std::uint32_t fi, const DrawList& draw_list) -> void
 {
   ZoneScopedN("Shadow pass");
 
-  command_buffer->begin_timer(frame_index, "shadow_pass");
+  command_buffer->begin_timer(fi, "shadow_pass");
 
-  const VkCommandBuffer& cmd = command_buffer->get(frame_index);
+  const VkCommandBuffer& cmd = command_buffer->get(fi);
   Util::Vulkan::cmd_begin_debug_label(
     cmd, "Shadow Pass", { 0.3F, 0.0F, 0.9F, 1.0F });
 
@@ -1775,9 +2019,9 @@ Renderer::run_shadow_pass(std::uint32_t frame_index, const DrawList& draw_list)
     cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, shadow_pipeline.pipeline);
 
   std::vector sets{
-    descriptor_set_manager->get_set(frame_index),
+    descriptor_set_manager->get_set(fi),
   };
-  if (const auto set = shadow_material->prepare_for_rendering(frame_index)) {
+  if (const auto set = shadow_material->prepare_for_rendering(fi)) {
     sets.push_back(set);
   }
   vkCmdBindDescriptorSets(cmd,
@@ -1793,10 +2037,11 @@ Renderer::run_shadow_pass(std::uint32_t frame_index, const DrawList& draw_list)
     if (!submesh)
       continue;
 
-    const auto& vb = cmd_info.mesh->get_vertex_buffer();
+    const auto& vb = cmd_info.mesh->get_position_only_vertex_buffer();
     const auto& ib = cmd_info.mesh->get_index_buffer();
 
-    const VkDeviceSize vb_offset = submesh->vertex_offset * sizeof(Vertex);
+    const VkDeviceSize vb_offset =
+      submesh->vertex_offset * sizeof(PositionOnlyVertex);
     const std::array vertex_buffers = { vb->get(),
                                         instance_vertex_buffer->get() };
     const std::array offsets = { vb_offset, 0ULL };
@@ -1813,7 +2058,7 @@ Renderer::run_shadow_pass(std::uint32_t frame_index, const DrawList& draw_list)
                             shadow_pipeline.layout,
                             0,
                             1,
-                            &descriptor_set_manager->get_set(frame_index),
+                            &descriptor_set_manager->get_set(fi),
                             0,
                             nullptr);
 
@@ -1829,19 +2074,19 @@ Renderer::run_shadow_pass(std::uint32_t frame_index, const DrawList& draw_list)
   CoreUtils::cmd_transition_depth_to_shader_read(
     cmd, shadow_depth_image->get_image());
 
-  command_buffer->end_timer(frame_index, "shadow_pass");
+  command_buffer->end_timer(fi, "shadow_pass");
 
   Util::Vulkan::cmd_end_debug_label(cmd);
 }
 
 auto
-Renderer::run_colour_correction_pass(std::uint32_t frame_index) -> void
+Renderer::run_colour_correction_pass(std::uint32_t fi) -> void
 {
   ZoneScopedN("Colour correction pass");
 
-  command_buffer->begin_timer(frame_index, "colour_correction_pass");
+  command_buffer->begin_timer(fi, "colour_correction_pass");
 
-  const auto cmd = command_buffer->get(frame_index);
+  const auto cmd = command_buffer->get(fi);
 
   Util::Vulkan::cmd_begin_debug_label(
     cmd, "Colour Correction (PP)", { 0.5F, 0.9F, 0.1F, 1.0F });
@@ -1896,10 +2141,10 @@ Renderer::run_colour_correction_pass(std::uint32_t frame_index) -> void
   const auto& pipeline = material->get_pipeline();
   vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.pipeline);
 
-  const auto& descriptor_set = material->prepare_for_rendering(frame_index);
+  const auto& descriptor_set = material->prepare_for_rendering(fi);
 
   const std::array descriptor_sets{
-    descriptor_set_manager->get_set(frame_index),
+    descriptor_set_manager->get_set(fi),
     descriptor_set,
   };
   vkCmdBindDescriptorSets(cmd,
@@ -1916,18 +2161,18 @@ Renderer::run_colour_correction_pass(std::uint32_t frame_index) -> void
 
   CoreUtils::cmd_transition_to_shader_read(cmd,
                                            colour_corrected_image->get_image());
-  command_buffer->end_timer(frame_index, "colour_correction_pass");
+  command_buffer->end_timer(fi, "colour_correction_pass");
 
   Util::Vulkan::cmd_end_debug_label(cmd);
 }
 
 auto
-Renderer::run_composite_pass(const std::uint32_t frame_index) -> void
+Renderer::run_composite_pass(const std::uint32_t fi) -> void
 {
   ZoneScopedN("Composite pass");
 
-  command_buffer->begin_timer(frame_index, "composite_pass");
-  const VkCommandBuffer& cmd = command_buffer->get(frame_index);
+  command_buffer->begin_timer(fi, "composite_pass");
+  const VkCommandBuffer& cmd = command_buffer->get(fi);
   Util::Vulkan::cmd_begin_debug_label(
     cmd, "Composite (PP)", { 0.1F, 0.9F, 0.1F, 1.0F });
   CoreUtils::cmd_transition_to_color_attachment(
@@ -1971,9 +2216,9 @@ Renderer::run_composite_pass(const std::uint32_t frame_index) -> void
   const auto& pipeline = material->get_pipeline();
   vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.pipeline);
 
-  const auto descriptor_set = material->prepare_for_rendering(frame_index);
+  const auto descriptor_set = material->prepare_for_rendering(fi);
   const std::array descriptor_sets{
-    descriptor_set_manager->get_set(frame_index),
+    descriptor_set_manager->get_set(fi),
     descriptor_set,
   };
   vkCmdBindDescriptorSets(cmd,
@@ -1991,8 +2236,8 @@ Renderer::run_composite_pass(const std::uint32_t frame_index) -> void
   CoreUtils::cmd_transition_to_shader_read(
     cmd, composite_attachment_texture->get_image());
 
-  command_buffer->end_timer(frame_index, "composite_pass");
+  command_buffer->end_timer(fi, "composite_pass");
   Util::Vulkan::cmd_end_debug_label(cmd);
 }
 
-#pragma endregion RenderPasses
+#pragma endregion RenderPas

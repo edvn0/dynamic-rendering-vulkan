@@ -15,11 +15,20 @@ struct BloomMip
   Assets::Pointer<Material> upsample_material;
 };
 
+enum class BloomPipeline : std::uint8_t
+{
+  Horizontal,
+  Vertical,
+  FinalUpsample,
+  Downsample
+};
+
 struct BloomPass
 {
   explicit BloomPass(const Device& device, const Image*, int mip_count = 5);
   ~BloomPass() = default;
 
+  auto reload_pipeline(const PipelineBlueprint&, BloomPipeline) -> void;
   auto prepare(std::uint32_t) -> void;
   void resize(const glm::uvec2& size);
   void resize(std::uint32_t w, std::uint32_t h)
@@ -38,7 +47,7 @@ private:
   Assets::Pointer<Image> extract_image;
   Assets::Pointer<Material> extract_material;
   Assets::Pointer<Material> final_upsample_material;
-  Assets::Pointer<Image> blur_temp;
+  std::vector<Assets::Pointer<Image>> blur_temp_chain;
 
   std::vector<BloomMip> mip_chain;
 

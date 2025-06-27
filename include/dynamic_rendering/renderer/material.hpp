@@ -74,6 +74,7 @@ public:
   {
     return upload(name, image.get());
   }
+  auto upload_default_textures() -> void;
 
   auto use_albedo_map(const bool val = true)
   {
@@ -115,6 +116,13 @@ public:
     invalidate(std::span{ &image, 1 });
   }
   auto invalidate(std::span<const Image*> images) -> void;
+  template<std::size_t Extent = std::dynamic_extent>
+  auto invalidate(const std::span<const Image*, Extent> images) -> void
+  {
+    invalidate(std::span{ &images, Extent });
+  }
+
+  auto invalidate_all() -> void;
   auto reload(const PipelineBlueprint&) -> void;
   auto prepare_for_rendering(std::uint32_t frame_index)
     -> const VkDescriptorSet&;
@@ -164,8 +172,6 @@ private:
   auto rebuild_pipeline(const PipelineBlueprint&)
     -> std::expected<std::unique_ptr<CompiledPipeline>, MaterialError>;
   auto upload_storage_image(std::string_view, const Image*) -> void;
-
-  auto upload_default_textures() -> void;
 
   static auto create(const Device&, const PipelineBlueprint&)
     -> std::expected<std::unique_ptr<Material>, MaterialError>;

@@ -6,6 +6,7 @@
 #include "dynamic_rendering/core/fs.hpp"
 #include "dynamic_rendering/renderer/techniques/shadow_gui_technique.hpp"
 #include "renderer/descriptor_manager.hpp"
+#include "renderer/techniques/point_lights_technique.hpp"
 #include "renderer/techniques/shadow_gui_technique.hpp"
 
 #include <yaml-cpp/yaml.h>
@@ -42,20 +43,35 @@ parse_fullscreen_technique_yaml(const YAML::Node& root)
       desc.bind_point = VK_PIPELINE_BIND_POINT_GRAPHICS;
     }
   } else {
-    Logger::log_warning("No bind_point specified, defaulting to graphics");
+    Logger::log_info("No bind_point specified, defaulting to graphics");
     desc.bind_point = VK_PIPELINE_BIND_POINT_GRAPHICS;
   }
 
   if (root["inputs"]) {
     for (const auto& input : root["inputs"]) {
-      if (!input["binding"] || !input["source"]) {
+      std::string binding;
+      std::string source;
+
+      const auto has_binding = input["binding"];
+      const auto has_source = input["source"];
+
+      if (has_binding && has_source) {
+        binding = input["binding"].as<std::string>();
+        source = input["source"].as<std::string>();
+      } else if (has_binding) {
+        binding = input["binding"].as<std::string>();
+        source = binding;
+      } else if (has_source) {
+        source = input["source"].as<std::string>();
+        binding = source;
+      } else {
         Logger::log_warning(
-          "Skipping input entry due to missing 'binding' or 'source'");
+          "Skipping input entry due to missing both 'binding' and 'source'");
         continue;
       }
 
-      desc.inputs.push_back({ .binding = input["binding"].as<std::string>(),
-                              .source = input["source"].as<std::string>() });
+      desc.inputs.push_back(
+        { .binding = std::move(binding), .source = std::move(source) });
     }
   }
 
@@ -174,6 +190,11 @@ FullscreenTechniqueFactory::create(std::string_view path,
   if (type == "shadow_gui")
     return load_from_file<ShadowGUITechnique>(
       device, dsm, actual_path.string());
+
+  if (type == "point_lights") {
+    return load_from_file<PointLightsTechnique>(
+      device, dsm, actual_path.string());
+  }
 
   assert(false &&
          "Type could not be matched to any implemented full screen pass");

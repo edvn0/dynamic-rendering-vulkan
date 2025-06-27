@@ -1,0 +1,3 @@
+shaders:
+  - stage: compute
+    path: light_culling.comp

@@ -105,12 +105,13 @@ public:
     Assets::Pointer<Image> image;
     std::unique_ptr<GPUBuffer> staging;
   };
-  static auto load_from_file_with_staging(const Device& dev,
-                                          const std::string& path,
-                                          bool flip_y,
-                                          bool ui_allow,
-                                          VkCommandBuffer cmd)
-    -> ImageWithStaging;
+  static auto load_from_file_with_staging(
+    const Device& dev,
+    const std::string& path,
+    bool flip_y,
+    bool ui_allow,
+    VkCommandBuffer cmd,
+    VkFormat image_format = VK_FORMAT_R8G8B8A8_SRGB) -> ImageWithStaging;
   static auto is_cubemap_externally(const std::string& path)
     -> std::expected<bool, std::string>;
   static auto init_sampler_cache(const Device& device) -> void;

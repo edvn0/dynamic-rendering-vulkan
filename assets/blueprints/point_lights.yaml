@@ -2,7 +2,7 @@ shaders:
   - stage: vertex
     path: fullscreen.vert
   - stage: fragment
-    path: shadow_gui.frag
+    path: point_lights.frag
 vertex_input:
   bindings: []
   attributes: []
@@ -10,6 +10,6 @@ attachments:
   - format: b8g8r8a8_srgb
     blend_enable: false
 depth_stencil:
-  depth_test: false
+  depth_test: true
   depth_write: false
 msaa_samples: 1
