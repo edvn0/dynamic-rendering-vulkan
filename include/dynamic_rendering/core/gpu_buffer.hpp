@@ -37,6 +37,7 @@ public:
     , usage_flags(usage)
     , mapped_on_create(mapped_on_create)
   {
+    assert(!name.empty());
     if (!name.empty()) {
       set_name(name);
     }

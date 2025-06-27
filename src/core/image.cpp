@@ -322,7 +322,12 @@ Image::upload_rgba(const std::span<const unsigned char> data) -> void
   auto&& [cmd, pool] =
     device->create_one_time_command_buffer(device->graphics_queue());
 
-  GPUBuffer staging{ *device, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, true };
+  GPUBuffer staging{
+    *device,
+    VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+    true,
+    "Image (RGBA) staging buffer",
+  };
   staging.upload(data);
 
   CoreUtils::cmd_transition_image(
@@ -549,7 +554,12 @@ Image::load_cubemap(const Device& device, const std::string& path)
     }
   }
 
-  GPUBuffer staging{ device, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, true };
+  GPUBuffer staging{
+    device,
+    VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+    true,
+    "Staging buffer (Cubemap)",
+  };
   staging.upload(std::span{
     static_cast<const std::uint8_t*>(ktxTexture_GetData(ktxTexture(texture))),
     total_size });
@@ -787,8 +797,8 @@ Image::load_from_file_with_staging(const Device& dev,
 
   auto img = Image::create(dev, config);
 
-  auto staging =
-    std::make_unique<GPUBuffer>(dev, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, true);
+  auto staging = std::make_unique<GPUBuffer>(
+    dev, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, true, "Image (RGBA) staging buffer");
   staging->upload(rgba_data);
   img->record_upload_rgba_with_staging(cmd, *staging, width, height);
 

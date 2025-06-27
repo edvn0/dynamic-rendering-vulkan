@@ -433,21 +433,30 @@ Renderer::Renderer(const Device& dev,
     identifier_buffer = GPUBuffer::zero_initialise(
       *device,
       1'000'000 * sizeof(std::uint32_t),
-      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+      false,
+      "identifier_buffer");
     identifier_material->upload("identifiers", identifier_buffer);
   }
 
   {
 
-    culled_instance_count_buffer = std::make_unique<GPUBuffer>(
-      *device, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, true);
+    culled_instance_count_buffer = GPUBuffer::zero_initialise(
+      *device,
+      sizeof(std::uint32_t),
+      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT |
+        VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+      true,
+      "culled_instance_count_buffer");
     static constexpr std::uint32_t zero = 0;
     culled_instance_count_buffer->upload(std::span{ &zero, 1 });
 
-    culled_instance_vertex_buffer = std::make_unique<GPUBuffer>(
+    culled_instance_vertex_buffer = GPUBuffer::zero_initialise(
       *device,
-      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-      true);
+      sizeof(InstanceData) * 1'000'000,
+      VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+      true,
+      "culled_instance_vertex_buffer");
 
     {
       auto&& [bytes, instance_size_bytes] =
@@ -546,7 +555,8 @@ Renderer::Renderer(const Device& dev,
       sizeof(std::uint32_t), // Just one uint32_t
       VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT |
         VK_BUFFER_USAGE_TRANSFER_SRC_BIT, // Optional, for CPU readback,
-      true);
+      true,
+      "global_light_counter_buffer");
     static constexpr auto tile_size = 16;
     // Buffer for light grid data (binding = 2)
     std::size_t num_tiles =
@@ -554,7 +564,9 @@ Renderer::Renderer(const Device& dev,
     light_grid_buffer = GPUBuffer::zero_initialise(
       *device,
       num_tiles * sizeof(uint32_t) * 4, // offset, count, pad0, pad1
-      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+      false,
+      "light_grid_buffer");
 
     // Buffer for light indices (binding = 1)
     constexpr std::size_t max_lights_per_tile = 64;
@@ -562,7 +574,9 @@ Renderer::Renderer(const Device& dev,
     light_index_list_buffer = GPUBuffer::zero_initialise(
       *device,
       max_total_indices * sizeof(std::uint32_t),
-      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+      false,
+      "light_index_list_buffer");
 
     // CORRECTED: Bind buffers to correct bindings
     light_culling_material->upload("LightIndexList", light_index_list_buffer);
