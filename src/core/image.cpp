@@ -14,6 +14,7 @@
 #include <ktx.h>
 #include <ktxvulkan.h>
 #include <stb_image.h>
+#include <stb_image_resize2.h>
 
 auto
 Image::resize(const uint32_t new_width, const uint32_t new_height) -> void
@@ -486,6 +487,87 @@ Image::load_from_file(const Device& device,
 }
 
 auto
+Image::load_from_file(const Device& device,
+                      const std::string& path,
+                      const SampledTextureImageConfiguration& config,
+                      bool flip_y) -> Assets::Pointer<Image>
+{
+  stbi_set_flip_vertically_on_load(flip_y ? 1 : 0);
+
+  int width;
+  int height;
+  int channels;
+  stbi_uc* pixels =
+    stbi_load(path.c_str(), &width, &height, &channels, STBI_rgb_alpha);
+
+  if (config.extent.has_value()) {
+    auto method_choice = config.format == VK_FORMAT_R8G8B8A8_SRGB
+                           ? stbir_resize_uint8_srgb
+                           : stbir_resize_uint8_linear;
+
+    // Resize using stb_image_resize
+    stbi_uc* resized_pixels = nullptr;
+    const auto new_width = config.extent->width;
+    const auto new_height = config.extent->height;
+    resized_pixels = method_choice(pixels,
+                                   width,
+                                   height,
+                                   0,
+                                   nullptr,
+                                   new_width,
+                                   new_height,
+                                   0,
+                                   stbir_pixel_layout::STBIR_RGBA);
+    if (!resized_pixels) {
+      Logger::log_error(
+        "Failed to resize image: {}. Reason: {}", path, stbi_failure_reason());
+      stbi_image_free(pixels);
+      return nullptr;
+    }
+    width = new_width;
+    height = new_height;
+    stbi_image_free(pixels);
+    pixels = resized_pixels;
+  }
+
+  if (!pixels) {
+    Logger::log_error(
+      "Failed to load image: {}. Reason: {}", path, stbi_failure_reason());
+    return nullptr;
+  }
+
+  const auto mip_levels = 1 + static_cast<std::uint32_t>(
+                                std::floor(std::log2(std::max(width, height))));
+
+  SamplerConfiguration copy_sampler_config = config.sampler_config;
+  copy_sampler_config.max_lod = copy_sampler_config.max_lod > 0.0f
+                                  ? copy_sampler_config.max_lod
+                                  : static_cast<float>(mip_levels - 1);
+  const auto img_config = ImageConfiguration{
+    .extent = { static_cast<uint32_t>(width), static_cast<uint32_t>(height) },
+    .format = config.format,
+    .mip_levels = mip_levels,
+    .array_layers = 1,
+    .usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT |
+             VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+    .aspect = VK_IMAGE_ASPECT_COLOR_BIT,
+    .sample_count = VK_SAMPLE_COUNT_1_BIT,
+    .sampler_config = copy_sampler_config,
+    .allow_in_ui = true,
+    .debug_name = std::filesystem::path{ path }.filename().string(),
+  };
+
+  auto image = create(device, img_config);
+
+  image->upload_rgba(
+    std::span{ pixels, static_cast<size_t>(width * height * STBI_rgb_alpha) });
+
+  stbi_image_free(pixels);
+
+  return image;
+}
+
+auto
 Image::load_cubemap(const Device& device, const std::string& path)
   -> Assets::Pointer<Image>
 {
@@ -788,6 +870,9 @@ Image::load_from_file_with_staging(const Device& dev,
     .aspect = VK_IMAGE_ASPECT_COLOR_BIT,
     .sample_count = VK_SAMPLE_COUNT_1_BIT,
     .sampler_config = {
+      .address_mode_u = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+      .address_mode_v = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+      .address_mode_w = VK_SAMPLER_ADDRESS_MODE_REPEAT,
       .min_lod = 0.0f,
       .max_lod =static_cast<float>(mip_levels),
     },

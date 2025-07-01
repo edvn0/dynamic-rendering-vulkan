@@ -40,3 +40,18 @@ struct ImageConfiguration
   bool is_cubemap{ false };
   std::string debug_name{};
 };
+
+struct SampledTextureImageConfiguration
+{
+  VkFormat format{ VK_FORMAT_R8G8B8A8_SRGB };
+  SamplerConfiguration sampler_config{
+    .mag_filter = VK_FILTER_LINEAR,
+    .min_filter = VK_FILTER_LINEAR,
+    .mipmap_mode = VK_SAMPLER_MIPMAP_MODE_LINEAR,
+    .address_mode_u = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+    .address_mode_v = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+    .address_mode_w = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+  };
+  // Downsamples the image on load time.
+  std::optional<VkExtent2D> extent{ std::nullopt };
+};

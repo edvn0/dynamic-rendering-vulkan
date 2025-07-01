@@ -11,6 +11,7 @@
 
 #include "assets/manager.hpp"
 #include "renderer/mesh.hpp"
+#include "window/window.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -333,28 +334,232 @@ Scene::draw_entity_item(entt::entity entity, const std::string_view tag)
         // ImGui::Text("Mesh Asset: %p", static_cast<const void*>(mesh->mesh));
         ImGui::Checkbox("Casts Shadows", &mesh->casts_shadows);
         ImGui::Checkbox("Draw AABBs", &mesh->draw_aabb);
+
+        // Drop target
+        if (ImGui::BeginDragDropTarget()) {
+          if (const ImGuiPayload* payload =
+                ImGui::AcceptDragDropPayload("FILE_BROWSER_ENTRY")) {
+            auto paths =
+              std::filesystem::path(static_cast<const char*>(payload->Data));
+            if (!std::filesystem::exists(paths)) {
+              ImGui::EndDragDropTarget();
+              ImGui::PopID();
+              return;
+            }
+            std::filesystem::path found = paths;
+
+            if (auto mesh_asset =
+                  Assets::Manager::the().load<::StaticMesh>(found.string());
+                mesh_asset.is_valid()) {
+              mesh->mesh = mesh_asset;
+            }
+          }
+          ImGui::EndDragDropTarget();
+        }
+
         ImGui::TreePop();
       }
     }
 
-    if (auto* material = registry.try_get<Component::Material>(entity)) {
-      auto& mat_data = material->material.get()->get_material_data();
+    if (auto* mat_component = registry.try_get<Component::Material>(entity);
+        mat_component) {
+      auto* material = mat_component->material.get();
+      auto& mat_data = material->get_material_data();
       if (ImGui::TreeNode("Material")) {
         draw_vector4_slider("Albedo", mat_data.albedo, 0.0f, 1.0f);
         ImGui::SliderFloat("Roughness", &mat_data.roughness, 0.0f, 1.0f);
         ImGui::SliderFloat("Metallic", &mat_data.metallic, 0.0f, 1.0f);
         ImGui::SliderFloat("AO", &mat_data.ao, 0.0f, 1.0f);
-
         ImGui::SliderFloat(
           "Emissive Strength", &mat_data.emissive_strength, 0.0f, 10.0f);
         draw_vector3_slider(
           "Emissive Color", mat_data.emissive_color, 0.0f, 10.0f);
-
         ImGui::SliderFloat("Clearcoat", &mat_data.clearcoat, 0.0f, 1.0f);
         ImGui::SliderFloat(
           "Clearcoat Roughness", &mat_data.clearcoat_roughness, 0.0f, 1.0f);
         ImGui::SliderFloat("Anisotropy", &mat_data.anisotropy, 0.0f, 1.0f);
         ImGui::SliderFloat("Alpha Cutoff", &mat_data.alpha_cutoff, 0.0f, 1.0f);
+
+        ImGui::Separator();
+
+        // --- Texture Maps Section ---
+        if (ImGui::TreeNode("Texture Maps")) {
+          constexpr ImVec2 preview_size{ 64.0f, 64.0f };
+
+          auto draw_texture_slot = [&](const char* label,
+                                       const char* slot_name,
+                                       std::uint32_t flag,
+                                       VkFormat format,
+                                       const char* tooltip = nullptr) {
+            ImGui::PushID(slot_name); // Unique ID scope for ImGui widgets
+            ImGui::Text("%s:", label);
+
+            const Image* current_image = nullptr;
+            auto maybe_image = material->get_image(slot_name);
+            current_image = maybe_image.has_value()
+                              ? maybe_image.value()
+                              : Renderer::get_white_texture();
+
+            // Draw Image or Placeholder Button
+            ImTextureID texture_id =
+              *current_image->get_texture_id<ImTextureID>();
+            std::string unique_id = std::string("##") + slot_name;
+
+            if (texture_id) {
+              ImGui::Image(texture_id, preview_size);
+            } else {
+              ImGui::Button(("Drop Image" + unique_id).c_str(), preview_size);
+            }
+
+            // Accept drag-drop payload
+            if (ImGui::BeginDragDropTarget()) {
+              if (const ImGuiPayload* payload =
+                    ImGui::AcceptDragDropPayload("FILE_BROWSER_ENTRY")) {
+                std::string buffer;
+                buffer.resize(256, '\0');
+                std::memcpy(
+                  buffer.data(),
+                  payload->Data,
+                  std::min(static_cast<std::size_t>(payload->DataSize),
+                           buffer.size() - 1));
+
+                auto paths = std::filesystem::path(buffer);
+                if (!std::filesystem::exists(paths)) {
+                  ImGui::EndDragDropTarget();
+                  ImGui::PopID();
+                  return;
+                }
+                std::filesystem::path found = paths;
+
+                SampledTextureImageConfiguration config;
+                config.format = format;
+
+                if (auto image =
+                      Assets::Manager::the()
+                        .load<::Image, SampledTextureImageConfiguration>(
+                          found.string(), config);
+                    image.is_valid()) {
+                  material->upload(slot_name, image.get());
+                  mat_data.flags |= flag;
+
+                  if (flag == MaterialData::FLAG_EMISSIVE_MAP &&
+                      !(mat_data.flags & MaterialData::FLAG_EMISSIVE)) {
+                    mat_data.set_emissive(true);
+                  }
+                }
+              }
+              ImGui::EndDragDropTarget();
+            }
+
+            // Right-click to clear texture
+            if (ImGui::IsItemHovered() &&
+                ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
+              if (mat_data.flags & flag) {
+                material->upload(slot_name, Renderer::get_white_texture());
+                mat_data.flags &= ~flag;
+
+                if (flag == MaterialData::FLAG_EMISSIVE_MAP) {
+                  bool has_emissive_color = mat_data.emissive_color.x > 0.0f ||
+                                            mat_data.emissive_color.y > 0.0f ||
+                                            mat_data.emissive_color.z > 0.0f;
+                  if (!has_emissive_color &&
+                      mat_data.emissive_strength <= 0.0f) {
+                    mat_data.set_emissive(false);
+                  }
+                }
+              }
+            }
+
+            // Tooltip
+            if (tooltip && ImGui::IsItemHovered()) {
+              ImGui::SetTooltip("%s\n\nRight-click to clear texture.", tooltip);
+            }
+
+            ImGui::Spacing();
+            ImGui::PopID();
+          };
+
+          draw_texture_slot(
+            "Albedo Map",
+            "albedo_map",
+            MaterialData::FLAG_ALBEDO_TEXTURE,
+            VK_FORMAT_R8G8B8A8_SRGB,
+            "Drag & drop albedo/diffuse texture here. Right-click to clear.");
+
+          draw_texture_slot(
+            "Normal Map",
+            "normal_map",
+            MaterialData::FLAG_NORMAL_MAP,
+            VK_FORMAT_R8G8B8A8_UNORM,
+            "Drag & drop normal map here. Right-click to clear.");
+
+          draw_texture_slot(
+            "Roughness Map",
+            "roughness_map",
+            MaterialData::FLAG_ROUGHNESS_MAP,
+            VK_FORMAT_R8G8B8A8_UNORM,
+            "Drag & drop roughness texture here. Right-click to clear.");
+
+          draw_texture_slot(
+            "Metallic Map",
+            "metallic_map",
+            MaterialData::FLAG_METALLIC_MAP,
+            VK_FORMAT_R8G8B8A8_UNORM,
+            "Drag & drop metallic texture here. Right-click to clear.");
+
+          draw_texture_slot("AO Map",
+                            "ao_map",
+                            MaterialData::FLAG_AO_MAP,
+                            VK_FORMAT_R8G8B8A8_UNORM,
+
+                            "Drag & drop ambient occlusion texture here. "
+                            "Right-click to clear.");
+
+          draw_texture_slot(
+            "Emissive Map",
+            "emissive_map",
+            MaterialData::FLAG_EMISSIVE_MAP,
+            VK_FORMAT_R8G8B8A8_UNORM,
+            "Drag & drop emissive texture here. Right-click to clear.");
+
+          ImGui::TreePop();
+        }
+
+        ImGui::Separator();
+
+        // --- Material Flags Section ---
+        if (ImGui::TreeNode("Flags")) {
+          bool alpha_test = mat_data.is_alpha_testing();
+          if (ImGui::Checkbox("Alpha Testing", &alpha_test)) {
+            mat_data.set_alpha_testing(alpha_test);
+          }
+
+          bool double_sided = mat_data.flags & MaterialData::FLAG_DOUBLE_SIDED;
+          if (ImGui::Checkbox("Double Sided", &double_sided)) {
+            mat_data.set_double_sided(double_sided);
+          }
+
+          bool emissive = mat_data.is_emissive();
+          if (ImGui::Checkbox("Emissive", &emissive)) {
+            mat_data.set_emissive(emissive);
+          }
+
+          ImGui::Separator();
+          ImGui::Text("Texture Flags (Read-only):");
+          ImGui::Text("Albedo Texture: %s",
+                      mat_data.has_albedo_texture() ? "Yes" : "No");
+          ImGui::Text("Normal Map: %s",
+                      mat_data.has_normal_map() ? "Yes" : "No");
+          ImGui::Text("Roughness Map: %s",
+                      mat_data.has_roughness_map() ? "Yes" : "No");
+          ImGui::Text("Metallic Map: %s",
+                      mat_data.has_metallic_map() ? "Yes" : "No");
+          ImGui::Text("AO Map: %s", mat_data.has_ao_map() ? "Yes" : "No");
+          ImGui::Text("Emissive Map: %s",
+                      mat_data.has_emissive_map() ? "Yes" : "No");
+
+          ImGui::TreePop();
+        }
 
         ImGui::TreePop();
       }
@@ -403,11 +608,13 @@ Scene::draw_entity_item(entt::entity entity, const std::string_view tag)
     if (ImGui::BeginPopup("AddComponentPopup")) {
       Entity e{ entity, this };
       if (ImGui::MenuItem("Mesh")) {
+        e.add_component<Component::Mesh>();
       }
       if (ImGui::MenuItem("Light")) {
         e.add_component<Component::PointLight>();
       }
       if (ImGui::MenuItem("Camera")) {
+        e.add_component<Component::Camera>();
       }
       if (ImGui::MenuItem("Material")) {
         auto material =
@@ -639,7 +846,7 @@ Scene::on_event(Event& event) -> bool
     return true;
   });
 
-  return true;
+  return event.handled;
 }
 
 auto

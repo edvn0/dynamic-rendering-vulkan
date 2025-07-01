@@ -19,4 +19,11 @@ struct Loader
     -> Assets::Pointer<T> = delete;
 };
 
+template<typename T, typename Config>
+struct LoaderWithConfig
+{
+  static auto load(const AssetContext&, std::string_view, const Config&)
+    -> Assets::Pointer<T> = delete;
+};
+
 }

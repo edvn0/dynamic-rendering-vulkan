@@ -122,6 +122,17 @@ public:
     invalidate(std::span{ &images, Extent });
   }
 
+  auto get_image(std::string_view name) const -> std::optional<const Image*>
+  {
+    if (const auto it = bindings.find(name); it != bindings.end()) {
+      if (const auto* gpu_binding =
+            dynamic_cast<const ImageBinding*>(it->second.get())) {
+        return gpu_binding->get_underlying_image();
+      }
+    }
+    return std::nullopt;
+  }
+
   auto invalidate_all() -> void;
   auto reload(const PipelineBlueprint&) -> void;
   auto prepare_for_rendering(std::uint32_t frame_index)

@@ -108,16 +108,17 @@ public:
 
 struct Vertex
 {
-  glm::vec3 position;
-  glm::vec3 normal;
-  glm::vec2 texcoord;
-  glm::vec4 tangent;
+  glm::vec3 position{ 0.0F }; // offset = 0
+  glm::vec3 normal{ 0.0F };   // offset = 12
+  glm::vec2 texcoord{ 0.0F }; // offset = 24
+  glm::vec4 tangent{ 0.0F };  // offset = 32
 };
 static_assert(std::is_trivially_copyable_v<Vertex>);
+static_assert(sizeof(Vertex) == 48, "Vertex size must be 48 bytes");
 
 struct PositionOnlyVertex
 {
-  glm::vec3 position;
+  glm::vec3 position{ 0.0F };
 };
 
 struct Submesh

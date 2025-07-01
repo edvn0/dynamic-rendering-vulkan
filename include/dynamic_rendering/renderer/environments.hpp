@@ -28,6 +28,8 @@ struct LightEnvironment
   float far_plane{ 100.f };
   glm::vec3 target{ 0.F };
 
+  float bloom_strength{ 3.0f };
+
   ShadowProjectionMode projection_mode{ ShadowProjectionMode::Default };
   ShadowViewMode view_mode{ ShadowViewMode::Default };
 };

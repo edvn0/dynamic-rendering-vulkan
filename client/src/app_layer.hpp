@@ -2,6 +2,8 @@
 
 #include <dynamic_rendering/dynamic_rendering.hpp>
 
+#include "file_browser.hpp"
+
 struct FrametimeSmoother;
 struct FrameTimePlotter;
 
@@ -39,6 +41,8 @@ private:
 
   std::unique_ptr<FrametimeSmoother> smoother;
   std::unique_ptr<FrameTimePlotter> plotter;
+
+  FileBrowser file_browser;
 
   auto on_ray_pick(const glm::vec3& origin, const glm::vec3& direction) -> void;
 };

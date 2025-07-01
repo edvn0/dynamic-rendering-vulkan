@@ -14,6 +14,13 @@
 
 namespace {
 
+static constexpr auto assimp_flags =
+  aiProcess_ConvertToLeftHanded | aiProcess_Triangulate |
+  aiProcess_JoinIdenticalVertices | aiProcess_OptimizeMeshes |
+  aiProcess_ImproveCacheLocality | aiProcess_RemoveRedundantMaterials |
+  aiProcess_GenSmoothNormals | aiProcess_FixInfacingNormals |
+  aiProcess_SortByPType;
+
 struct SubmeshPerformanceStats
 {
   std::size_t total_submeshes{ 0 };
@@ -148,6 +155,14 @@ process_mesh_impl(const aiMesh* mesh,
                   SubmeshPerformanceStats& stats)
 {
   std::vector<Vertex> raw_vertices(mesh->mNumVertices);
+  auto tex_span = mesh->HasTextureCoords(0)
+                    ? std::span(mesh->mTextureCoords[0], mesh->mNumVertices)
+                    : std::span<aiVector3D>{};
+  auto positions_span = std::span(mesh->mVertices, mesh->mNumVertices);
+  auto normals_span = mesh->HasNormals()
+                        ? std::span(mesh->mNormals, mesh->mNumVertices)
+                        : std::span<aiVector3D>{};
+
   for (uint32_t i = 0; i < mesh->mNumVertices; ++i) {
     raw_vertices[i].position = { mesh->mVertices[i].x,
                                  mesh->mVertices[i].y,
@@ -157,10 +172,12 @@ process_mesh_impl(const aiMesh* mesh,
                                             mesh->mNormals[i].y,
                                             mesh->mNormals[i].z }
                                : glm::vec3{ 0.0f };
-    raw_vertices[i].texcoord = mesh->HasTextureCoords(0)
-                                 ? glm::vec2{ mesh->mTextureCoords[0][i].x,
-                                              mesh->mTextureCoords[0][i].y }
-                                 : glm::vec2{ 0.0f };
+
+    if (mesh->HasTextureCoords(0)) {
+      if (i < tex_span.size()) {
+        raw_vertices[i].texcoord = glm::vec2{ tex_span[i].x, tex_span[i].y };
+      }
+    }
     if (mesh->HasTangentsAndBitangents()) {
       const glm::vec3 tangent = glm::normalize(glm::vec3{
         mesh->mTangents[i].x, mesh->mTangents[i].y, mesh->mTangents[i].z });
@@ -366,6 +383,100 @@ upload_materials_impl_secondary(
                                "emissive_map",
                                [](Material& m) { m.use_emissive_map(); });
 
+        auto& material_data = result.mat->get_material_data();
+
+        // Read scalar material properties using assimp standards
+        aiColor3D albedo_color(1.0f, 1.0f, 1.0f);
+        if (ai_mat->Get(AI_MATKEY_COLOR_DIFFUSE, albedo_color) == AI_SUCCESS) {
+          material_data.albedo = glm::vec4(albedo_color.r,
+                                           albedo_color.g,
+                                           albedo_color.b,
+                                           material_data.albedo.w);
+        }
+
+        float metallic_value = 0.0f;
+        if (ai_mat->Get(AI_MATKEY_METALLIC_FACTOR, metallic_value) ==
+            AI_SUCCESS) {
+          material_data.metallic = metallic_value;
+        }
+
+        float roughness_value = 0.5f;
+        if (ai_mat->Get(AI_MATKEY_ROUGHNESS_FACTOR, roughness_value) ==
+            AI_SUCCESS) {
+          material_data.roughness = roughness_value;
+        } else {
+          // Alternative roughness from shininess (for older formats)
+          float shininess = 0.0f;
+          if (ai_mat->Get(AI_MATKEY_SHININESS, shininess) == AI_SUCCESS &&
+              shininess > 0.0f) {
+            // Convert shininess to roughness (approximate formula)
+            material_data.roughness = std::sqrt(2.0f / (shininess + 2.0f));
+          }
+        }
+
+        aiColor3D emissive_color(0.0f, 0.0f, 0.0f);
+        if (ai_mat->Get(AI_MATKEY_COLOR_EMISSIVE, emissive_color) ==
+            AI_SUCCESS) {
+          material_data.emissive_color =
+            glm::vec3(emissive_color.r, emissive_color.g, emissive_color.b);
+          // Set emissive flag if any component is non-zero
+          if (emissive_color.r > 0.0f || emissive_color.g > 0.0f ||
+              emissive_color.b > 0.0f) {
+            material_data.set_emissive(true);
+          }
+        }
+
+        float emissive_strength = 1.0f;
+        if (ai_mat->Get(AI_MATKEY_EMISSIVE_INTENSITY, emissive_strength) ==
+            AI_SUCCESS) {
+          material_data.emissive_strength = emissive_strength;
+          // Set emissive flag if strength is significant
+          if (emissive_strength > 0.0f) {
+            material_data.set_emissive(true);
+          }
+        }
+
+        float ao_value = 1.0f;
+        if (ai_mat->Get(AI_MATKEY_COLOR_AMBIENT, ao_value) == AI_SUCCESS) {
+          material_data.ao = ao_value;
+        }
+
+        float opacity = 1.0f;
+        if (ai_mat->Get(AI_MATKEY_OPACITY, opacity) == AI_SUCCESS) {
+          material_data.albedo.w = opacity;
+          // Enable alpha testing if opacity is less than 1.0
+          if (opacity < 1.0f) {
+            material_data.set_alpha_testing(true);
+          }
+        }
+
+        // Alpha cutoff for alpha testing
+        float alpha_cutoff = 0.5f;
+        if (ai_mat->Get(AI_MATKEY_TRANSPARENCYFACTOR, alpha_cutoff) ==
+            AI_SUCCESS) {
+          material_data.alpha_cutoff = alpha_cutoff;
+        }
+
+        // Check for clearcoat properties (if supported by format)
+        float clearcoat_value = 0.0f;
+        if (ai_mat->Get(AI_MATKEY_CLEARCOAT_FACTOR, clearcoat_value) ==
+            AI_SUCCESS) {
+          material_data.clearcoat = clearcoat_value;
+        }
+
+        float clearcoat_roughness_value = 0.0f;
+        if (ai_mat->Get(AI_MATKEY_CLEARCOAT_ROUGHNESS_FACTOR,
+                        clearcoat_roughness_value) == AI_SUCCESS) {
+          material_data.clearcoat_roughness = clearcoat_roughness_value;
+        }
+
+        // Check for double-sided materials
+        int two_sided = 0;
+        if (ai_mat->Get(AI_MATKEY_TWOSIDED, two_sided) == AI_SUCCESS &&
+            two_sided) {
+          material_data.set_double_sided(true);
+        }
+
         if (vkEndCommandBuffer(result.cmd) != VK_SUCCESS)
           return {};
 
@@ -468,12 +579,7 @@ StaticMesh::load_from_file(const Device& device, const std::string& path)
       continue;
     }
     resolved_path = candidate;
-    scene = importer.ReadFile(
-      candidate.string(),
-      aiProcess_Triangulate | aiProcess_GenSmoothNormals |
-        aiProcess_CalcTangentSpace | aiProcess_JoinIdenticalVertices |
-        aiProcess_ImproveCacheLocality | aiProcess_RemoveRedundantMaterials |
-        aiProcess_SortByPType | aiProcess_FlipUVs);
+    scene = importer.ReadFile(candidate.string(), assimp_flags);
     if (!scene || !scene->HasMeshes()) {
       auto err = importer.GetErrorString();
       Logger::log_error("Failed to load model: {}. Error: {}",
@@ -705,12 +811,7 @@ StaticMesh::load_from_file(const Device& device,
     if (!fs::is_regular_file(candidate))
       continue;
     resolved_path = candidate;
-    scene = importer.ReadFile(
-      candidate.string(),
-      aiProcess_Triangulate | aiProcess_GenSmoothNormals |
-        aiProcess_CalcTangentSpace | aiProcess_JoinIdenticalVertices |
-        aiProcess_ImproveCacheLocality | aiProcess_RemoveRedundantMaterials |
-        aiProcess_SortByPType | aiProcess_FlipUVs);
+    scene = importer.ReadFile(candidate.string(), assimp_flags);
     if (scene && scene->HasMeshes())
       break;
     Logger::log_error("Failed to load model: {}. Error: {}",

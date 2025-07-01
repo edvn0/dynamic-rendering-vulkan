@@ -125,13 +125,22 @@ enum class MouseCode : std::uint8_t
   MouseButton6 = 5,
   MouseButton7 = 6,
   MouseButton8 = 7,
-  MouseButtonLast = 7,
-  MouseButtonLeft = 0,
-  MouseButtonRight = 1,
-  MouseButtonMiddle = 2
+  MouseButtonLast = MouseButton8,
+  MouseButtonLeft = MouseButton1,
+  MouseButtonRight = MouseButton2,
+  MouseButtonMiddle = MouseButton3,
+  Back = MouseButton4,
+  Forward = MouseButton5
 };
 auto
 operator<<(std::ostream& os, KeyCode key) -> std::ostream&;
+
+// Comparison with std::integral types
+constexpr auto
+operator==(MouseCode lhs, std::integral auto rhs) -> bool
+{
+  return static_cast<std::uint8_t>(lhs) == static_cast<std::uint8_t>(rhs);
+}
 
 enum class EventType : std::int8_t
 {
@@ -224,7 +233,8 @@ public:
     requires std::invocable<Fn, Evt&>
   auto dispatch(Fn&& fn) -> bool
   {
-    if (event.get_event_type() == Evt::get_static_type() && !event.handled) {
+    const auto should_bubble = !event.handled;
+    if (event.get_event_type() == Evt::get_static_type() && should_bubble) {
       auto& concrete = static_cast<Evt&>(event);
       event.handled = fn(concrete);
       return true;
@@ -333,8 +343,8 @@ public:
 class MouseButtonPressedEvent : public Event
 {
 public:
-  explicit MouseButtonPressedEvent(std::int32_t button)
-    : button(button)
+  explicit MouseButtonPressedEvent(MouseCode b)
+    : button(std::to_underlying(b))
   {
   }
   std::int32_t button;
@@ -345,8 +355,8 @@ public:
 class MouseButtonReleasedEvent : public Event
 {
 public:
-  explicit MouseButtonReleasedEvent(std::int32_t button)
-    : button(button)
+  explicit MouseButtonReleasedEvent(MouseCode b)
+    : button(std::to_underlying(b))
   {
   }
   std::int32_t button;

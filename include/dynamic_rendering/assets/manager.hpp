@@ -52,6 +52,9 @@ public:
   template<typename T>
   auto load(std::string_view path) -> Handle<T>;
 
+  template<typename T, typename Config>
+  auto load(std::string_view path, const Config&) -> Handle<T>;
+
   template<typename T>
   auto get(Handle<T> handle) -> T*
   {
@@ -75,6 +78,17 @@ public:
 
   static auto initialise(const Device&, BS::priority_thread_pool*) -> void;
   static auto the() -> Manager&;
+
+  template<typename T>
+  auto log_allocation_info() const -> void
+  {
+    auto& data = storage<T>();
+    const std::string type_name = typeid(T).name();
+    Logger::log_info("Total {} allocations: {}", type_name, data.size());
+    Logger::log_info("Total {} bytes allocated for {}",
+                     detail::TrackingAllocator<T>::total_tracked_bytes.load(),
+                     type_name);
+  }
 
 private:
   Manager(const Device& device, BS::priority_thread_pool* pool)
@@ -243,6 +257,21 @@ Manager::load(const std::string_view path) -> Handle<T>
   auto id = get_next_id<T>();
 
   auto asset = Loader<T>::load({ device, thread_pool }, path);
+  if (!asset)
+    return Handle<T>{}; // invalid handle
+
+  register_asset<T>(id, std::move(asset));
+  return Handle<T>{ id };
+}
+
+template<typename T, typename Config>
+auto
+Manager::load(const std::string_view path, const Config& c) -> Handle<T>
+{
+  auto id = get_next_id<T>();
+
+  auto asset =
+    LoaderWithConfig<T, Config>::load({ device, thread_pool }, path, c);
   if (!asset)
     return Handle<T>{}; // invalid handle
 

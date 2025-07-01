@@ -112,8 +112,6 @@ main()
   uvec3 tile_coord = gl_GlobalInvocationID.xyz;
   uvec2 tile_count_xy =
     uvec2(ceil(camera_ubo.screen_size_near_far.xy / TILE_SIZE));
-  debugPrintfEXT(
-    "Tile coord %u %u %u", tile_coord.x, tile_coord.y, tile_coord.z);
   uvec3 tile_grid_size = uvec3(tile_count_xy, NUM_Z_SLICES);
 
   if (tile_coord.x >= tile_grid_size.x || tile_coord.y >= tile_grid_size.y ||

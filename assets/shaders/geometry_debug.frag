@@ -12,6 +12,20 @@ layout(set = 1, binding = 3) uniform sampler2D metallic_map;
 layout(set = 1, binding = 4) uniform sampler2D ao_map;
 layout(set = 1, binding = 5) uniform sampler2D emissive_map;
 
+layout(std430, set = 1, binding = 6) restrict buffer LightIndexList {
+  uint light_indices[];
+};
+
+struct LightGridEntry {
+  uint offset;
+  uint count;
+  uint pad0;
+  uint pad1;
+};
+layout(std430, set = 1, binding = 7) restrict buffer LightGridData {
+  LightGridEntry tile_light_grids[];
+};
+
 // Input variables
 layout(location = 0) in vec3 v_normal;
 layout(location = 1) in vec3 v_world_pos;
@@ -93,15 +107,16 @@ void main() {
   vec3 ambient = AMBIENT_LIGHT * albedo * ao;
 
   // Apply shadow to the diffuse component
-  vec3 color = ambient + shadow * diffuse; // Default: simple lighting with
+  // vec3 color = ambient + shadow * diffuse; // Default: simple lighting with
   // shadows
 
   // DEBUGGING OPTIONS - Uncomment one of these to debug specific texture or
-  // component vec3 color = albedo;                        // Show just albedo
-  // vec3 color = vec3(roughness);               // Show just roughness
-  // vec3 color = vec3(metallic);                // Show just metallicB
+  // component
+  // vec3 color = albedo; // Show just albedo
+  // vec3 color = vec3(roughness); // Show just roughness
+  // vec3 color = vec3(metallic); // Show just metallicB
   // vec3 color = vec3(ao);                      // Show just ambient occlusion
-  // vec3 color = visualize_normals(n); // Visualize normals
+  vec3 color = visualize_normals(n); // Visualize normals
   // vec3 color = vec3(shadow); // Visualize shadow map values
 
   // Add emissive if needed

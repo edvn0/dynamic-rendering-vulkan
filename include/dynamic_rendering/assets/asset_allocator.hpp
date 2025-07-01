@@ -48,8 +48,9 @@ public:
     using other = TrackingAllocator<U>;
   };
 
-private:
   static inline std::atomic<std::size_t> total_tracked_bytes = 0;
+
+private:
   static inline std::allocator<T> current_allocator{};
 };
 

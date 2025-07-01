@@ -40,10 +40,9 @@ ShadowGUITechnique::initialise(Renderer& renderer,
 }
 
 auto
-ShadowGUITechnique::on_resize(const std::uint32_t width,
-                              const std::uint32_t height) -> void
+ShadowGUITechnique::on_resize(const std::uint32_t, const std::uint32_t) -> void
 {
-  output_image->resize(width, height);
+  output_image->resize();
   material->invalidate_all();
 }
 

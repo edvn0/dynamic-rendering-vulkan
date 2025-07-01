@@ -91,11 +91,19 @@ public:
   }
 
   auto resize(std::uint32_t new_width, std::uint32_t new_height) -> void;
+
+  /// @brief Resize the image to the current extent.
+  auto resize() -> void { resize(extent.width, extent.height); }
+
   auto set_debug_name(std::string_view name) -> void;
   auto upload_rgba(std::span<const unsigned char>) -> void;
 
   static auto load_from_file(const Device&,
                              const std::string&,
+                             bool flip_y = true) -> Assets::Pointer<Image>;
+  static auto load_from_file(const Device&,
+                             const std::string&,
+                             const SampledTextureImageConfiguration&,
                              bool flip_y = true) -> Assets::Pointer<Image>;
   static auto load_cubemap(const Device&, const std::string&)
     -> Assets::Pointer<Image>;

@@ -1,6 +1,7 @@
 #include "app_layer.hpp"
 
 #include "dynamic_rendering/assets/manager.hpp"
+#include <dynamic_rendering/core/fs.hpp>
 
 #include <array>
 #include <execution>
@@ -247,12 +248,14 @@ struct CubeComponent
 AppLayer::AppLayer(const Device&, Renderer& r, BS::priority_thread_pool* pool)
   : thread_pool(pool)
   , renderer(&r)
+  , file_browser(assets_path())
 {
   active_scene = std::make_shared<Scene>("Basic");
 
   auto cerberus = active_scene->create_entity("Cerberus");
 
   Assets::Manager::the().load<Image>("sf.ktx2");
+  cerberus.add_component<Component::Material>("main_geometry");
   cerberus.add_component<Component::Mesh>("cerberus/cerberus.gltf");
   cerberus.get_component<Component::Transform>().scale = { 0.05, 0.05, 0.05 };
 
@@ -273,8 +276,13 @@ AppLayer::on_destroy() -> void
 auto
 AppLayer::on_event(Event& event) -> bool
 {
-  if (camera->on_event(event))
+  if (file_browser.on_event(event)) {
     return true;
+  }
+
+  if (camera->on_event(event)) {
+    return true;
+  }
   return active_scene->on_event(event);
 }
 
@@ -298,6 +306,9 @@ AppLayer::on_interface() -> void
     ImGui::DragFloat3("Light Target", &light_environment.target[0], 0.5f);
     ImGui::ColorEdit4("Light Color", &light_environment.light_color[0]);
     ImGui::ColorEdit4("Ambient Color", &light_environment.ambient_color[0]);
+
+    ImGui::DragFloat(
+      "Bloom strength", &light_environment.bloom_strength, 0.01f, 0.f, 10.f);
 
     ImGui::DragFloat(
       "Ortho Size", &light_environment.ortho_size, 0.5f, 1.f, 200.f);
@@ -348,6 +359,8 @@ AppLayer::on_interface() -> void
   if (debounce_toggle(KeyCode::F7, 0.2F)) {
     choice = !choice;
   }
+
+  file_browser.on_interface();
 
   if (ImGui::Begin("Renderer Output", nullptr, flags)) {
     ZoneScopedN("Renderer Output");
@@ -545,7 +558,7 @@ AppLayer::on_update(const double ts) -> void
     smoother->add_sample(ts);
     plotter->add_sample(ts);
   }
-
+  file_browser.on_update(ts);
   camera->on_update(ts);
   active_scene->on_update(ts);
 
@@ -633,12 +646,13 @@ AppLayer::get_camera_matrices(CameraMatrices& out) const -> bool
     return false;
   }
 
-  const auto view =
-    active_scene->view<Component::Camera, Component::Transform>();
+  const auto view = active_scene->view<Component::Camera>();
+  // For now, we get the first camera, whichever that is.
   auto entity = view.front();
   if (active_scene->get_registry().valid(entity)) {
     const auto& cam = view.get<Component::Camera>(entity);
-    const auto& tr = view.get<Component::Transform>(entity);
+    const auto& tr =
+      active_scene->get_registry().get<Component::Transform>(entity);
     out.projection = cam.projection;
     out.inverse_projection = cam.inverse_projection,
     out.view = glm::inverse(tr.compute());
@@ -650,14 +664,16 @@ AppLayer::get_camera_matrices(CameraMatrices& out) const -> bool
 auto
 AppLayer::generate_scene(PointLightSystem& pls) -> void
 {
-  {
+  /*{
     auto sponza = active_scene->create_entity("Sponza");
-    auto& mesh = sponza.add_component<Component::Mesh>("sponza/sponza.gltf");
+    auto& mesh = sponza.add_component<Component::Mesh>(
+      //"main_sponza/NewSponza_Main_glTF_003.gltf");
+      "sponza/sponza.gltf");
     mesh.casts_shadows = true;
     auto& transform = sponza.get_component<Component::Transform>();
     transform.scale = glm::vec3(0.01f, 0.01f, 0.01f);
     // sponza.add_component<Component::Material>("main_geometry");
-  }
+  }*/
 
   {
     auto entity = active_scene->create_entity("Ground");

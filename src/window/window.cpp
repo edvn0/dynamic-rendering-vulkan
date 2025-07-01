@@ -50,11 +50,15 @@ Window::hookup_events() -> void
     glfw_window, +[](GLFWwindow* w, int button, int action, int) {
       auto const& d =
         *static_cast<Window::WindowData*>(glfwGetWindowUserPointer(w));
+      auto code = static_cast<MouseCode>(button);
+      Logger::log_debug("Mouse button {} {}",
+                        std::to_underlying(code),
+                        action == GLFW_PRESS ? "pressed" : "released");
       if (action == GLFW_PRESS) {
-        MouseButtonPressedEvent ev{ button };
+        MouseButtonPressedEvent ev{ code };
         d.event_callback(ev);
       } else if (action == GLFW_RELEASE) {
-        MouseButtonReleasedEvent ev{ button };
+        MouseButtonReleasedEvent ev{ code };
         d.event_callback(ev);
       }
     });
@@ -112,7 +116,27 @@ Window::Window(const WindowConfiguration& config)
   glfwSetWindowUserPointer(glfw_window, user_data.get());
   hookup_events();
 
+  glfwSetDropCallback(
+    glfw_window, +[](GLFWwindow*, int count, const char** paths) {
+      std::lock_guard lock(Window::drag_drop_mutex);
+      Window::drag_drop_files.clear();
+      for (int i = 0; i < count; ++i) {
+        Window::drag_drop_files.emplace_back(paths[i]);
+      }
+    });
+
   Input::initialise(glfw_window);
+}
+
+auto
+Window::poll_drag_drop_files() -> std::span<const std::filesystem::path>
+{
+  std::lock_guard lock(drag_drop_mutex);
+
+  drag_drop_cache = std::move(drag_drop_files);
+  drag_drop_files.clear(); // clear input buffer
+
+  return std::span<const std::filesystem::path>{ drag_drop_cache };
 }
 
 auto

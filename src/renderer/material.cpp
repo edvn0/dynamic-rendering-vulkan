@@ -615,7 +615,7 @@ Material::upload(const std::string_view name, const GPUBuffer* buffer) -> void
 
   const auto binding_it = binding_info.find(key);
   if (binding_it == binding_info.end()) {
-    Logger::log_warning("Could not find binding with name: {}", name);
+    Logger::log_trace("Could not find binding with name: {}", name);
     return;
   }
 

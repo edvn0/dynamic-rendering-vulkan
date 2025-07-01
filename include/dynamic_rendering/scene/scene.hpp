@@ -152,7 +152,7 @@ private:
 
   Entity scene_camera_entity;
 
-  bool show_components = false;
+  bool show_components = true;
   bool show_statistics = true;
 
   glm::vec2 vp_min{};

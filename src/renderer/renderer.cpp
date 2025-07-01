@@ -152,7 +152,7 @@ Renderer::initialise_textures(const Device& device) -> void
                                            VK_IMAGE_USAGE_SAMPLED_BIT |
                                            VK_IMAGE_USAGE_TRANSFER_DST_BIT,
                                   .sample_count = VK_SAMPLE_COUNT_1_BIT,
-                                  .allow_in_ui = false,
+                                  .allow_in_ui = true,
                                   .debug_name = "white_texture",
                                 });
   static constexpr std::array<unsigned char, 4> white_pixel = {
@@ -168,7 +168,7 @@ Renderer::initialise_textures(const Device& device) -> void
                                            VK_IMAGE_USAGE_SAMPLED_BIT |
                                            VK_IMAGE_USAGE_TRANSFER_DST_BIT,
                                   .sample_count = VK_SAMPLE_COUNT_1_BIT,
-                                  .allow_in_ui = false,
+                                  .allow_in_ui = true,
                                   .debug_name = "black_texture",
                                 });
 
@@ -1474,17 +1474,8 @@ Renderer::run_geometry_pass(std::uint32_t fi, const DrawList& draw_list) -> void
   const VkCommandBuffer& cmd = command_buffer->get(fi);
   Util::Vulkan::cmd_begin_debug_label(
     cmd, "Geometry Pass", { 0.5F, 0.5F, 0.0F, 1.0F });
-  CoreUtils::cmd_transition_image(
-    cmd,
-    {
-      .image = geometry_image->get_image(),
-      .old_layout = VK_IMAGE_LAYOUT_UNDEFINED,
-      .new_layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-      .src_access_mask = VK_ACCESS_SHADER_READ_BIT,
-      .dst_access_mask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
-      .src_stage_mask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-      .dst_stage_mask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-    });
+  CoreUtils::cmd_transition_to_color_attachment(cmd,
+                                                geometry_image->get_image());
 
   constexpr VkClearValue clear_value = { .color = { { 0.f, 0.f, 0.f, 0.f } } };
   const VkRenderingAttachmentInfo color_attachment = {
@@ -2229,6 +2220,14 @@ Renderer::run_composite_pass(const std::uint32_t fi) -> void
                           descriptor_sets.data(),
                           0,
                           nullptr);
+
+  auto& bloom_strength = light_environment.bloom_strength;
+  vkCmdPushConstants(cmd,
+                     pipeline.layout,
+                     VK_SHADER_STAGE_FRAGMENT_BIT,
+                     0,
+                     sizeof(float),
+                     &bloom_strength);
 
   vkCmdDraw(cmd, 3, 1, 0, 0);
   vkCmdEndRendering(cmd);

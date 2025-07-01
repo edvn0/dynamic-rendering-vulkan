@@ -9,7 +9,7 @@ struct MaterialData
   float metallic = 0.0f;
   float ao = 1.0f;
 
-  float emissive_strength = 0.0f;
+  float emissive_strength = 1.0f;
   glm::vec3 emissive_color{ 0.0f, 0.0f, 0.0f };
   float clearcoat = 0.0f;
 

@@ -17,6 +17,8 @@ struct Handle
   {
   }
 
+  auto reset() -> void { id = invalid; }
+
   [[nodiscard]]
   auto is_valid() const -> bool
   {

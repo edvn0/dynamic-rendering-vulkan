@@ -6,6 +6,9 @@ layout(set = 1, binding = 2, rgba32f) readonly uniform image2D bloom_input;
 
 layout(location = 0) out vec4 out_color;
 
+layout(push_constant) uniform BloomStrength { float bloom_strength; }
+pc;
+
 void main() {
   ivec2 framebuffer_size = textureSize(skybox_input, 0);
   ivec2 bloom_size = imageSize(bloom_input);
@@ -18,11 +21,11 @@ void main() {
   ivec2 bloom_pixel =
       clamp(ivec2(floor(uv * vec2(bloom_size))), ivec2(0), bloom_size - 1);
 
-  vec4 bloom_color = imageLoad(bloom_input, bloom_pixel);
+  vec4 bloom_sample = imageLoad(bloom_input, bloom_pixel);
+  vec4 bloom_color = isnan(bloom_sample.x) ? vec4(0) : bloom_sample;
   vec4 skybox_color = texture(skybox_input, uv);
   vec4 geometry_color = texture(geometry_input, uv);
   vec4 lit_color = mix(skybox_color, geometry_color, geometry_color.a);
 
-  float bloom_strength = 3.0;
-  out_color = lit_color + bloom_strength * bloom_color;
+  out_color = lit_color + pc.bloom_strength * bloom_color;
 }

@@ -212,6 +212,15 @@ App::process_events(Event& event)
   dispatcher.dispatch<KeyReleasedEvent>([this](auto& e) {
     if (e.key == KeyCode::Escape)
       running = false;
+
+    if (e.key == KeyCode::L && Input::key_pressed(KeyCode::LeftControl) &&
+        Input::key_pressed(KeyCode::LeftShift)) {
+      Assets::Manager::the().log_allocation_info<StaticMesh>();
+      Assets::Manager::the().log_allocation_info<Image>();
+      Assets::Manager::the().log_allocation_info<Material>();
+      return true;
+    }
+
     return false;
   });
 
