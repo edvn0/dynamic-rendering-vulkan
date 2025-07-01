@@ -16,7 +16,8 @@ layout(location = 0) out vec3 v_normal;
 layout(location = 1) out vec3 v_world_pos;
 layout(location = 2) out vec4 v_light_space_pos;
 layout(location = 3) out vec2 v_uv;
-layout(location = 4) out mat3 v_tbn;
+layout(location = 4) out flat uint v_instance_index;
+layout(location = 5) out mat3 v_tbn;
 
 const mat4 shadow_bias_matrix = mat4(0.5, 0.0, 0.0, 0.0, 0.0, -0.5, 0.0, 0.0,
                                      0.0, 0.0, 1.0, 0.0, 0.5, 0.5, 0.0, 1.0);
@@ -38,4 +39,5 @@ void main()
   v_light_space_pos = shadow_bias_matrix * shadow_ubo.light_vp * world_position;
   v_uv = a_uv;
   v_tbn = transpose(mat3(world_tangent, world_bitangent, world_normal));
+  v_instance_index = gl_InstanceIndex;
 }

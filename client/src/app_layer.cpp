@@ -300,49 +300,6 @@ AppLayer::on_interface() -> void
 
   window("Controls", [&, this]() {
     ImGui::SliderFloat("Rotation Speed", &rotation_speed, 0.1f, 150.0f);
-
-    ImGui::DragFloat3(
-      "Light Position", &light_environment.light_position[0], 0.5f);
-    ImGui::DragFloat3("Light Target", &light_environment.target[0], 0.5f);
-    ImGui::ColorEdit4("Light Color", &light_environment.light_color[0]);
-    ImGui::ColorEdit4("Ambient Color", &light_environment.ambient_color[0]);
-
-    ImGui::DragFloat(
-      "Bloom strength", &light_environment.bloom_strength, 0.01f, 0.f, 10.f);
-
-    ImGui::DragFloat(
-      "Ortho Size", &light_environment.ortho_size, 0.5f, 1.f, 200.f);
-    ImGui::DragFloat(
-      "Near Plane", &light_environment.near_plane, 0.01f, 0.01f, 10.f);
-    ImGui::DragFloat(
-      "Far Plane", &light_environment.far_plane, 0.1f, 1.f, 500.f);
-
-    static constexpr std::array<const char*, 3> view_mode_names = {
-      "LookAtRH",
-      "LookAtLH",
-      "Default",
-    };
-    static constexpr std::array<const char*, 5> projection_names = {
-      "OrthoRH_ZO", "OrthoRH_NO", "OrthoLH_ZO", "OrthoLH_NO", "Default",
-    };
-    int proj_index = static_cast<int>(light_environment.projection_mode);
-    assert(proj_index >= 0 && proj_index < 5);
-    if (ImGui::Combo("Projection Mode",
-                     &proj_index,
-                     projection_names.data(),
-                     static_cast<int>(projection_names.size()))) {
-      light_environment.projection_mode =
-        static_cast<ShadowProjectionMode>(proj_index);
-    }
-
-    int view_index = static_cast<int>(light_environment.view_mode);
-    assert(view_index >= 0 && view_index < 3);
-    if (ImGui::Combo("View Mode",
-                     &view_index,
-                     view_mode_names.data(),
-                     static_cast<int>(view_mode_names.size()))) {
-      light_environment.view_mode = static_cast<ShadowViewMode>(view_index);
-    }
   });
 
   static bool choice = false;
@@ -584,7 +541,6 @@ AppLayer::on_render(Renderer&) -> void
     camera_data.view = camera->get_view();
   }
 
-  renderer->get_light_environment() = light_environment;
   renderer->begin_frame({
     .projection = camera_data.projection,
     .inverse_projection = camera_data.inverse_projection,
@@ -664,7 +620,7 @@ AppLayer::get_camera_matrices(CameraMatrices& out) const -> bool
 auto
 AppLayer::generate_scene(PointLightSystem& pls) -> void
 {
-  /*{
+  {
     auto sponza = active_scene->create_entity("Sponza");
     auto& mesh = sponza.add_component<Component::Mesh>(
       //"main_sponza/NewSponza_Main_glTF_003.gltf");
@@ -672,8 +628,7 @@ AppLayer::generate_scene(PointLightSystem& pls) -> void
     mesh.casts_shadows = true;
     auto& transform = sponza.get_component<Component::Transform>();
     transform.scale = glm::vec3(0.01f, 0.01f, 0.01f);
-    // sponza.add_component<Component::Material>("main_geometry");
-  }*/
+  }
 
   {
     auto entity = active_scene->create_entity("Ground");

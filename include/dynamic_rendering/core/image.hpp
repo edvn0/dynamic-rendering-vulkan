@@ -64,6 +64,10 @@ public:
   {
     return mip_layer_views[layer * mip_levels + mip];
   }
+  [[nodiscard]] auto get_layer_view(const std::uint32_t layer) const
+  {
+    return get_mip_layer_view(0, layer);
+  }
   [[nodiscard]] auto get_image() const -> VkImage { return image; }
   [[nodiscard]] auto width() const -> std::uint32_t { return extent.width; }
   [[nodiscard]] auto height() const -> std::uint32_t { return extent.height; }

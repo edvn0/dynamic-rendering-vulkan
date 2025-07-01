@@ -1,34 +1,36 @@
 #version 450
 
-#include "gaussian.glsl"
 #include "set0.glsl"
 
 layout(local_size_x = 8, local_size_y = 8) in;
 
-layout(set = 1, binding = 0, rgba32f) uniform
-  restrict readonly image2D input_image;
-layout(set = 1, binding = 1, rgba32f) uniform
-  restrict writeonly image2D output_image;
+layout(set = 1, binding = 0, rgba32f) readonly uniform image2D input_image;
+layout(set = 1, binding = 1, rgba32f) writeonly uniform image2D output_image;
+
+const int SAMPLE_COUNT = 7;
+const float OFFSETS[7] =
+  float[](0.0, 1.4098, 2.1168, 2.6895, 3.1591, 3.5567, 3.8999);
+const float WEIGHTS[7] =
+  float[](0.0450, 0.1100, 0.1820, 0.2490, 0.2100, 0.1320, 0.0720);
 
 void
 main()
 {
-  ivec2 output_size = imageSize(output_image);          // 160x90
-  ivec2 output_coord = ivec2(gl_GlobalInvocationID.xy); // 0-159, 0-89
-
-  if (output_coord.x >= output_size.x || output_coord.y >= output_size.y)
+  ivec2 coord = ivec2(gl_GlobalInvocationID.xy);
+  ivec2 size = imageSize(input_image);
+  if (any(greaterThanEqual(coord, size)))
     return;
 
-  // Scale up to input image coordinates (2x scaling for downsampling)
-  ivec2 input_coord = output_coord;
-  ivec2 input_size = imageSize(input_image); // 320x180
-
   vec4 sum = vec4(0.0);
-  for (int i = 0; i < N; ++i) {
-    ivec2 offset = ivec2(-1, 0) * (i - M);
-    ivec2 sample_coord = clamp(input_coord + offset, ivec2(0), input_size - 1);
-    sum += 2 * coeffs[i] * imageLoad(input_image, sample_coord);
+  for (int i = 0; i < SAMPLE_COUNT; ++i) {
+    float off = OFFSETS[i];
+    vec4 t0 = imageLoad(input_image,
+                        clamp(coord + ivec2(int(+off), 0), ivec2(0), size - 1));
+    vec4 t1 = imageLoad(input_image,
+                        clamp(coord + ivec2(int(-off), 0), ivec2(0), size - 1));
+    sum += WEIGHTS[i] * (t0 + t1);
   }
-
-  imageStore(output_image, output_coord, sum);
+  // center sample was double-counted, but base_weight=WEIGHTS[0] with off=0
+  // fixes that
+  imageStore(output_image, coord, sum);
 }

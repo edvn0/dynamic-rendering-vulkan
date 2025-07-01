@@ -7,6 +7,20 @@
 #include <VkBootstrap.h>
 #include <optional>
 
+class OneTimeCommand
+{
+  const Device& device;
+  VkQueue chosen_queue{ VK_NULL_HANDLE };
+  VkCommandBuffer command_buffer{ VK_NULL_HANDLE };
+  VkCommandPool command_pool{ VK_NULL_HANDLE };
+
+public:
+  explicit OneTimeCommand(const Device&, VkQueue = VK_NULL_HANDLE);
+  ~OneTimeCommand();
+
+  auto operator*() const { return command_buffer; }
+};
+
 class Device
 {
 public:

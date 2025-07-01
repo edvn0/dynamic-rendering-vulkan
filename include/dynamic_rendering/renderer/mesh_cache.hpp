@@ -78,7 +78,7 @@ private:
   static inline std::mutex mutex{};
 
   auto initialise_cube() -> void;
-  auto initialise_quad() -> void;
+  auto initialise_sphere() -> void;
 
   friend class Mesh;
 };

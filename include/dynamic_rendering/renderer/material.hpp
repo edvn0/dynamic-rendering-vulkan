@@ -65,14 +65,24 @@ public:
     return upload(name, buffer.get());
   }
   auto upload(std::string_view name, const Image* image) -> void;
+  auto upload(std::string_view name, const ImageArray* array) -> void;
   auto upload(const std::string_view name, const Image& image) -> void
   {
     return upload(name, &image);
+  }
+  auto upload(const std::string_view name, const ImageArray& array) -> void
+  {
+    return upload(name, &array);
   }
   auto upload(const std::string_view name, const Assets::Pointer<Image>& image)
     -> void
   {
     return upload(name, image.get());
+  }
+  auto upload(const std::string_view name,
+              const Assets::Pointer<ImageArray>& array) -> void
+  {
+    return upload(name, array.get());
   }
   auto upload_default_textures() -> void;
 
@@ -118,6 +128,17 @@ public:
   auto invalidate(std::span<const Image*> images) -> void;
   template<std::size_t Extent = std::dynamic_extent>
   auto invalidate(const std::span<const Image*, Extent> images) -> void
+  {
+    invalidate(std::span{ &images, Extent });
+  }
+
+  auto invalidate(const ImageArray* image) -> void
+  {
+    invalidate(std::span{ &image, 1 });
+  }
+  auto invalidate(std::span<const ImageArray*> images) -> void;
+  template<std::size_t Extent = std::dynamic_extent>
+  auto invalidate(const std::span<const ImageArray*, Extent> images) -> void
   {
     invalidate(std::span{ &images, Extent });
   }
@@ -183,6 +204,7 @@ private:
   auto rebuild_pipeline(const PipelineBlueprint&)
     -> std::expected<std::unique_ptr<CompiledPipeline>, MaterialError>;
   auto upload_storage_image(std::string_view, const Image*) -> void;
+  auto upload_storage_image(std::string_view, const ImageArray*) -> void;
 
   static auto create(const Device&, const PipelineBlueprint&)
     -> std::expected<std::unique_ptr<Material>, MaterialError>;

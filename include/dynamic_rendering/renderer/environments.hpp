@@ -2,13 +2,13 @@
 
 #include <glm/glm.hpp>
 
-enum class ShadowViewMode
+enum class ShadowViewMode : std::uint8_t
 {
   LookAtRH,
   LookAtLH,
   Default,
 };
-enum class ShadowProjectionMode
+enum class ShadowProjectionMode : std::uint8_t
 {
   OrthoRH_ZO,
   OrthoRH_NO,

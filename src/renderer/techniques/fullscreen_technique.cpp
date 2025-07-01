@@ -9,6 +9,7 @@
 #include "renderer/techniques/point_lights_technique.hpp"
 #include "renderer/techniques/shadow_gui_technique.hpp"
 
+#include <tracy/Tracy.hpp>
 #include <yaml-cpp/yaml.h>
 
 struct TechniqueParseError
@@ -199,4 +200,10 @@ FullscreenTechniqueFactory::create(std::string_view path,
   assert(false &&
          "Type could not be matched to any implemented full screen pass");
   return nullptr;
+}
+
+auto
+FullscreenTechniqueBase::perform(const CommandBuffer&, std::uint32_t) const
+  -> void
+{
 }

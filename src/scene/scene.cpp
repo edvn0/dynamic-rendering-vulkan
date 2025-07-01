@@ -607,16 +607,18 @@ Scene::draw_entity_item(entt::entity entity, const std::string_view tag)
 
     if (ImGui::BeginPopup("AddComponentPopup")) {
       Entity e{ entity, this };
-      if (ImGui::MenuItem("Mesh")) {
+      if (!e.has_component<Component::Mesh>() && ImGui::MenuItem("Mesh")) {
         e.add_component<Component::Mesh>();
       }
-      if (ImGui::MenuItem("Light")) {
+      if (!e.has_component<Component::PointLight>() &&
+          ImGui::MenuItem("Light")) {
         e.add_component<Component::PointLight>();
       }
-      if (ImGui::MenuItem("Camera")) {
+      if (!e.has_component<Component::Camera>() && ImGui::MenuItem("Camera")) {
         e.add_component<Component::Camera>();
       }
-      if (ImGui::MenuItem("Material")) {
+      if (!e.has_component<Component::Material>() &&
+          ImGui::MenuItem("Material")) {
         auto material =
           Assets::Manager::the().load<::Material>("main_geometry");
         e.add_component<Component::Material>(material);
@@ -791,8 +793,8 @@ Scene::on_render(Renderer& renderer) -> void
       light.dirty = false;
     }
 
-    if constexpr (!is_debug) {
-      auto mesh = Assets::builtin_cube();
+    if constexpr (is_debug) {
+      auto mesh = Assets::builtin_sphere();
       renderer.submit(
         {
           .mesh = mesh.get(),
@@ -807,6 +809,9 @@ Scene::on_render(Renderer& renderer) -> void
          registry.view<Component::Mesh, const Component::Transform>(
            entt::exclude<Component::PointLight>);
        auto&& [entity, mesh, transform] : view.each()) {
+    if (!mesh.mesh.is_valid())
+      return;
+
     const auto* material_component =
       registry.try_get<Component::Material>(entity);
     const auto* identifier = registry.try_get<Component::Tag>(entity);

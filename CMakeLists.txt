@@ -56,6 +56,7 @@ add_library(DynamicRendering_Core STATIC
         src/core/command_buffer.cpp
         src/core/gpu_buffer.cpp
         src/core/image.cpp
+        src/core/image_array.cpp
         src/core/input.cpp
         src/core/event_system.cpp
         src/core/app.cpp
@@ -150,6 +151,8 @@ target_link_libraries(DynamicRendering_Renderer PUBLIC
         spirv-reflect-static
         assimp::assimp
         meshoptimizer::meshoptimizer
+        imgui
+
 )
 
 target_precompile_headers(DynamicRendering_Renderer REUSE_FROM DynamicRendering_Core)

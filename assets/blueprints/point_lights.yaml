@@ -1,15 +1,31 @@
 shaders:
   - stage: vertex
-    path: fullscreen.vert
+    path: point_lights.vert
   - stage: fragment
     path: point_lights.frag
-vertex_input:
-  bindings: []
-  attributes: []
-attachments:
-  - format: b8g8r8a8_srgb
-    blend_enable: false
+
+rasterization:
+  cull_mode: front
+  winding: ccw
+
 depth_stencil:
   depth_test: true
-  depth_write: false
-msaa_samples: 1
+  depth_write: true
+  format: d32_sfloat
+  compare_op: less
+
+blend_states:
+  - src_color: src_alpha
+    dst_color: one_minus_src_alpha
+    color_op: add
+    src_alpha: src_alpha
+    dst_alpha: one_minus_src_alpha
+    alpha_op: subtract
+    color_mask: rgba
+    enabled: true
+
+attachments:
+  - format: r32g32b32a32_sfloat
+    blend_enable: true
+
+msaa_samples: 16

@@ -260,8 +260,7 @@ public:
   {
     using T = std::ranges::range_value_t<R>;
     std::vector<T> temp;
-    temp.reserve(std::ranges::distance(
-      r)); // optional, if you can compute distance efficiently
+    temp.reserve(std::ranges::distance(r));
     for (const auto& item : r) {
       temp.push_back(item);
     }

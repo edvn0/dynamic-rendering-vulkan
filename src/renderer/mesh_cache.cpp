@@ -49,7 +49,7 @@ MeshCache::MeshCache(const Device& dev)
   meshes[MeshType::Torus] = std::make_unique<StaticMesh>();
 
   for (auto&& [type, mesh] : meshes) {
-    if (!mesh->load_from_file(*device, "meshes/default/" + to_string(type))) {
+    if (!mesh->load_from_file(*device, "default/" + to_string(type))) {
       mesh.reset();
     }
   }

@@ -188,6 +188,28 @@ enum class EventCategory : std::int32_t
   Editor = bit(6)
 };
 
+enum class Modifiers : std::int32_t
+{
+  Shift = 1,
+  Control = 2,
+  Alt = 4,
+  Super = 8,
+  CapsLock = 16,
+  NumLock = 32,
+};
+constexpr auto
+operator|(Modifiers l, Modifiers r) -> Modifiers
+{
+  return static_cast<Modifiers>(static_cast<std::int32_t>(l) |
+                                static_cast<std::int32_t>(r));
+}
+constexpr auto
+operator&(Modifiers l, Modifiers r) -> Modifiers
+{
+  return static_cast<Modifiers>(static_cast<std::int32_t>(l) &
+                                static_cast<std::int32_t>(r));
+}
+
 #define EVENT_CLASS_TYPE(type)                                                 \
   static auto get_static_type() -> EventType                                   \
   {                                                                            \
@@ -305,13 +327,18 @@ public:
 class KeyPressedEvent : public Event
 {
 public:
-  explicit KeyPressedEvent(KeyCode keyCode, std::int32_t repeat = 0)
-    : key(keyCode)
+  explicit KeyPressedEvent(KeyCode key_code,
+                           Modifiers mods,
+                           std::int32_t repeat = 0)
+    : key(key_code)
     , repeat_count(repeat)
+    , modifiers(mods)
   {
   }
   KeyCode key;
   std::int32_t repeat_count;
+  Modifiers modifiers;
+
   EVENT_CLASS_TYPE(KeyPressed)
   EVENT_CLASS_CATEGORY(Keyboard)
 };
@@ -319,11 +346,13 @@ public:
 class KeyReleasedEvent : public Event
 {
 public:
-  explicit KeyReleasedEvent(KeyCode keyCode)
-    : key(keyCode)
+  explicit KeyReleasedEvent(KeyCode key_code, Modifiers mods)
+    : key(key_code)
+    , modifiers(mods)
   {
   }
   KeyCode key;
+  Modifiers modifiers;
   EVENT_CLASS_TYPE(KeyReleased)
   EVENT_CLASS_CATEGORY(Keyboard)
 };

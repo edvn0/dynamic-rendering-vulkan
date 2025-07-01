@@ -136,6 +136,8 @@ public:
     return frame_index;
   }
 
+  auto on_interface() -> void;
+
   static auto initialise_textures(const Device& device) -> void;
   static auto get_white_texture()
   {
@@ -253,6 +255,7 @@ private:
   auto run_skybox_pass(std::uint32_t) -> void;
   auto run_shadow_pass(std::uint32_t, const DrawList&) -> void;
   auto run_z_prepass(std::uint32_t, const DrawList&) -> void;
+  auto run_point_light_pass(const DrawList&) -> void;
   auto run_geometry_pass(std::uint32_t, const DrawList&) -> void;
   auto run_composite_pass(std::uint32_t) -> void;
   auto run_colour_correction_pass(std::uint32_t) -> void;

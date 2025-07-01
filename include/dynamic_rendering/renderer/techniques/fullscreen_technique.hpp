@@ -67,6 +67,9 @@ public:
     , desc(std::move(desc))
   {
   }
+
+  auto perform(const CommandBuffer&, std::uint32_t) const -> void;
+
   auto initialise(Renderer&,
                   const string_hash_map<const Image*>&,
                   const string_hash_map<const GPUBuffer*>&) -> void override

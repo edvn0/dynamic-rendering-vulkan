@@ -31,6 +31,7 @@
 
 #include <glm/gtx/quaternion.hpp>
 #include <glm/gtx/string_cast.hpp>
+#include <imgui.h>
 
 struct CameraBuffer
 {
@@ -549,16 +550,14 @@ Renderer::Renderer(const Device& dev,
   {
     light_culling_material = Material::create(*device, "light_culling").value();
 
-    // Buffer for atomic counter (binding = 3)
     global_light_counter_buffer = GPUBuffer::zero_initialise(
       *device,
-      sizeof(std::uint32_t), // Just one uint32_t
+      sizeof(std::uint32_t),
       VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT |
-        VK_BUFFER_USAGE_TRANSFER_SRC_BIT, // Optional, for CPU readback,
+        VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
       true,
       "global_light_counter_buffer");
     static constexpr auto tile_size = 16;
-    // Buffer for light grid data (binding = 2)
     std::size_t num_tiles =
       (geometry_image->width() * geometry_image->height()) / tile_size;
     light_grid_buffer = GPUBuffer::zero_initialise(
@@ -568,7 +567,6 @@ Renderer::Renderer(const Device& dev,
       false,
       "light_grid_buffer");
 
-    // Buffer for light indices (binding = 1)
     constexpr std::size_t max_lights_per_tile = 64;
     std::size_t max_total_indices = num_tiles * max_lights_per_tile;
     light_index_list_buffer = GPUBuffer::zero_initialise(
@@ -578,13 +576,11 @@ Renderer::Renderer(const Device& dev,
       false,
       "light_index_list_buffer");
 
-    // CORRECTED: Bind buffers to correct bindings
     light_culling_material->upload("LightIndexList", light_index_list_buffer);
     light_culling_material->upload("LightGridData", light_grid_buffer);
     light_culling_material->upload("LightIndexAllocator",
                                    global_light_counter_buffer);
 
-    // CORRECTED: Same fix for geometry material
     geometry_material->upload("LightIndexList", light_index_list_buffer);
     geometry_material->upload("LightGridData", light_grid_buffer);
   }
@@ -682,10 +678,75 @@ Renderer::Renderer(const Device& dev,
     }
   };
 
+  material_registry["point_lights"] = {
+    nullptr,
+    [this](const PipelineBlueprint& bp) {
+      point_light_system->get_material().get()->reload(bp);
+    }
+  };
+
 #pragma endregion
 
   composite_attachment_material->upload("point_lights_input",
                                         get_point_lights_image());
+}
+
+auto
+Renderer::on_interface() -> void
+{
+  if (ImGui::Begin("Renderer settings")) {
+    ImGui::DragFloat3(
+      "Light Position", &light_environment.light_position[0], 0.5f);
+    ImGui::DragFloat3("Light Target", &light_environment.target[0], 0.5f);
+    ImGui::ColorEdit4("Light Color", &light_environment.light_color[0]);
+    ImGui::ColorEdit4("Ambient Color", &light_environment.ambient_color[0]);
+
+    ImGui::DragFloat(
+      "Bloom strength", &light_environment.bloom_strength, 0.01f, 0.f, 10.f);
+
+    ImGui::DragFloat(
+      "Ortho Size", &light_environment.ortho_size, 0.5f, 1.f, 200.f);
+    ImGui::DragFloat(
+      "Near Plane", &light_environment.near_plane, 0.01f, 0.01f, 10.f);
+    ImGui::DragFloat(
+      "Far Plane", &light_environment.far_plane, 0.1f, 1.f, 500.f);
+
+    static constexpr std::array<const char*, 3> view_mode_names = {
+      "LookAtRH",
+      "LookAtLH",
+      "Default",
+    };
+    static constexpr std::array<const char*, 5> projection_names = {
+      "OrthoRH_ZO", "OrthoRH_NO", "OrthoLH_ZO", "OrthoLH_NO", "Default",
+    };
+    int proj_index = static_cast<int>(light_environment.projection_mode);
+    assert(proj_index >= 0 && proj_index < 5);
+    if (ImGui::Combo("Projection Mode",
+                     &proj_index,
+                     projection_names.data(),
+                     static_cast<int>(projection_names.size()))) {
+      light_environment.projection_mode =
+        static_cast<ShadowProjectionMode>(proj_index);
+    }
+
+    int view_index = static_cast<int>(light_environment.view_mode);
+    assert(view_index >= 0 && view_index < 3);
+    if (ImGui::Combo("View Mode",
+                     &view_index,
+                     view_mode_names.data(),
+                     static_cast<int>(view_mode_names.size()))) {
+      light_environment.view_mode = static_cast<ShadowViewMode>(view_index);
+    }
+
+    if (ImGui::TreeNodeEx("Bloom",
+                          ImGuiTreeNodeFlags_DefaultOpen |
+                            ImGuiTreeNodeFlags_OpenOnDoubleClick)) {
+      bloom_pass->on_interface();
+      ImGui::TreePop();
+    }
+
+    ImGui::End();
+  }
 }
 
 auto
@@ -1098,14 +1159,36 @@ Renderer::end_frame(const std::uint32_t fi) -> void
     command_buffer->begin_frame(fi);
   }
 
+  auto spheres_view =
+    flat_draw_commands | std::views::filter([](const DrawItem& k) {
+      return k.command.mesh == Assets::builtin_sphere().get();
+    });
+  auto other_view =
+    flat_draw_commands | std::views::filter([](const DrawItem& k) {
+      return k.command.mesh != Assets::builtin_sphere().get();
+    });
+
+  std::vector<DrawItem> spheres;
+  spheres.reserve(std::ranges::distance(spheres_view));
+  for (const auto& item : spheres_view) {
+    spheres.push_back(item);
+  }
+  std::vector<DrawItem> all_geometry;
+  all_geometry.reserve(std::ranges::distance(other_view));
+  for (const auto& item : other_view) {
+    all_geometry.push_back(item);
+  }
+
   run_skybox_pass(fi);
 
   run_shadow_pass(fi, flat_shadow_draw_commands);
-  run_z_prepass(fi, flat_draw_commands);
-  run_geometry_pass(fi, flat_draw_commands);
+  run_z_prepass(fi, all_geometry);
+
+  run_geometry_pass(fi, all_geometry);
+  run_point_light_pass(spheres);
 
   if constexpr (is_debug) {
-    run_identifier_pass(fi, flat_draw_commands);
+    run_identifier_pass(fi, all_geometry);
   }
   // Add image barrier to prepare geometry_image for compute shader read
   {
@@ -1145,8 +1228,12 @@ Renderer::end_frame(const std::uint32_t fi) -> void
   run_light_culling_pass();
   run_bloom_pass(fi);
 
-  compute_command_buffer->submit_and_end(
-    fi, geometry_complete_semaphores.at(fi), bloom_complete_semaphores.at(fi));
+  {
+    ZoneScopedN("Submit compute buffer (waiting on geometry)");
+    compute_command_buffer->submit_and_end(fi,
+                                           geometry_complete_semaphores.at(fi),
+                                           bloom_complete_semaphores.at(fi));
+  }
 
   // Begin final graphics work
   command_buffer->begin_frame_persist_query_pools(fi);
@@ -1156,8 +1243,12 @@ Renderer::end_frame(const std::uint32_t fi) -> void
   run_composite_pass(fi);
   run_postprocess_passes(fi);
 
-  command_buffer->submit_and_end(
-    fi, bloom_complete_semaphores.at(fi), VK_NULL_HANDLE);
+  {
+    ZoneScopedN("Submit geometry buffer (waiting on compute)");
+
+    command_buffer->submit_and_end(
+      fi, bloom_complete_semaphores.at(fi), VK_NULL_HANDLE);
+  }
 }
 
 auto
@@ -1465,6 +1556,146 @@ Renderer::run_z_prepass(std::uint32_t fi, const DrawList& draw_list) -> void
 }
 
 auto
+Renderer::run_point_light_pass(const DrawList& draw_list) -> void
+{
+  ZoneScopedN("Point light pass");
+
+  command_buffer->begin_timer(frame_index, "point_light_pass");
+
+  const VkCommandBuffer& cmd = command_buffer->get(frame_index);
+  Util::Vulkan::cmd_begin_debug_label(
+    cmd, "Point light pass", { 0.5F, 0.5F, 0.9F, 1.0F });
+  CoreUtils::cmd_transition_to_color_attachment(cmd,
+                                                geometry_image->get_image());
+
+  constexpr VkClearValue clear_value = { .color = { { 0.f, 0.f, 0.f, 0.f } } };
+  const VkRenderingAttachmentInfo color_attachment = {
+    .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+    .pNext = nullptr,
+    .imageView = geometry_msaa_image->get_view(),
+    .imageLayout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
+    .resolveMode = VK_RESOLVE_MODE_AVERAGE_BIT_KHR,
+    .resolveImageView = geometry_image->get_view(),
+    .resolveImageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+    .loadOp = VK_ATTACHMENT_LOAD_OP_LOAD,
+    .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+    .clearValue = clear_value
+  };
+
+  VkRenderingAttachmentInfo depth_attachment = {
+    .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+    .pNext = nullptr,
+    .imageView = geometry_depth_msaa_image->get_view(),
+    .imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+    .resolveMode = VK_RESOLVE_MODE_NONE,
+    .resolveImageView = VK_NULL_HANDLE,
+    .resolveImageLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+    .loadOp = VK_ATTACHMENT_LOAD_OP_LOAD,
+    .storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+    .clearValue = {},
+  };
+
+  const std::array colour_attachments = { color_attachment };
+  const VkRenderingInfo render_info = {
+    .sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
+    .pNext = nullptr,
+    .flags = 0,
+    .renderArea = { .offset = { 0, 0 },
+                    .extent = { geometry_image->width(),
+                                geometry_image->height() } },
+    .layerCount = 1,
+    .viewMask = 0,
+    .colorAttachmentCount =
+      static_cast<std::uint32_t>(colour_attachments.size()),
+    .pColorAttachments = colour_attachments.data(),
+    .pDepthAttachment = &depth_attachment,
+    .pStencilAttachment = nullptr,
+  };
+
+  vkCmdBeginRendering(cmd, &render_info);
+
+  const VkViewport viewport = {
+    .x = 0.f,
+    .y = static_cast<float>(geometry_image->height()),
+    .width = static_cast<float>(geometry_image->width()),
+    .height = -static_cast<float>(geometry_image->height()),
+    .minDepth = 1.f,
+    .maxDepth = 0.f,
+  };
+  vkCmdSetViewport(cmd, 0, 1, &viewport);
+  vkCmdSetScissor(cmd, 0, 1, &render_info.renderArea);
+
+  // The pipeline should still come from the geometry main material.
+
+  auto& material = *point_light_system->get_material().get();
+  auto& pipeline = material.get_pipeline();
+
+  material.upload("LightIndexList", light_index_list_buffer);
+  material.upload("LightGridData", light_grid_buffer);
+
+  vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.pipeline);
+
+  for (auto&& [cmd_info, offset, instance_count] : draw_list) {
+    const auto* submesh = cmd_info.mesh->get_submesh(cmd_info.submesh_index);
+    if (!submesh)
+      continue;
+
+    const auto& vertex_buffer = cmd_info.mesh->get_vertex_buffer();
+    const auto& index_buffer = cmd_info.mesh->get_index_buffer();
+
+    const auto& material_set = material.prepare_for_rendering(frame_index);
+
+    std::array descriptor_sets{
+      descriptor_set_manager->get_set(frame_index),
+      material_set,
+    };
+    vkCmdBindDescriptorSets(cmd,
+                            VK_PIPELINE_BIND_POINT_GRAPHICS,
+                            pipeline.layout,
+                            0,
+                            static_cast<std::uint32_t>(descriptor_sets.size()),
+                            descriptor_sets.data(),
+                            0,
+                            nullptr);
+
+    const VkDeviceSize vertex_offset_bytes =
+      submesh->vertex_offset * sizeof(Vertex);
+    const std::array vertex_buffers = {
+      vertex_buffer->get(),
+      instance_vertex_buffer->get(),
+    };
+    const std::array offsets = { vertex_offset_bytes, 0ULL };
+
+    vkCmdBindVertexBuffers(cmd,
+                           0,
+                           static_cast<std::uint32_t>(vertex_buffers.size()),
+                           vertex_buffers.data(),
+                           offsets.data());
+    vkCmdBindIndexBuffer(
+      cmd, index_buffer->get(), 0, index_buffer->get_index_type());
+
+    auto&& [pc_stage, pc_offset, pc_size, pc_pointer] =
+      material.generate_push_constant_data();
+
+    vkCmdPushConstants(
+      cmd, pipeline.layout, pc_stage, pc_offset, pc_size, pc_pointer);
+
+    vkCmdDrawIndexed(cmd,
+                     submesh->index_count,
+                     instance_count,
+                     submesh->index_offset,
+                     0,
+                     offset);
+  }
+
+  vkCmdEndRendering(cmd);
+
+  command_buffer->end_timer(frame_index, "point_light_pass");
+
+  Util::Vulkan::cmd_end_debug_label(cmd);
+}
+
+auto
 Renderer::run_geometry_pass(std::uint32_t fi, const DrawList& draw_list) -> void
 {
   ZoneScopedN("Geometry pass");
@@ -1500,7 +1731,7 @@ Renderer::run_geometry_pass(std::uint32_t fi, const DrawList& draw_list) -> void
     .resolveImageView = VK_NULL_HANDLE,
     .resolveImageLayout = VK_IMAGE_LAYOUT_UNDEFINED,
     .loadOp = VK_ATTACHMENT_LOAD_OP_LOAD,
-    .storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+    .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
     .clearValue = {},
   };
 

@@ -34,7 +34,6 @@ private:
   std::shared_ptr<Scene> active_scene;
 
   float rotation_speed{ 3.0F };
-  LightEnvironment light_environment;
 
   std::vector<glm::mat4> transforms;
   std::vector<Material> materials;

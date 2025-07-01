@@ -1,39 +1,46 @@
 #version 460
+
+#include "material.glsl"
+#include "matrix_math.glsl"
 #include "set0.glsl"
 
-layout(location = 0) out vec4 fragColor;
+// Textures
+layout(set = 1, binding = 0) uniform sampler2D albedo_map;
+layout(set = 1, binding = 1) uniform sampler2D normal_map;
+layout(set = 1, binding = 2) uniform sampler2D roughness_map;
+layout(set = 1, binding = 3) uniform sampler2D metallic_map;
+layout(set = 1, binding = 4) uniform sampler2D ao_map;
+layout(set = 1, binding = 5) uniform sampler2D emissive_map;
 
-layout(set = 1, binding = 0) uniform sampler2D scene_depth;
+// Inputs
+layout(location = 0) in vec3 v_normal;
+layout(location = 1) in vec3 v_world_pos;
+layout(location = 2) in vec4 v_light_space_pos;
+layout(location = 3) in vec2 v_uv;
+layout(location = 4) in flat uint v_instance_index;
+layout(location = 5) in mat3 v_tbn;
 
-layout(push_constant) uniform PushConstants {
-    vec2 screenSize;
-} pc;
-
-// Reconstruct world position from depth
-vec3 reconstruct_world_position(vec2 frag_coord, float depth, mat4 inv_vp) {
-    vec2 ndc = (frag_coord / pc.screenSize) * 2.0 - 1.0;
-    vec4 clip = vec4(ndc, depth, 1.0);
-    vec4 world = inv_vp * clip;
-    return world.xyz / world.w;
-}
+// Outputs
+layout(location = 0) out vec4 frag_colour;
 
 void main() {
-    vec2 uv = gl_FragCoord.xy / pc.screenSize;
-    float depth = 1.0F- texture(scene_depth, uv).r;
+  // Alpha test
+  float alpha = material.albedo.a;
+  if (has_albedo_texture())
+    alpha *= texture(albedo_map, v_uv).a;
 
-    // Inverse of projection * view
-    mat4 inv_view_proj = inverse(camera_ubo.projection * camera_ubo.view);
-    vec3 world_pos =  reconstruct_world_position(gl_FragCoord.xy, depth, inv_view_proj);
+  if (is_alpha_testing() && alpha < material.alpha_cutoff)
+    discard;
 
-    vec3 color = vec3(0.0);
+  // Emissive output only
+  vec3 emissive = vec3(0.0);
+  if (is_emissive()) {
+    vec3 emissive_tex =
+        has_emissive_map() ? texture(emissive_map, v_uv).rgb : vec3(1.0);
 
-    for (uint i = 0; i < point_light_buffer.light_count; ++i) {
-        PointLight light = point_light_buffer.lights[i];
-        float dist = distance(world_pos, light.position);
-        if (dist < light.radius) {
-            color += light.color * 0.01*light.intensity;
-        }
-    }
+    emissive =
+        material.emissive_color * material.emissive_strength * emissive_tex;
+  }
 
-    fragColor = vec4(color, 1.0);
+  frag_colour = vec4(emissive, 1.0);
 }

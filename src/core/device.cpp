@@ -273,3 +273,17 @@ Device::create_resettable_command_pool() const -> VkCommandPool
   vkCreateCommandPool(device, &pool_info, nullptr, &command_pool);
   return command_pool;
 }
+
+OneTimeCommand::OneTimeCommand(const Device& dev, VkQueue queue)
+  : device(dev)
+  , chosen_queue(queue)
+{
+  auto&& [buf, p] = device.create_one_time_command_buffer(queue);
+  command_buffer = buf;
+  command_pool = p;
+}
+
+OneTimeCommand::~OneTimeCommand()
+{
+  device.flush(command_buffer, command_pool, chosen_queue);
+}

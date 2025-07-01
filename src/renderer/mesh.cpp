@@ -565,6 +565,12 @@ StaticMesh::load_from_file(const Device& device, const std::string& path)
   std::vector search_paths = {
     fs::path{ assets_path() / fs::path{ "meshes" } / path }.make_preferred(),
     fs::path{ assets_path() / fs::path{ "models" } / path }.make_preferred(),
+    fs::path{ assets_path() / fs::path{ "models" } / path }
+      .make_preferred()
+      .replace_extension(".glb"),
+    fs::path{ assets_path() / fs::path{ "meshes" } / path }
+      .make_preferred()
+      .replace_extension(".glb"),
   };
 
   Assimp::Importer importer;

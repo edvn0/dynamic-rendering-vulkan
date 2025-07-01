@@ -246,12 +246,8 @@ Image::recreate() -> void
   }
 
   if (initial_layout != VK_IMAGE_LAYOUT_UNDEFINED) {
-    auto&& [buf, pool] =
-      device->create_one_time_command_buffer(device->compute_queue());
-
-    CoreUtils::cmd_transition_to_general(buf, *this);
-
-    device->flush(buf, pool, device->compute_queue());
+    OneTimeCommand command(*device, device->compute_queue());
+    CoreUtils::cmd_transition_to_general(*command, *this);
   }
 }
 

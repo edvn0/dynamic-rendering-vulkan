@@ -34,15 +34,16 @@ Window::hookup_events() -> void
       d.framebuffer_resized = true;
     });
   glfwSetKeyCallback(
-    glfw_window, [](GLFWwindow* w, int key, int, int action, int) {
+    glfw_window, [](GLFWwindow* w, int key, int, int action, int mods) {
       auto const& d =
         *static_cast<Window::WindowData*>(glfwGetWindowUserPointer(w));
       auto code = static_cast<KeyCode>(key);
+      auto modifiers = static_cast<Modifiers>(mods);
       if (action == GLFW_PRESS) {
-        KeyPressedEvent ev{ code };
+        KeyPressedEvent ev{ code, modifiers };
         d.event_callback(ev);
       } else if (action == GLFW_RELEASE) {
-        KeyReleasedEvent ev{ code };
+        KeyReleasedEvent ev{ code, modifiers };
         d.event_callback(ev);
       }
     });

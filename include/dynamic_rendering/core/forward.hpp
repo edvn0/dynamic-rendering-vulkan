@@ -15,6 +15,7 @@ class Window;
 class CommandBuffer;
 class GPUBuffer;
 class Image;
+class ImageArray;
 class Shader;
 struct CompiledPipeline;
 class GUISystem;

@@ -170,7 +170,7 @@ App::run() -> std::error_code
   }
 
   vkDeviceWaitIdle(device->get_device());
-  Assets::Manager::the().clear_all<StaticMesh, Image, Material>();
+  Assets::Manager::the().clear_all<StaticMesh, Image, Material, ImageArray>();
   MeshCache::destroy();
   Image::destroy_samplers();
   layer->on_destroy();
@@ -194,6 +194,7 @@ App::interface() -> void
 {
   ZoneScopedN("Interface");
   gui_system->begin_frame();
+  renderer->on_interface();
   layer->on_interface();
 }
 
@@ -213,11 +214,11 @@ App::process_events(Event& event)
     if (e.key == KeyCode::Escape)
       running = false;
 
-    if (e.key == KeyCode::L && Input::key_pressed(KeyCode::LeftControl) &&
-        Input::key_pressed(KeyCode::LeftShift)) {
-      Assets::Manager::the().log_allocation_info<StaticMesh>();
-      Assets::Manager::the().log_allocation_info<Image>();
-      Assets::Manager::the().log_allocation_info<Material>();
+    constexpr auto total = Modifiers::Shift | Modifiers::Control;
+    auto correct_modifiers = ((e.modifiers & total) != Modifiers(0));
+    if (e.key == KeyCode::L && correct_modifiers) {
+      Assets::Manager::the()
+        .log_allocation_info<StaticMesh, Image, Material, ImageArray>();
       return true;
     }
 

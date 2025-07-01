@@ -5,6 +5,7 @@
 #include "core/device.hpp"
 #include "core/gpu_buffer.hpp"
 #include "core/image.hpp"
+#include "core/image_array.hpp"
 #include "renderer/renderer.hpp"
 
 #include <algorithm>
@@ -454,6 +455,27 @@ Material::invalidate(const std::span<const Image*> images) -> void
     }
   }
 }
+
+auto
+Material::invalidate(const std::span<const ImageArray*> images) -> void
+{
+  for (auto* img : images) {
+    for (const auto& [key, binding] : bindings) {
+      const auto* img_binding = dynamic_cast<ImageArrayBinding*>(binding.get());
+      if (!img_binding) {
+        continue;
+      }
+      if (img_binding->get_underlying_image() != img) {
+        continue;
+      }
+
+      for (auto& dirty_set : per_frame_dirty_flags) {
+        dirty_set.insert(key);
+      }
+    }
+  }
+}
+
 auto
 Material::invalidate_all() -> void
 {
@@ -675,6 +697,77 @@ Material::upload(const std::string_view name, const Image* image) -> void
 }
 
 auto
+Material::upload(const std::string_view name, const ImageArray* image) -> void
+{
+  if (image == nullptr)
+    return;
+
+  if (true) {
+    return upload_storage_image(name, image);
+  }
+
+  const auto key = std::string(name);
+  const auto it = bindings.find(key);
+
+  const auto binding_it = binding_info.find(key);
+  if (binding_it == binding_info.end())
+    return;
+
+  const uint32_t binding_index = std::get<1>(binding_it->second);
+
+  bool needs_update = true;
+  if (it != bindings.end()) {
+    if (const auto* existing =
+          dynamic_cast<ImageArrayBinding*>(it->second.get());
+        existing && existing->get_underlying_image() == image) {
+      needs_update = false;
+    }
+  }
+
+  if (needs_update) {
+    bindings[key] = std::make_unique<ImageArrayBinding>(
+      image, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, binding_index);
+    for (auto& dirty : per_frame_dirty_flags) {
+      dirty.insert(key);
+    }
+  }
+}
+
+auto
+Material::upload_storage_image(const std::string_view name,
+                               const ImageArray* array) -> void
+{
+  if (array == nullptr)
+    return;
+
+  const auto key = std::string(name);
+  const auto it = bindings.find(key);
+
+  const auto binding_it = binding_info.find(key);
+  if (binding_it == binding_info.end())
+    return;
+
+  const uint32_t binding_index = std::get<1>(binding_it->second);
+
+  bool needs_update = true;
+  if (it != bindings.end()) {
+    if (const auto* existing =
+          dynamic_cast<ImageArrayBinding*>(it->second.get());
+        existing && existing->get_underlying_image() == array) {
+      needs_update = false;
+    }
+  }
+
+  if (needs_update) {
+    bindings[key] = std::make_unique<ImageArrayBinding>(
+      array, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, binding_index);
+    for (auto& dirty : per_frame_dirty_flags) {
+      dirty.insert(key);
+    }
+  }
+}
+
+auto
 Material::upload_storage_image(const std::string_view name, const Image* image)
   -> void
 {
@@ -722,8 +815,9 @@ Material::prepare_for_rendering(const std::uint32_t frame_index)
     auto it = bindings.find(name);
     if (it == bindings.end())
       continue;
-    writes.push_back(
-      it->second->write_descriptor(frame_index, descriptor_sets[frame_index]));
+
+    it->second->write_descriptor(
+      frame_index, descriptor_sets[frame_index], writes);
   }
 
   vkUpdateDescriptorSets(device->get_device(),

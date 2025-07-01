@@ -1,12 +1,14 @@
 #include "renderer/passes/bloom_pass.hpp"
 
 #include "core/image.hpp"
+#include "core/image_array.hpp"
 #include "core/image_transition.hpp"
 #include "core/vulkan_util.hpp"
 #include "renderer/descriptor_manager.hpp"
 #include "renderer/material.hpp"
 
 #include <cassert>
+#include <imgui.h>
 
 auto
 barrier(const Image& image, const auto cmd)
@@ -45,6 +47,15 @@ BloomPass::BloomPass(const Device& d, const Image* fb, int mips)
 {
   assert(mips >= 3 && mips < 6);
 
+  // Lets build an image array instead.
+  image_array =
+    ImageArray::create(*device,
+                       ImageArray::create_mip_like(
+                         glm::max(source_image->size() / 2u, glm::uvec2(1)),
+                         mips,
+                         0.5f,
+                         "bloom_mip_array"));
+
   // Setup sampler config with CLAMP_TO_EDGE for all address modes
   SamplerConfiguration clamp_to_edge_sampler_config;
   clamp_to_edge_sampler_config.mag_filter = VK_FILTER_LINEAR;
@@ -74,6 +85,8 @@ BloomPass::BloomPass(const Device& d, const Image* fb, int mips)
   extract_material = Material::create(*device, "bloom_extract").value();
   extract_material->upload("input_image", source_image);
   extract_material->upload("output_image", extract_image.get());
+
+  extract_material->upload("bloom_image_array", image_array);
 
   glm::uvec2 current_size = glm::max(source_image->size() / 2u, glm::uvec2(1));
   for (int i = 0; i < mips; ++i) {
@@ -123,6 +136,7 @@ BloomPass::resize(const glm::uvec2& new_size)
   extract_image->resize(new_size.x, new_size.y);
   extract_material->invalidate(source_image);
   extract_material->invalidate(extract_image.get());
+  extract_material->invalidate(image_array.get());
 
   glm::uvec2 current_size = glm::max(new_size / 2u, glm::uvec2(1));
 
@@ -146,6 +160,13 @@ void
 BloomPass::update_source(const Image* image)
 {
   source_image = image;
+}
+
+auto
+BloomPass::on_interface() -> void
+{
+  ImGui::DragFloat("Bloom threshold", &config.threshold, 0.01f, 0.f, 10.f);
+  ImGui::DragFloat("Knee", &config.knee, 0.01f, 0.f, 10.f);
 }
 
 auto
@@ -225,13 +246,14 @@ BloomPass::record(const VkCommandBuffer cmd,
                                         "Bloom Extract",
                                         { 1.0f, 1.0f, 0.0f, 1.0f } });
 
-  dispatch_compute(cmd,
-                   *extract_material,
-                   std::array{
-                     dsm.get_set(frame_index),
-                     extract_material->prepare_for_rendering(frame_index),
-                   },
-                   { extract_image->width(), extract_image->height() });
+  dispatch_compute_with_push_constant(
+    cmd,
+    *extract_material,
+    std::array{
+      dsm.get_set(frame_index),
+      extract_material->prepare_for_rendering(frame_index),
+    },
+    { extract_image->width(), extract_image->height() });
 
   Util::Vulkan::cmd_end_debug_label(cmd);
 
@@ -437,6 +459,36 @@ BloomPass::dispatch_compute(const VkCommandBuffer cmd,
     return (x + 8 - 1) / 8;
   };
   auto groups = glm::uvec3(ceil_div(extent.x), ceil_div(extent.y), 1);
+  vkCmdDispatch(cmd, groups.x, groups.y, groups.z);
+}
 
+void
+BloomPass::dispatch_compute_with_push_constant(
+  const VkCommandBuffer cmd,
+  const Material& material,
+  const std::span<const VkDescriptorSet> sets,
+  const glm::uvec2 extent)
+{
+  const auto& pipeline = material.get_pipeline();
+  vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline.pipeline);
+  vkCmdBindDescriptorSets(cmd,
+                          pipeline.bind_point,
+                          pipeline.layout,
+                          0,
+                          static_cast<uint32_t>(sets.size()),
+                          sets.data(),
+                          0,
+                          nullptr);
+
+  static constexpr auto ceil_div = [](const std::uint32_t x) {
+    return (x + 8 - 1) / 8;
+  };
+  auto groups = glm::uvec3(ceil_div(extent.x), ceil_div(extent.y), 1);
+  vkCmdPushConstants(cmd,
+                     pipeline.layout,
+                     VK_SHADER_STAGE_COMPUTE_BIT,
+                     0,
+                     sizeof(BloomConfig),
+                     &config);
   vkCmdDispatch(cmd, groups.x, groups.y, groups.z);
 }

@@ -79,15 +79,10 @@ public:
   static auto initialise(const Device&, BS::priority_thread_pool*) -> void;
   static auto the() -> Manager&;
 
-  template<typename T>
-  auto log_allocation_info() const -> void
+  template<typename... Ts>
+  auto log_allocation_info() -> void
   {
-    auto& data = storage<T>();
-    const std::string type_name = typeid(T).name();
-    Logger::log_info("Total {} allocations: {}", type_name, data.size());
-    Logger::log_info("Total {} bytes allocated for {}",
-                     detail::TrackingAllocator<T>::total_tracked_bytes.load(),
-                     type_name);
+    (log_allocation_info_impl<Ts>(), ...);
   }
 
 private:
@@ -132,6 +127,17 @@ private:
       Logger::log_info("Instantiating storage for: {}", typeid(T).name());
     }
     return map;
+  }
+
+  template<typename T>
+  auto log_allocation_info_impl() const -> void
+  {
+    auto& data = storage<T>();
+    const std::string type_name = typeid(T).name();
+    Logger::log_info("Total {} allocations: {}", type_name, data.size());
+    Logger::log_info("Total {} bytes allocated for {}",
+                     detail::TrackingAllocator<T>::total_tracked_bytes.load(),
+                     type_name);
   }
 
   template<typename T>
