@@ -67,6 +67,7 @@ add_library(DynamicRendering_Core STATIC
         src/core/debug_utils.cpp
         src/core/logger.cpp
         src/core/vulkan_util.cpp
+        src/core/semaphore.cpp
         src/core/allocation_operations.cpp
 )
 

@@ -51,10 +51,7 @@ Window::hookup_events() -> void
     glfw_window, +[](GLFWwindow* w, int button, int action, int) {
       auto const& d =
         *static_cast<Window::WindowData*>(glfwGetWindowUserPointer(w));
-      auto code = static_cast<MouseCode>(button);
-      Logger::log_debug("Mouse button {} {}",
-                        std::to_underlying(code),
-                        action == GLFW_PRESS ? "pressed" : "released");
+      const auto code = static_cast<MouseCode>(button);
       if (action == GLFW_PRESS) {
         MouseButtonPressedEvent ev{ code };
         d.event_callback(ev);

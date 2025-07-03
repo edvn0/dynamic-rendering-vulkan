@@ -17,6 +17,7 @@
 #include "core/device.hpp"
 #include "core/gpu_buffer.hpp"
 #include "core/image.hpp"
+#include "core/semaphore.hpp"
 #include "passes/bloom_pass.hpp"
 #include "pipeline/blueprint_registry.hpp"
 #include "renderer/draw_command.hpp"
@@ -87,7 +88,7 @@ public:
     const glm::mat4& view;
   };
   auto begin_frame(const VP&) -> void;
-  auto end_frame(std::uint32_t) -> void;
+  auto end_frame() -> void;
   auto on_resize(std::uint32_t, std::uint32_t) -> void;
   [[nodiscard]] auto get_output_image() const -> const Image&;
   [[nodiscard]] auto get_shadow_image() const -> const Image*;
@@ -107,16 +108,6 @@ public:
     camera_frustum.update(vp);
   }
 
-  auto get_light_environment() -> auto& { return light_environment; }
-  [[nodiscard]] auto get_light_environment() const -> const auto&
-  {
-    return light_environment;
-  }
-  auto get_camera_environment() -> auto& { return camera_environment; }
-  [[nodiscard]] auto get_camera_environment() const -> const auto&
-  {
-    return camera_environment;
-  }
   auto update_material_by_name(const std::string& name,
                                const PipelineBlueprint&) -> bool;
 
@@ -157,8 +148,8 @@ private:
   BS::priority_thread_pool* thread_pool{ nullptr };
   std::unique_ptr<DescriptorSetManager> descriptor_set_manager;
 
-  frame_array<VkSemaphore> geometry_complete_semaphores{};
-  frame_array<VkSemaphore> bloom_complete_semaphores{};
+  SemaphoreArray geometry_complete_semaphores{};
+  SemaphoreArray bloom_complete_semaphores{};
 
   Frustum camera_frustum;
   Frustum light_frustum;
@@ -218,7 +209,9 @@ private:
   std::uint32_t line_instance_count_this_frame{};
   auto upload_line_instance_data() -> void;
 
+  Assets::Pointer<Image> light_culling_debug_image;
   Assets::Pointer<Material> light_culling_material;
+
   std::unique_ptr<GPUBuffer> global_light_counter_buffer;
   std::unique_ptr<GPUBuffer> light_grid_buffer;
   std::unique_ptr<GPUBuffer> light_index_list_buffer;
@@ -226,7 +219,7 @@ private:
   std::unique_ptr<GPUBuffer> identifier_buffer;
 
   std::unique_ptr<BloomPass> bloom_pass;
-  auto run_bloom_pass(uint32_t uint32) -> void;
+  auto run_bloom_pass() -> void;
 
   DrawCommandMap draw_commands{};
   IdentifierMap identifiers{};
@@ -243,27 +236,23 @@ private:
   std::unique_ptr<GPUBuffer> camera_uniform_buffer;
   std::unique_ptr<GPUBuffer> shadow_camera_buffer;
   std::unique_ptr<GPUBuffer> frustum_buffer;
-  auto update_uniform_buffers(std::uint32_t,
-                              const glm::mat4& view,
+  auto update_uniform_buffers(const glm::mat4& view,
                               const glm::mat4& proj,
                               const glm::mat4& inverse_proj,
                               const glm::vec3&) const -> void;
-  auto update_shadow_buffers(std::uint32_t) -> void;
+  auto update_shadow_buffers() -> void;
   void update_identifiers();
 
-  auto run_culling_compute_pass(std::uint32_t) -> void;
-  auto run_skybox_pass(std::uint32_t) -> void;
-  auto run_shadow_pass(std::uint32_t, const DrawList&) -> void;
-  auto run_z_prepass(std::uint32_t, const DrawList&) -> void;
-  auto run_point_light_pass(const DrawList&) -> void;
-  auto run_geometry_pass(std::uint32_t, const DrawList&) -> void;
-  auto run_composite_pass(std::uint32_t) -> void;
-  auto run_colour_correction_pass(std::uint32_t) -> void;
-  auto run_postprocess_passes(const std::uint32_t fi) -> void
-  {
-    run_colour_correction_pass(fi);
-  }
-  auto run_identifier_pass(std::uint32_t, const DrawList&) -> void;
+  auto run_culling_compute_pass() -> void;
+  auto run_skybox_pass() -> void;
+  auto run_shadow_pass(DrawListView) -> void;
+  auto run_z_prepass(DrawListView) -> void;
+  auto run_point_light_pass(DrawListView) -> void;
+  auto run_geometry_pass(DrawListView) -> void;
+  auto run_composite_pass() -> void;
+  auto run_colour_correction_pass() -> void;
+  auto run_postprocess_passes() -> void { run_colour_correction_pass(); }
+  auto run_identifier_pass(DrawListView) -> void;
   auto run_light_culling_pass() -> void;
 
   auto initialise_techniques() -> void;

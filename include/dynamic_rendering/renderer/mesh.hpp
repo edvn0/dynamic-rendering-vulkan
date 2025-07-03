@@ -139,7 +139,7 @@ struct Submesh
 class StaticMesh
 {
 public:
-  StaticMesh() = default;
+  StaticMesh();
   ~StaticMesh();
 
   [[nodiscard]] auto load_from_file(const Device&, const std::string& path)
@@ -241,4 +241,6 @@ private:
     -> void;
 
   friend class MeshCache;
+
+  static inline bool has_initialised_loader{ false };
 };

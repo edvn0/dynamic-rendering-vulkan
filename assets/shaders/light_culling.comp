@@ -30,10 +30,19 @@ layout(std430,
 {
   uint global_light_list_counter;
 };
+layout(rgba8ui, set = 1, binding = 4) uniform writeonly uimage2D debug_image;
 
 // Shared memory for light culling per workgroup
 shared uint shared_light_indices[MAX_LIGHTS_PER_TILE];
 shared uint shared_count;
+
+ivec2
+flatten_tile_coord(uvec3 tile_coord, uvec3 tile_grid_size)
+{
+  int tile_x = int(tile_coord.x) + int(tile_grid_size.x) * int(tile_coord.z);
+  int tile_y = int(tile_coord.y);
+  return ivec2(tile_x, tile_y);
+}
 
 uint
 get_tile_index(uvec3 tile_coord, uvec3 tile_grid_size)
@@ -52,9 +61,8 @@ linear_depth(uint slice, uint num_slices, float near_z, float far_z)
 vec3
 ndc_to_view(vec2 ndc, float z_clip)
 {
-  // Fix for Vulkan: Y-axis is flipped compared to OpenGL
-  vec4 clip =
-    vec4(ndc.x * 2.0 - 1.0, -(ndc.y * 2.0 - 1.0), z_clip * 2.0 - 1.0, 1.0);
+  // No Y-axis flip for OpenGL
+  vec4 clip = vec4(ndc * 2.0 - 1.0, z_clip * 2.0 - 1.0, 1.0);
   vec4 view = camera_ubo.inverse_projection * clip;
   return view.xyz / view.w;
 }
@@ -106,6 +114,28 @@ create_tile_frustum(vec2 tile_min,
   return frustum;
 }
 
+vec4
+get_heatmap_color(uint light_count, uint max_lights)
+{
+  // Normalize light count to [0, 1] range
+  float normalized = float(light_count) / float(max_lights);
+  normalized = clamp(normalized, 0.0, 1.0);
+
+  // Create blue->red heatmap
+  vec3 color;
+  if (normalized < 0.5) {
+    // Blue to cyan to green (0.0 to 0.5)
+    float t = normalized * 2.0;
+    color = mix(vec3(0.0, 0.0, 1.0), vec3(0.0, 1.0, 0.0), t);
+  } else {
+    // Green to yellow to red (0.5 to 1.0)
+    float t = (normalized - 0.5) * 2.0;
+    color = mix(vec3(0.0, 1.0, 0.0), vec3(1.0, 0.0, 0.0), t);
+  }
+
+  return vec4(color, 1.0);
+}
+
 void
 main()
 {
@@ -143,11 +173,12 @@ main()
   Frustum tile_frustum =
     create_tile_frustum(tile_min, tile_max, near_ndc, far_ndc);
 
-  // Initialize shared memory
+  // Initialize shared memory - only thread 0 does this
   if (gl_LocalInvocationIndex == 0) {
     shared_count = 0;
   }
-  memoryBarrierShared();
+
+  // Wait for shared memory initialization to complete
   barrier();
 
   // Light culling - test each light against the tile frustum
@@ -160,6 +191,7 @@ main()
     // Sphere-frustum intersection test using bounding sphere
     float dist = distance(light_pos, tile_frustum.center);
     if (dist < light_radius + tile_frustum.radius) {
+      // Atomically get index and ensure it's within bounds
       uint index = atomicAdd(shared_count, 1);
       if (index < MAX_LIGHTS_PER_TILE) {
         shared_light_indices[index] = i;
@@ -167,18 +199,42 @@ main()
     }
   }
 
-  barrier(); // All threads must complete writing to shared memory
+  // Ensure all light culling operations complete before proceeding
+  barrier();
 
-  // Write results to global buffers
+  // Only thread 0 writes the final results
   if (gl_LocalInvocationIndex == 0) {
+    // Clamp count to maximum to handle overflow case
     uint count = min(shared_count, MAX_LIGHTS_PER_TILE);
     uint offset = atomicAdd(global_light_list_counter, count);
 
+    // Write tile grid data
     tile_light_grids[tile_index].offset = offset;
     tile_light_grids[tile_index].count = count;
 
+    // Copy light indices to global buffer
     for (uint j = 0; j < count; ++j) {
       light_indices[offset + j] = shared_light_indices[j];
+    }
+
+    // Generate debug visualization
+    vec4 heatmap_color = get_heatmap_color(count, MAX_LIGHTS_PER_TILE);
+
+    // Convert to uint color (0-255 range) for rgba8ui format
+    uvec4 debug_color = uvec4(uint(heatmap_color.r * 255.0),
+                              uint(heatmap_color.g * 255.0),
+                              uint(heatmap_color.b * 255.0),
+                              255u);
+
+    // Write to entire tile area in debug image (pixel-by-pixel coverage)
+    ivec2 tile_pixel_min = ivec2(tile_coord.xy * TILE_SIZE);
+    ivec2 tile_pixel_max = ivec2((tile_coord.xy + 1u) * TILE_SIZE);
+
+    // Fill the entire tile with the heatmap color
+    for (int y = tile_pixel_min.y; y < tile_pixel_max.y; ++y) {
+      for (int x = tile_pixel_min.x; x < tile_pixel_max.x; ++x) {
+        imageStore(debug_image, ivec2(x, y), debug_color);
+      }
     }
   }
 }

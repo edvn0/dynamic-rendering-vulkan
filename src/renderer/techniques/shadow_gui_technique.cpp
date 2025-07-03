@@ -34,8 +34,6 @@ ShadowGUITechnique::initialise(Renderer& renderer,
                                  .debug_name = desc.output.name.c_str(),
                                });
 
-  renderer_camera_environment = &renderer.get_camera_environment();
-
   material->upload(binding, image);
 }
 

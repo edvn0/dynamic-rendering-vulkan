@@ -7,10 +7,10 @@
 // threshold
 auto
 DrawListManager::should_perform_culling(const DrawCommandMap& draw_map,
-                                        std::size_t threshold) -> bool
+                                        const std::size_t threshold) -> bool
 {
   std::size_t total = 0;
-  for (const auto& [_, instances] : draw_map)
+  for (const auto& instances : draw_map | std::views::values)
     total += instances.size();
   return total >= threshold;
 }
@@ -69,7 +69,7 @@ DrawListManager::cull_and_flatten_draw_commands(const DrawCommandMap& draw_map,
   -> DrawList
 {
   std::size_t estimated_total = 0;
-  for (const auto& [_, instances] : draw_map)
+  for (const auto& instances : draw_map | std::views::values)
     estimated_total += instances.size();
 
   std::vector<DrawInstanceSubmit> filtered_instances(estimated_total);
@@ -82,12 +82,13 @@ DrawListManager::cull_and_flatten_draw_commands(const DrawCommandMap& draw_map,
     jobs.emplace_back(&cmd, &instances);
 
   // Parallel frustum culling
-  auto fut = pool.submit_loop(0, jobs.size(), [&](std::size_t i) {
-    const auto& [cmd, instances] = jobs[i];
-    for (const auto& instance : *instances) {
+  const auto fut = pool.submit_loop(0, jobs.size(), [&](std::size_t i) {
+    for (const auto& [cmd, instances] = jobs[i];
+         const auto& instance : *instances) {
       const auto center = glm::vec3(instance.transform[3]);
-      const float radius = 1.0f * glm::length(glm::vec3(instance.transform[0]));
-      if (frustum.intersects(center, radius)) {
+      if (const float radius =
+            1.0f * glm::length(glm::vec3(instance.transform[0]));
+          frustum.intersects(center, radius)) {
         const std::size_t index =
           filtered_count.fetch_add(1, std::memory_order_relaxed);
         filtered_instances[index] = { cmd, instance };

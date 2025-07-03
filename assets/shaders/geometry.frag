@@ -99,12 +99,9 @@ float linear_depth(uint slice, uint num_slices, float near_z, float far_z) {
 
 // Get the Z-slice index for current fragment
 uint get_z_slice(float view_space_z, float near_plane, float far_plane) {
-  // Convert view space Z to slice index using same distribution as compute
-  // shader
-  float normalized_z = (-view_space_z - near_plane) / (far_plane - near_plane);
+  float normalized_z = (view_space_z - near_plane) / (far_plane - near_plane);
   normalized_z = clamp(normalized_z, 0.0, 1.0);
 
-  // Use logarithmic distribution to match compute shader
   float slice_float = log(normalized_z * (far_plane / near_plane - 1.0) + 1.0) /
                       log(far_plane / near_plane) * float(NUM_Z_SLICES);
 
@@ -175,7 +172,7 @@ void main() {
 
   // Get view space Z for this fragment
   vec4 view_pos = camera_ubo.view * vec4(v_world_pos, 1.0);
-  float view_z = view_pos.z; // Negative in right-handed view space
+  float view_z = -view_pos.z; // Negative in right-handed view space
 
   // Calculate Z-slice
   float near_plane = camera_ubo.screen_size_near_far.z;
@@ -220,11 +217,6 @@ void main() {
     // Calculate lighting contribution
     vec3 light_to_frag = v_world_pos - light.position;
     float dist = length(light_to_frag);
-
-    // Early exit if fragment is outside light radius
-    if (dist >= light.radius) {
-      continue;
-    }
 
     vec3 light_dir = light_to_frag / dist; // Normalize and flip direction
 

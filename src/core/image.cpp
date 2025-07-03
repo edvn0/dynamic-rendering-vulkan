@@ -10,6 +10,7 @@
 #include "core/image_transition.hpp"
 #include "core/logger.hpp"
 #include "renderer/material_bindings.hpp"
+#include "window/gui_system.hpp"
 
 #include <ktx.h>
 #include <ktxvulkan.h>
@@ -227,7 +228,7 @@ Image::recreate() -> void
 
   if (allow_in_ui && sample_count == VK_SAMPLE_COUNT_1_BIT) {
     texture_implementation_pointer =
-      std::bit_cast<std::uint64_t>(ImGui_ImplVulkan_AddTexture(
+      std::bit_cast<std::uint64_t>(GUISystem::allocate_image_descriptor_set(
         sampler, default_view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL));
   }
 
@@ -286,7 +287,7 @@ auto
 Image::destroy() -> void
 {
   if (texture_implementation_pointer != 0) {
-    ImGui_ImplVulkan_RemoveTexture(
+    GUISystem::remove_image_descriptor_set(
       std::bit_cast<VkDescriptorSet>(texture_implementation_pointer));
     texture_implementation_pointer = 0;
   }

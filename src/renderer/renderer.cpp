@@ -23,6 +23,7 @@
 #include "renderer/camera.hpp"
 #include "renderer/editor_camera.hpp"
 #include "renderer/mesh.hpp"
+#include "renderer/renderer_util.hpp"
 #include "renderer/techniques/fullscreen_technique.hpp"
 #include "renderer/techniques/point_lights_technique.hpp"
 #include "renderer/techniques/shadow_gui_technique.hpp"
@@ -32,6 +33,10 @@
 #include <glm/gtx/quaternion.hpp>
 #include <glm/gtx/string_cast.hpp>
 #include <imgui.h>
+
+static constexpr auto tile_size = 16;
+static constexpr std::uint32_t num_z_slices = 24;
+static constexpr std::size_t max_lights_per_tile = 64;
 
 struct CameraBuffer
 {
@@ -63,13 +68,15 @@ struct ShadowBuffer
 };
 ASSERT_VULKAN_UBO_COMPATIBLE(ShadowBuffer);
 
-template<typename T, std::size_t N = frames_in_flight>
-static constexpr auto
-create_sized_array(const T& value) -> std::array<T, N>
+auto
+bind_sets(auto cmd, auto layout, std::ranges::contiguous_range auto sets)
 {
-  std::array<T, N> arr{};
-  arr.fill(value);
-  return arr;
+  auto valid = sets | std::views::filter(
+                        [](const auto& v) { return v != VK_NULL_HANDLE; });
+  for (auto& v : valid) {
+    vkCmdBindDescriptorSets(
+      cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 0, 1, &v, 0, nullptr);
+  }
 }
 
 static constexpr auto stages = VK_SHADER_STAGE_VERTEX_BIT |
@@ -188,8 +195,9 @@ Renderer::Renderer(const Device& dev,
   : device(&dev)
   , swapchain(&sc)
   , thread_pool(&p)
+  , geometry_complete_semaphores(dev)
+  , bloom_complete_semaphores(dev)
 {
-
   point_light_system = std::make_unique<PointLightSystem>(*device);
 
   DescriptorLayoutBuilder builder(renderer_bindings_metadata);
@@ -435,7 +443,7 @@ Renderer::Renderer(const Device& dev,
       *device,
       1'000'000 * sizeof(std::uint32_t),
       VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-      false,
+      true,
       "identifier_buffer");
     identifier_material->upload("identifiers", identifier_buffer);
   }
@@ -550,6 +558,16 @@ Renderer::Renderer(const Device& dev,
   {
     light_culling_material = Material::create(*device, "light_culling").value();
 
+    light_culling_debug_image = Image::create(
+      *device,
+      {
+        .extent = geometry_image->size(),
+        .format = VK_FORMAT_R8G8B8A8_UINT,
+        .usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+        .initial_layout = VK_IMAGE_LAYOUT_GENERAL,
+        .debug_name = "light_culling_debug_image",
+      });
+
     global_light_counter_buffer = GPUBuffer::zero_initialise(
       *device,
       sizeof(std::uint32_t),
@@ -557,7 +575,7 @@ Renderer::Renderer(const Device& dev,
         VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
       true,
       "global_light_counter_buffer");
-    static constexpr auto tile_size = 16;
+
     std::size_t num_tiles =
       (geometry_image->width() * geometry_image->height()) / tile_size;
     light_grid_buffer = GPUBuffer::zero_initialise(
@@ -567,7 +585,6 @@ Renderer::Renderer(const Device& dev,
       false,
       "light_grid_buffer");
 
-    constexpr std::size_t max_lights_per_tile = 64;
     std::size_t max_total_indices = num_tiles * max_lights_per_tile;
     light_index_list_buffer = GPUBuffer::zero_initialise(
       *device,
@@ -580,6 +597,7 @@ Renderer::Renderer(const Device& dev,
     light_culling_material->upload("LightGridData", light_grid_buffer);
     light_culling_material->upload("LightIndexAllocator",
                                    global_light_counter_buffer);
+    light_culling_material->upload("debug_image", light_culling_debug_image);
 
     geometry_material->upload("LightIndexList", light_index_list_buffer);
     geometry_material->upload("LightGridData", light_grid_buffer);
@@ -610,21 +628,6 @@ Renderer::Renderer(const Device& dev,
                        point_light_system->get_ssbo({}) };
   std::array images{ shadow_depth_image.get() };
   descriptor_set_manager->allocate_sets(std::span(uniforms), std::span(images));
-
-  VkSemaphoreCreateInfo semaphore_create_info{
-    .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
-    .pNext = nullptr,
-    .flags = 0,
-  };
-  for (auto& sema : geometry_complete_semaphores) {
-    vkCreateSemaphore(
-      device->get_device(), &semaphore_create_info, nullptr, &sema);
-  }
-
-  for (auto& sema : bloom_complete_semaphores) {
-    vkCreateSemaphore(
-      device->get_device(), &semaphore_create_info, nullptr, &sema);
-  }
 
   initialise_techniques();
 
@@ -659,6 +662,7 @@ Renderer::Renderer(const Device& dev,
   REGISTER_MATERIAL("composite", composite_attachment_material.get());
   REGISTER_MATERIAL("identifier", identifier_material.get());
   REGISTER_MATERIAL("line", line_material.get());
+  REGISTER_MATERIAL("light_culling", light_culling_material.get());
 
   for (const auto& name : techniques | std::views::keys) {
     REGISTER_TECHNIQUE_MATERIAL(name);
@@ -759,15 +763,11 @@ Renderer::get_renderer_descriptor_set_layout(Badge<AssetReloader>) const
 auto
 Renderer::destroy() -> void
 {
-  for (auto& sema : geometry_complete_semaphores) {
-    vkDestroySemaphore(device->get_device(), sema, nullptr);
-  }
-  for (auto& sema : bloom_complete_semaphores) {
-    vkDestroySemaphore(device->get_device(), sema, nullptr);
-  }
-
   white_texture.reset();
   black_texture.reset();
+
+  geometry_complete_semaphores.clear();
+  bloom_complete_semaphores.clear();
 }
 
 Renderer::~Renderer()
@@ -927,7 +927,7 @@ Renderer::upload_line_instance_data() -> void
 }
 
 auto
-Renderer::update_shadow_buffers(const std::uint32_t fi) -> void
+Renderer::update_shadow_buffers() -> void
 {
   constexpr glm::vec3 up{ camera_constants::WORLD_UP };
 
@@ -980,7 +980,7 @@ Renderer::update_shadow_buffers(const std::uint32_t fi) -> void
   };
 
   shadow_camera_buffer->upload_with_offset(std::span{ &shadow_data, 1 },
-                                           sizeof(ShadowBuffer) * fi);
+                                           sizeof(ShadowBuffer) * frame_index);
   light_frustum.update(shadow_data.light_vp);
 }
 
@@ -1002,8 +1002,7 @@ Renderer::update_identifiers()
 }
 
 auto
-Renderer::update_uniform_buffers(const std::uint32_t fi,
-                                 const glm::mat4& view,
+Renderer::update_uniform_buffers(const glm::mat4& view,
                                  const glm::mat4& projection,
                                  const glm::mat4& inverse_projection,
                                  const glm::vec3& camera_position) const -> void
@@ -1018,10 +1017,10 @@ Renderer::update_uniform_buffers(const std::uint32_t fi,
     .screen_size_near_far = {geometry_image->width(), geometry_image->height(), camera_environment.z_near, camera_environment.z_far,},
   };
   camera_uniform_buffer->upload_with_offset(std::span{ &buffer, 1 },
-                                            sizeof(CameraBuffer) * fi);
+                                            sizeof(CameraBuffer) * frame_index);
   const FrustumBuffer frustum{ camera_frustum.planes };
   frustum_buffer->upload_with_offset(std::span{ &frustum, 1 },
-                                     sizeof(FrustumBuffer) * fi);
+                                     sizeof(FrustumBuffer) * frame_index);
 }
 
 auto
@@ -1030,12 +1029,9 @@ Renderer::begin_frame(const VP& matrices) -> void
   frame_index = swapchain->get_frame_index();
   const auto vp = matrices.projection * matrices.view;
   const auto position = matrices.view[3];
-  update_uniform_buffers(frame_index,
-                         matrices.view,
-                         matrices.projection,
-                         matrices.inverse_projection,
-                         position);
-  update_shadow_buffers(frame_index);
+  update_uniform_buffers(
+    matrices.view, matrices.projection, matrices.inverse_projection, position);
+  update_shadow_buffers();
   update_frustum(vp);
   update_identifiers();
 
@@ -1058,12 +1054,19 @@ static constexpr auto run_technique_passes =
   };
 
 auto
-Renderer::end_frame(const std::uint32_t fi) -> void
+Renderer::end_frame() -> void
 {
   ZoneScopedN("End frame");
 
   if (shadow_draw_commands.empty() && draw_commands.empty())
     return;
+
+  {
+    compute_command_buffer->begin_frame(frame_index);
+    run_light_culling_pass();
+    ZoneScopedN("Submit compute buffer (waiting on geometry)");
+    compute_command_buffer->submit_and_end(frame_index);
+  }
 
   DrawList flat_shadow_draw_commands;
   DrawList flat_draw_commands;
@@ -1156,39 +1159,34 @@ Renderer::end_frame(const std::uint32_t fi) -> void
 
   {
     ZoneScopedN("Begin command buffer");
-    command_buffer->begin_frame(fi);
+    command_buffer->begin_frame(frame_index);
   }
 
-  auto spheres_view =
-    flat_draw_commands | std::views::filter([](const DrawItem& k) {
-      return k.command.mesh == Assets::builtin_sphere().get();
-    });
-  auto other_view =
-    flat_draw_commands | std::views::filter([](const DrawItem& k) {
-      return k.command.mesh != Assets::builtin_sphere().get();
-    });
+  thread_local std::vector<DrawItem> spheres;
+  thread_local std::vector<DrawItem> all_geometry;
 
-  std::vector<DrawItem> spheres;
-  spheres.reserve(std::ranges::distance(spheres_view));
-  for (const auto& item : spheres_view) {
-    spheres.push_back(item);
-  }
-  std::vector<DrawItem> all_geometry;
-  all_geometry.reserve(std::ranges::distance(other_view));
-  for (const auto& item : other_view) {
-    all_geometry.push_back(item);
+  {
+    ZoneScopedN("Filter geometry");
+    const auto sphere = Assets::builtin_sphere().get();
+    for (const auto& v : flat_draw_commands) {
+      if (v.command.mesh == sphere) {
+        spheres.push_back(v);
+      } else {
+        all_geometry.push_back(v);
+      }
+    }
   }
 
-  run_skybox_pass(fi);
+  run_skybox_pass();
 
-  run_shadow_pass(fi, flat_shadow_draw_commands);
-  run_z_prepass(fi, all_geometry);
+  run_shadow_pass(flat_shadow_draw_commands);
+  run_z_prepass(all_geometry);
 
-  run_geometry_pass(fi, all_geometry);
+  run_geometry_pass(all_geometry);
   run_point_light_pass(spheres);
 
   if constexpr (is_debug) {
-    run_identifier_pass(fi, all_geometry);
+    run_identifier_pass(all_geometry);
   }
   // Add image barrier to prepare geometry_image for compute shader read
   {
@@ -1206,7 +1204,7 @@ Renderer::end_frame(const std::uint32_t fi) -> void
       VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1
     };
 
-    vkCmdPipelineBarrier(command_buffer->get(fi),
+    vkCmdPipelineBarrier(command_buffer->get(frame_index),
                          VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
                          VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
                          0,
@@ -1220,35 +1218,38 @@ Renderer::end_frame(const std::uint32_t fi) -> void
 
   // Submit graphics work and signal semaphore
   command_buffer->submit_and_end(
-    fi, VK_NULL_HANDLE, geometry_complete_semaphores.at(fi));
+    frame_index, VK_NULL_HANDLE, geometry_complete_semaphores.at(frame_index));
 
   // Begin compute work
-  compute_command_buffer->begin_frame(fi);
+  compute_command_buffer->begin_frame(frame_index);
 
-  run_light_culling_pass();
-  run_bloom_pass(fi);
+  run_bloom_pass();
 
   {
     ZoneScopedN("Submit compute buffer (waiting on geometry)");
-    compute_command_buffer->submit_and_end(fi,
-                                           geometry_complete_semaphores.at(fi),
-                                           bloom_complete_semaphores.at(fi));
+    compute_command_buffer->submit_and_end(
+      frame_index,
+      geometry_complete_semaphores.at(frame_index),
+      bloom_complete_semaphores.at(frame_index));
   }
 
-  // Begin final graphics work
-  command_buffer->begin_frame_persist_query_pools(fi);
+  // Begin frame_index graphics work
+  command_buffer->begin_frame_persist_query_pools(frame_index);
 
-  run_technique_passes(techniques, *command_buffer, fi);
+  run_technique_passes(techniques, *command_buffer, frame_index);
 
-  run_composite_pass(fi);
-  run_postprocess_passes(fi);
+  run_composite_pass();
+  run_postprocess_passes();
 
   {
     ZoneScopedN("Submit geometry buffer (waiting on compute)");
 
     command_buffer->submit_and_end(
-      fi, bloom_complete_semaphores.at(fi), VK_NULL_HANDLE);
+      frame_index, bloom_complete_semaphores.at(frame_index), VK_NULL_HANDLE);
   }
+
+  spheres.clear();
+  all_geometry.clear();
 }
 
 auto
@@ -1263,6 +1264,7 @@ Renderer::on_resize(const std::uint32_t width, const std::uint32_t height)
   composite_attachment_texture->resize(width, height);
   colour_corrected_image->resize(width, height);
   identifier_image->resize(width, height);
+  light_culling_debug_image->resize(width, height);
 
   bloom_pass->resize(width, height);
 
@@ -1324,7 +1326,7 @@ auto
 Renderer::update_material_by_name(const std::string& name,
                                   const PipelineBlueprint& blueprint) -> bool
 {
-  auto it = material_registry.find(name);
+  const auto it = material_registry.find(name);
   if (it == material_registry.end()) {
     Logger::log_error(
       "Renderer::update_material_by_name: Material '{}' not found.", name);
@@ -1338,13 +1340,13 @@ Renderer::update_material_by_name(const std::string& name,
 #pragma region RenderPasses
 
 auto
-Renderer::run_skybox_pass(std::uint32_t fi) -> void
+Renderer::run_skybox_pass() -> void
 {
   ZoneScopedN("Skybox pass");
 
-  command_buffer->begin_timer(fi, "skybox_pass");
+  command_buffer->begin_timer(frame_index, "skybox_pass");
 
-  const VkCommandBuffer& cmd = command_buffer->get(fi);
+  const VkCommandBuffer& cmd = command_buffer->get(frame_index);
   Util::Vulkan::cmd_begin_debug_label(
     cmd, "Skybox", { 0.9F, 0.1F, 0.1F, 1.0F });
 
@@ -1398,8 +1400,8 @@ Renderer::run_skybox_pass(std::uint32_t fi) -> void
   vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.pipeline);
 
   const std::array descriptor_sets = {
-    descriptor_set_manager->get_set(fi),
-    skybox_material->prepare_for_rendering(fi),
+    descriptor_set_manager->get_set(frame_index),
+    skybox_material->prepare_for_rendering(frame_index),
   };
   vkCmdBindDescriptorSets(cmd,
                           VK_PIPELINE_BIND_POINT_GRAPHICS,
@@ -1413,23 +1415,16 @@ Renderer::run_skybox_pass(std::uint32_t fi) -> void
   if (const auto mesh_expected = MeshCache::the().get_mesh<MeshType::Cube>();
       mesh_expected.has_value()) {
     const auto& mesh = mesh_expected.value();
-    const auto& vertex_buffer = mesh->get_position_only_vertex_buffer();
-    const auto& index_buffer = mesh->get_index_buffer();
+    const auto* submesh = mesh->get_submesh(0);
+    Util::Renderer::bind_mesh_buffers<PositionOnlyVertex>(
+      cmd,
+      {
+        .mesh = mesh,
+      },
+      submesh,
+      *instance_shadow_vertex_buffer);
 
-    const std::array vertex_buffers = {
-      vertex_buffer->get(),
-    };
-    constexpr std::array<VkDeviceSize, 1> offsets = { 0 };
-    vkCmdBindVertexBuffers(cmd,
-                           0,
-                           static_cast<std::uint32_t>(vertex_buffers.size()),
-                           vertex_buffers.data(),
-                           offsets.data());
-    vkCmdBindIndexBuffer(
-      cmd, index_buffer->get(), 0, index_buffer->get_index_type());
-
-    vkCmdDrawIndexed(
-      cmd, static_cast<std::uint32_t>(index_buffer->get_count()), 1, 0, 0, 0);
+    vkCmdDrawIndexed(cmd, submesh->index_count, 1, 0, 0, 0);
   }
 
   vkCmdEndRendering(cmd);
@@ -1437,30 +1432,19 @@ Renderer::run_skybox_pass(std::uint32_t fi) -> void
   CoreUtils::cmd_transition_to_shader_read(
     cmd, skybox_attachment_texture->get_image());
 
-  command_buffer->end_timer(fi, "skybox_pass");
+  command_buffer->end_timer(frame_index, "skybox_pass");
 
   Util::Vulkan::cmd_end_debug_label(cmd);
 }
 
 auto
-bind_sets(auto cmd, auto layout, std::ranges::contiguous_range auto sets)
-{
-  auto valid = sets | std::views::filter(
-                        [](const auto& v) { return v != VK_NULL_HANDLE; });
-  for (auto& v : valid) {
-    vkCmdBindDescriptorSets(
-      cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 0, 1, &v, 0, nullptr);
-  }
-}
-
-auto
-Renderer::run_z_prepass(std::uint32_t fi, const DrawList& draw_list) -> void
+Renderer::run_z_prepass(const DrawListView draw_list) -> void
 {
   ZoneScopedN("Z Prepass");
 
-  command_buffer->begin_timer(fi, "z_prepass");
+  command_buffer->begin_timer(frame_index, "z_prepass");
 
-  const VkCommandBuffer& cmd = command_buffer->get(fi);
+  const VkCommandBuffer& cmd = command_buffer->get(frame_index);
   Util::Vulkan::cmd_begin_debug_label(
     cmd, "Z Prepass", { 0.1F, 0.9F, 0.1F, 1.0F });
 
@@ -1514,8 +1498,8 @@ Renderer::run_z_prepass(std::uint32_t fi, const DrawList& draw_list) -> void
     cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, z_prepass_pipeline.pipeline);
 
   const std::array sets = {
-    descriptor_set_manager->get_set(fi),
-    z_prepass_material->prepare_for_rendering(fi),
+    descriptor_set_manager->get_set(frame_index),
+    z_prepass_material->prepare_for_rendering(frame_index),
   };
   bind_sets(cmd, z_prepass_pipeline.layout, sets);
   for (const auto& [cmd_info, offset, instance_count] : draw_list) {
@@ -1523,21 +1507,8 @@ Renderer::run_z_prepass(std::uint32_t fi, const DrawList& draw_list) -> void
     if (!submesh)
       continue;
 
-    const auto& vb = cmd_info.mesh->get_position_only_vertex_buffer();
-    const auto& ib = cmd_info.mesh->get_index_buffer();
-
-    const VkDeviceSize vb_offset =
-      submesh->vertex_offset * sizeof(PositionOnlyVertex);
-    const std::array vertex_buffers = { vb->get(),
-                                        instance_vertex_buffer->get() };
-    const std::array offsets = { vb_offset, 0ULL };
-
-    vkCmdBindVertexBuffers(cmd,
-                           0,
-                           static_cast<std::uint32_t>(vertex_buffers.size()),
-                           vertex_buffers.data(),
-                           offsets.data());
-    vkCmdBindIndexBuffer(cmd, ib->get(), 0, ib->get_index_type());
+    Util::Renderer::bind_mesh_buffers<PositionOnlyVertex>(
+      cmd, cmd_info, submesh, *instance_vertex_buffer);
 
     vkCmdDrawIndexed(cmd,
                      submesh->index_count,
@@ -1550,13 +1521,13 @@ Renderer::run_z_prepass(std::uint32_t fi, const DrawList& draw_list) -> void
   vkCmdEndRendering(cmd);
   CoreUtils::cmd_transition_depth_to_shader_read(
     cmd, geometry_depth_image->get_image());
-  command_buffer->end_timer(fi, "z_prepass");
+  command_buffer->end_timer(frame_index, "z_prepass");
 
   Util::Vulkan::cmd_end_debug_label(cmd);
 }
 
 auto
-Renderer::run_point_light_pass(const DrawList& draw_list) -> void
+Renderer::run_point_light_pass(const DrawListView draw_list) -> void
 {
   ZoneScopedN("Point light pass");
 
@@ -1640,9 +1611,6 @@ Renderer::run_point_light_pass(const DrawList& draw_list) -> void
     if (!submesh)
       continue;
 
-    const auto& vertex_buffer = cmd_info.mesh->get_vertex_buffer();
-    const auto& index_buffer = cmd_info.mesh->get_index_buffer();
-
     const auto& material_set = material.prepare_for_rendering(frame_index);
 
     std::array descriptor_sets{
@@ -1658,21 +1626,8 @@ Renderer::run_point_light_pass(const DrawList& draw_list) -> void
                             0,
                             nullptr);
 
-    const VkDeviceSize vertex_offset_bytes =
-      submesh->vertex_offset * sizeof(Vertex);
-    const std::array vertex_buffers = {
-      vertex_buffer->get(),
-      instance_vertex_buffer->get(),
-    };
-    const std::array offsets = { vertex_offset_bytes, 0ULL };
-
-    vkCmdBindVertexBuffers(cmd,
-                           0,
-                           static_cast<std::uint32_t>(vertex_buffers.size()),
-                           vertex_buffers.data(),
-                           offsets.data());
-    vkCmdBindIndexBuffer(
-      cmd, index_buffer->get(), 0, index_buffer->get_index_type());
+    Util::Renderer::bind_mesh_buffers<Vertex>(
+      cmd, cmd_info, submesh, *instance_vertex_buffer);
 
     auto&& [pc_stage, pc_offset, pc_size, pc_pointer] =
       material.generate_push_constant_data();
@@ -1696,13 +1651,13 @@ Renderer::run_point_light_pass(const DrawList& draw_list) -> void
 }
 
 auto
-Renderer::run_geometry_pass(std::uint32_t fi, const DrawList& draw_list) -> void
+Renderer::run_geometry_pass(const DrawListView draw_list) -> void
 {
   ZoneScopedN("Geometry pass");
 
-  command_buffer->begin_timer(fi, "geometry_pass");
+  command_buffer->begin_timer(frame_index, "geometry_pass");
 
-  const VkCommandBuffer& cmd = command_buffer->get(fi);
+  const VkCommandBuffer& cmd = command_buffer->get(frame_index);
   Util::Vulkan::cmd_begin_debug_label(
     cmd, "Geometry Pass", { 0.5F, 0.5F, 0.0F, 1.0F });
   CoreUtils::cmd_transition_to_color_attachment(cmd,
@@ -1765,7 +1720,6 @@ Renderer::run_geometry_pass(std::uint32_t fi, const DrawList& draw_list) -> void
   vkCmdSetViewport(cmd, 0, 1, &viewport);
   vkCmdSetScissor(cmd, 0, 1, &render_info.renderArea);
 
-  // The pipeline should still come from the geometry main material.
   auto& pipeline = geometry_material->get_pipeline();
   vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.pipeline);
 
@@ -1774,8 +1728,6 @@ Renderer::run_geometry_pass(std::uint32_t fi, const DrawList& draw_list) -> void
     if (!submesh)
       continue;
 
-    const auto& vertex_buffer = cmd_info.mesh->get_vertex_buffer();
-    const auto& index_buffer = cmd_info.mesh->get_index_buffer();
     const auto& submesh_material =
       cmd_info.mesh->get_material_by_submesh_index(cmd_info.submesh_index);
 
@@ -1784,14 +1736,12 @@ Renderer::run_geometry_pass(std::uint32_t fi, const DrawList& draw_list) -> void
         ? *Assets::Manager::the().get(cmd_info.override_material)
         : *submesh_material;
 
-    material.upload("LightIndexList", global_light_counter_buffer);
+    material.upload("LightIndexList", light_index_list_buffer);
     material.upload("LightGridData", light_grid_buffer);
 
-    const auto& material_set = material.prepare_for_rendering(fi);
-
     std::array descriptor_sets{
-      descriptor_set_manager->get_set(fi),
-      material_set,
+      descriptor_set_manager->get_set(frame_index),
+      material.prepare_for_rendering(frame_index),
     };
     vkCmdBindDescriptorSets(cmd,
                             VK_PIPELINE_BIND_POINT_GRAPHICS,
@@ -1802,21 +1752,8 @@ Renderer::run_geometry_pass(std::uint32_t fi, const DrawList& draw_list) -> void
                             0,
                             nullptr);
 
-    const VkDeviceSize vertex_offset_bytes =
-      submesh->vertex_offset * sizeof(Vertex);
-    const std::array vertex_buffers = {
-      vertex_buffer->get(),
-      instance_vertex_buffer->get(),
-    };
-    const std::array offsets = { vertex_offset_bytes, 0ULL };
-
-    vkCmdBindVertexBuffers(cmd,
-                           0,
-                           static_cast<std::uint32_t>(vertex_buffers.size()),
-                           vertex_buffers.data(),
-                           offsets.data());
-    vkCmdBindIndexBuffer(
-      cmd, index_buffer->get(), 0, index_buffer->get_index_type());
+    Util::Renderer::bind_mesh_buffers<Vertex>(
+      cmd, cmd_info, submesh, *instance_vertex_buffer);
 
     auto&& [pc_stage, pc_offset, pc_size, pc_pointer] =
       material.generate_push_constant_data();
@@ -1844,7 +1781,7 @@ Renderer::run_geometry_pass(std::uint32_t fi, const DrawList& draw_list) -> void
                             line_pipeline.layout,
                             0,
                             1,
-                            &descriptor_set_manager->get_set(fi),
+                            &descriptor_set_manager->get_set(frame_index),
                             0,
                             nullptr);
 
@@ -1859,33 +1796,32 @@ Renderer::run_geometry_pass(std::uint32_t fi, const DrawList& draw_list) -> void
   vkCmdEndRendering(cmd);
   // CoreUtils::cmd_transition_to_shader_read(cmd, geometry_image->get_image());
 
-  command_buffer->end_timer(fi, "geometry_pass");
+  command_buffer->end_timer(frame_index, "geometry_pass");
 
   Util::Vulkan::cmd_end_debug_label(cmd);
 }
 
 auto
-Renderer::run_bloom_pass(uint32_t fi) -> void
+Renderer::run_bloom_pass() -> void
 {
-  compute_command_buffer->begin_timer(fi, "bloom_pass");
+  compute_command_buffer->begin_timer(frame_index, "bloom_pass");
 
-  const VkCommandBuffer& cmd = compute_command_buffer->get(fi);
+  const VkCommandBuffer& cmd = compute_command_buffer->get(frame_index);
   bloom_pass->update_source(geometry_image.get());
-  bloom_pass->prepare(fi);
-  bloom_pass->record(cmd, *descriptor_set_manager, fi);
+  bloom_pass->prepare(frame_index);
+  bloom_pass->record(cmd, *descriptor_set_manager, frame_index);
 
-  compute_command_buffer->end_timer(fi, "bloom_pass");
+  compute_command_buffer->end_timer(frame_index, "bloom_pass");
 }
 
 auto
-Renderer::run_identifier_pass(const std::uint32_t fi, const DrawList& draw_list)
-  -> void
+Renderer::run_identifier_pass(const DrawListView draw_list) -> void
 {
   ZoneScopedN("Identifier pass");
 
-  command_buffer->begin_timer(fi, "identifier_pass");
+  command_buffer->begin_timer(frame_index, "identifier_pass");
 
-  const VkCommandBuffer& cmd = command_buffer->get(fi);
+  const VkCommandBuffer& cmd = command_buffer->get(frame_index);
   Util::Vulkan::cmd_begin_debug_label(
     cmd, "Identifier Pass", { 0.3F, 0.0F, 0.9F, 1.0F });
 
@@ -1952,8 +1888,8 @@ Renderer::run_identifier_pass(const std::uint32_t fi, const DrawList& draw_list)
     cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, identifier_pipeline.pipeline);
 
   const std::vector sets{
-    descriptor_set_manager->get_set(fi),
-    identifier_material->prepare_for_rendering(fi),
+    descriptor_set_manager->get_set(frame_index),
+    identifier_material->prepare_for_rendering(frame_index),
   };
   vkCmdBindDescriptorSets(cmd,
                           VK_PIPELINE_BIND_POINT_GRAPHICS,
@@ -1969,28 +1905,15 @@ Renderer::run_identifier_pass(const std::uint32_t fi, const DrawList& draw_list)
     if (!submesh)
       continue;
 
-    const auto& vb = cmd_info.mesh->get_position_only_vertex_buffer();
-    const auto& ib = cmd_info.mesh->get_index_buffer();
-
-    const VkDeviceSize vb_offset =
-      submesh->vertex_offset * sizeof(PositionOnlyVertex);
-    const std::array vertex_buffers = { vb->get(),
-                                        instance_vertex_buffer->get() };
-    const std::array offsets = { vb_offset, 0ULL };
-
-    vkCmdBindVertexBuffers(cmd,
-                           0,
-                           static_cast<std::uint32_t>(vertex_buffers.size()),
-                           vertex_buffers.data(),
-                           offsets.data());
-    vkCmdBindIndexBuffer(cmd, ib->get(), 0, ib->get_index_type());
+    Util::Renderer::bind_mesh_buffers<PositionOnlyVertex>(
+      cmd, cmd_info, submesh, *instance_vertex_buffer);
 
     vkCmdBindDescriptorSets(cmd,
                             VK_PIPELINE_BIND_POINT_GRAPHICS,
                             identifier_pipeline.layout,
                             0,
                             1,
-                            &descriptor_set_manager->get_set(fi),
+                            &descriptor_set_manager->get_set(frame_index),
                             0,
                             nullptr);
 
@@ -2005,7 +1928,7 @@ Renderer::run_identifier_pass(const std::uint32_t fi, const DrawList& draw_list)
   vkCmdEndRendering(cmd);
   CoreUtils::cmd_transition_to_shader_read(cmd, identifier_image->get_image());
 
-  command_buffer->end_timer(fi, "identifier_pass");
+  command_buffer->end_timer(frame_index, "identifier_pass");
 
   Util::Vulkan::cmd_end_debug_label(cmd);
 }
@@ -2018,7 +1941,6 @@ Renderer::run_light_culling_pass() -> void
   Util::Vulkan::cmd_begin_debug_label(
     cmd, "Light culling pass", { 1.0, 0.0, 0.0, 1.0 });
 
-  // CORRECTED: Reset the COUNTER buffer, not the indices buffer
   {
     ZoneScopedN("Upload via one time buffer");
     static constexpr std::uint32_t zero = 0;
@@ -2026,20 +1948,11 @@ Renderer::run_light_culling_pass() -> void
       std::span{ &zero, 1 }); // Reset atomic counter to 0
   }
 
-  // Tile group dimensions (screen size should be aligned with TILE_SIZE used in
-  // shader)
-  constexpr std::uint32_t tile_size = 16;
-  constexpr std::uint32_t num_z_slices = 24;
-
   const std::uint32_t tiles_x =
     (geometry_image->width() + tile_size - 1) / tile_size;
   const std::uint32_t tiles_y =
     (geometry_image->height() + tile_size - 1) / tile_size;
   constexpr std::uint32_t tiles_z = num_z_slices;
-
-  const std::uint32_t total_tiles = tiles_x * tiles_y * tiles_z;
-  assert(total_tiles <= 522240);
-  (void)total_tiles;
 
   compute_command_buffer->begin_timer(frame_index, "light_culling");
 
@@ -2059,19 +1972,12 @@ Renderer::run_light_culling_pass() -> void
                           0,
                           nullptr);
 
-  // CORRECTED: Dispatch with proper workgroup sizing
-  // Your compute shader uses local_size_x = 8, local_size_y = 8, local_size_z =
-  // 4 So you need to dispatch ceil(tiles_x/8), ceil(tiles_y/8), ceil(tiles_z/4)
-  const std::uint32_t dispatch_x =
-    (tiles_x + 7) / 8; // Round up for workgroup size 8
-  const std::uint32_t dispatch_y =
-    (tiles_y + 7) / 8; // Round up for workgroup size 8
-  const std::uint32_t dispatch_z =
-    (tiles_z + 3) / 4; // Round up for workgroup size 4
+  const std::uint32_t dispatch_x = (tiles_x + 7) / 8;
+  const std::uint32_t dispatch_y = (tiles_y + 7) / 8;
+  constexpr std::uint32_t dispatch_z = (tiles_z + 3) / 4;
 
   vkCmdDispatch(cmd, dispatch_x, dispatch_y, dispatch_z);
 
-  // IMPROVED: Better pipeline barrier for compute->compute dependency
   VkMemoryBarrier memory_barrier = {};
   memory_barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
   memory_barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
@@ -2093,13 +1999,13 @@ Renderer::run_light_culling_pass() -> void
 }
 
 auto
-Renderer::run_culling_compute_pass(std::uint32_t fi) -> void
+Renderer::run_culling_compute_pass() -> void
 {
   ZoneScopedN("Compute pass");
 
-  compute_command_buffer->begin_timer(fi, "gpu_culling");
+  compute_command_buffer->begin_timer(frame_index, "gpu_culling");
 
-  const auto cmd = compute_command_buffer->get(fi);
+  const auto cmd = compute_command_buffer->get(frame_index);
 
   static constexpr std::uint32_t zero = 0;
   culled_instance_count_buffer->upload(std::span{ &zero, 1 });
@@ -2113,12 +2019,12 @@ Renderer::run_culling_compute_pass(std::uint32_t fi) -> void
                       const std::string_view label,
                       const std::uint32_t groups,
                       const bool insert_barrier) {
-    compute_command_buffer->begin_timer(fi, label);
+    compute_command_buffer->begin_timer(frame_index, label);
 
     const auto& pipeline = mat.get_pipeline();
     const std::array sets = {
-      descriptor_set_manager->get_set(fi),
-      mat.prepare_for_rendering(fi),
+      descriptor_set_manager->get_set(frame_index),
+      mat.prepare_for_rendering(frame_index),
     };
 
     vkCmdBindPipeline(cmd, pipeline.bind_point, pipeline.pipeline);
@@ -2131,7 +2037,7 @@ Renderer::run_culling_compute_pass(std::uint32_t fi) -> void
                             0,
                             nullptr);
     vkCmdDispatch(cmd, groups, 1, 1);
-    compute_command_buffer->end_timer(fi, label);
+    compute_command_buffer->end_timer(frame_index, label);
 
     if (insert_barrier) {
       vkCmdPipelineBarrier(cmd,
@@ -2171,7 +2077,7 @@ Renderer::run_culling_compute_pass(std::uint32_t fi) -> void
     ZoneScopedN("Scatter pass");
     dispatch(*cull_scatter_material, "scatter_pass", group_count, false);
   }
-  compute_command_buffer->end_timer(fi, "gpu_culling");
+  compute_command_buffer->end_timer(frame_index, "gpu_culling");
 
   std::uint32_t culled_count = 0;
   if (!culled_instance_count_buffer->read_into_with_offset(culled_count, 0)) {
@@ -2180,13 +2086,13 @@ Renderer::run_culling_compute_pass(std::uint32_t fi) -> void
 }
 
 auto
-Renderer::run_shadow_pass(std::uint32_t fi, const DrawList& draw_list) -> void
+Renderer::run_shadow_pass(const DrawListView draw_list) -> void
 {
   ZoneScopedN("Shadow pass");
 
-  command_buffer->begin_timer(fi, "shadow_pass");
+  command_buffer->begin_timer(frame_index, "shadow_pass");
 
-  const VkCommandBuffer& cmd = command_buffer->get(fi);
+  const VkCommandBuffer& cmd = command_buffer->get(frame_index);
   Util::Vulkan::cmd_begin_debug_label(
     cmd, "Shadow Pass", { 0.3F, 0.0F, 0.9F, 1.0F });
 
@@ -2241,9 +2147,9 @@ Renderer::run_shadow_pass(std::uint32_t fi, const DrawList& draw_list) -> void
     cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, shadow_pipeline.pipeline);
 
   std::vector sets{
-    descriptor_set_manager->get_set(fi),
+    descriptor_set_manager->get_set(frame_index),
   };
-  if (const auto set = shadow_material->prepare_for_rendering(fi)) {
+  if (const auto set = shadow_material->prepare_for_rendering(frame_index)) {
     sets.push_back(set);
   }
   vkCmdBindDescriptorSets(cmd,
@@ -2259,28 +2165,15 @@ Renderer::run_shadow_pass(std::uint32_t fi, const DrawList& draw_list) -> void
     if (!submesh)
       continue;
 
-    const auto& vb = cmd_info.mesh->get_position_only_vertex_buffer();
-    const auto& ib = cmd_info.mesh->get_index_buffer();
-
-    const VkDeviceSize vb_offset =
-      submesh->vertex_offset * sizeof(PositionOnlyVertex);
-    const std::array vertex_buffers = { vb->get(),
-                                        instance_vertex_buffer->get() };
-    const std::array offsets = { vb_offset, 0ULL };
-
-    vkCmdBindVertexBuffers(cmd,
-                           0,
-                           static_cast<std::uint32_t>(vertex_buffers.size()),
-                           vertex_buffers.data(),
-                           offsets.data());
-    vkCmdBindIndexBuffer(cmd, ib->get(), 0, ib->get_index_type());
+    Util::Renderer::bind_mesh_buffers<PositionOnlyVertex>(
+      cmd, cmd_info, submesh, *instance_shadow_vertex_buffer);
 
     vkCmdBindDescriptorSets(cmd,
                             VK_PIPELINE_BIND_POINT_GRAPHICS,
                             shadow_pipeline.layout,
                             0,
                             1,
-                            &descriptor_set_manager->get_set(fi),
+                            &descriptor_set_manager->get_set(frame_index),
                             0,
                             nullptr);
 
@@ -2296,19 +2189,19 @@ Renderer::run_shadow_pass(std::uint32_t fi, const DrawList& draw_list) -> void
   CoreUtils::cmd_transition_depth_to_shader_read(
     cmd, shadow_depth_image->get_image());
 
-  command_buffer->end_timer(fi, "shadow_pass");
+  command_buffer->end_timer(frame_index, "shadow_pass");
 
   Util::Vulkan::cmd_end_debug_label(cmd);
 }
 
 auto
-Renderer::run_colour_correction_pass(std::uint32_t fi) -> void
+Renderer::run_colour_correction_pass() -> void
 {
   ZoneScopedN("Colour correction pass");
 
-  command_buffer->begin_timer(fi, "colour_correction_pass");
+  command_buffer->begin_timer(frame_index, "colour_correction_pass");
 
-  const auto cmd = command_buffer->get(fi);
+  const auto cmd = command_buffer->get(frame_index);
 
   Util::Vulkan::cmd_begin_debug_label(
     cmd, "Colour Correction (PP)", { 0.5F, 0.9F, 0.1F, 1.0F });
@@ -2325,7 +2218,7 @@ Renderer::run_colour_correction_pass(std::uint32_t fi) -> void
       .dst_stage_mask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
     });
 
-  const VkClearValue clear_value = { .color = { { 0.F, 0.F, 0.F, 0.F } } };
+  constexpr VkClearValue clear_value = { .color = { { 0.F, 0.F, 0.F, 0.F } } };
   VkRenderingAttachmentInfo color_attachment = {
     .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
     .imageView = colour_corrected_image->get_view(),
@@ -2363,10 +2256,10 @@ Renderer::run_colour_correction_pass(std::uint32_t fi) -> void
   const auto& pipeline = material->get_pipeline();
   vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.pipeline);
 
-  const auto& descriptor_set = material->prepare_for_rendering(fi);
+  const auto& descriptor_set = material->prepare_for_rendering(frame_index);
 
   const std::array descriptor_sets{
-    descriptor_set_manager->get_set(fi),
+    descriptor_set_manager->get_set(frame_index),
     descriptor_set,
   };
   vkCmdBindDescriptorSets(cmd,
@@ -2383,18 +2276,18 @@ Renderer::run_colour_correction_pass(std::uint32_t fi) -> void
 
   CoreUtils::cmd_transition_to_shader_read(cmd,
                                            colour_corrected_image->get_image());
-  command_buffer->end_timer(fi, "colour_correction_pass");
+  command_buffer->end_timer(frame_index, "colour_correction_pass");
 
   Util::Vulkan::cmd_end_debug_label(cmd);
 }
 
 auto
-Renderer::run_composite_pass(const std::uint32_t fi) -> void
+Renderer::run_composite_pass() -> void
 {
   ZoneScopedN("Composite pass");
 
-  command_buffer->begin_timer(fi, "composite_pass");
-  const VkCommandBuffer& cmd = command_buffer->get(fi);
+  command_buffer->begin_timer(frame_index, "composite_pass");
+  const VkCommandBuffer& cmd = command_buffer->get(frame_index);
   Util::Vulkan::cmd_begin_debug_label(
     cmd, "Composite (PP)", { 0.1F, 0.9F, 0.1F, 1.0F });
   CoreUtils::cmd_transition_to_color_attachment(
@@ -2438,9 +2331,9 @@ Renderer::run_composite_pass(const std::uint32_t fi) -> void
   const auto& pipeline = material->get_pipeline();
   vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.pipeline);
 
-  const auto descriptor_set = material->prepare_for_rendering(fi);
+  const auto descriptor_set = material->prepare_for_rendering(frame_index);
   const std::array descriptor_sets{
-    descriptor_set_manager->get_set(fi),
+    descriptor_set_manager->get_set(frame_index),
     descriptor_set,
   };
   vkCmdBindDescriptorSets(cmd,
@@ -2452,7 +2345,7 @@ Renderer::run_composite_pass(const std::uint32_t fi) -> void
                           0,
                           nullptr);
 
-  auto& bloom_strength = light_environment.bloom_strength;
+  const auto& bloom_strength = light_environment.bloom_strength;
   vkCmdPushConstants(cmd,
                      pipeline.layout,
                      VK_SHADER_STAGE_FRAGMENT_BIT,
@@ -2466,8 +2359,8 @@ Renderer::run_composite_pass(const std::uint32_t fi) -> void
   CoreUtils::cmd_transition_to_shader_read(
     cmd, composite_attachment_texture->get_image());
 
-  command_buffer->end_timer(fi, "composite_pass");
+  command_buffer->end_timer(frame_index, "composite_pass");
   Util::Vulkan::cmd_end_debug_label(cmd);
 }
 
-#pragma endregion RenderPas
+#pragma endregion RenderPass

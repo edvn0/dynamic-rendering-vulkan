@@ -239,11 +239,9 @@ void
 App::render()
 {
   ZoneScopedN("Render");
-  const auto frame_index = swapchain->get_frame_index();
-
   layer->on_render(*renderer);
 
-  renderer->end_frame(frame_index);
+  renderer->end_frame();
 
   swapchain->draw_frame(*gui_system);
 }

@@ -20,7 +20,7 @@ PointLightSystem::PointLightSystem(const Device& d)
   : device(&d)
 {
   point_light_material =
-    Assets::Manager::the().load<::Material>("main_geometry");
+    Assets::Manager::the().load<::Material>("point_lights");
 
   static constexpr auto size = frames_in_flight * size_buffer;
   point_lights_gpu =

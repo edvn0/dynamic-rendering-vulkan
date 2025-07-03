@@ -1,5 +1,4 @@
 #version 460
-
 #include "material.glsl"
 #include "matrix_math.glsl"
 #include "set0.glsl"
@@ -13,34 +12,50 @@ layout(set = 1, binding = 4) uniform sampler2D ao_map;
 layout(set = 1, binding = 5) uniform sampler2D emissive_map;
 
 // Inputs
-layout(location = 0) in vec3 v_normal;
-layout(location = 1) in vec3 v_world_pos;
-layout(location = 2) in vec4 v_light_space_pos;
 layout(location = 3) in vec2 v_uv;
 layout(location = 4) in flat uint v_instance_index;
-layout(location = 5) in mat3 v_tbn;
 
 // Outputs
 layout(location = 0) out vec4 frag_colour;
 
-void main() {
-  // Alpha test
+void main()
+{
+  // Bounds check for light index
+  if (v_instance_index >= point_light_buffer.light_count)
+    discard;
+
+  PointLight light_data = point_light_buffer.lights[v_instance_index];
+
+  // Alpha test (if needed for light geometry)
   float alpha = material.albedo.a;
   if (has_albedo_texture())
     alpha *= texture(albedo_map, v_uv).a;
-
   if (is_alpha_testing() && alpha < material.alpha_cutoff)
     discard;
 
-  // Emissive output only
-  vec3 emissive = vec3(0.0);
-  if (is_emissive()) {
-    vec3 emissive_tex =
-        has_emissive_map() ? texture(emissive_map, v_uv).rgb : vec3(1.0);
+  // Calculate emissive output from point light data
+  vec3 emissive_color = light_data.color * light_data.intensity;
 
-    emissive =
-        material.emissive_color * material.emissive_strength * emissive_tex;
+  // Optional: Apply distance-based falloff for visual effect
+  // You might want to use world position and light position for this
+  // float distance_factor = 1.0; // Implement based on your needs
+
+  // Optional: Modulate with emissive texture if available
+  if (has_emissive_map())
+  {
+    vec3 emissive_tex = texture(emissive_map, v_uv).rgb;
+    emissive_color *= emissive_tex;
   }
 
-  frag_colour = vec4(emissive, 1.0);
+  // Optional: Add material emissive if you want to combine both
+  if (is_emissive())
+  {
+    vec3 material_emissive =
+        material.emissive_color * material.emissive_strength;
+    if (has_emissive_map())
+      material_emissive *= texture(emissive_map, v_uv).rgb;
+    emissive_color += material_emissive;
+  }
+
+  frag_colour = vec4(emissive_color, alpha);
 }

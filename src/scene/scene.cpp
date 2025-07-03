@@ -782,6 +782,7 @@ auto
 Scene::on_render(Renderer& renderer) -> void
 {
   auto& point_light_system = renderer.get_point_light_system();
+  auto sphere_mesh = Assets::builtin_sphere();
   for (const auto view =
          registry.view<Component::PointLight, const Component::Transform>();
        auto&& [entity, light, transform] : view.each()) {
@@ -793,16 +794,13 @@ Scene::on_render(Renderer& renderer) -> void
       light.dirty = false;
     }
 
-    if constexpr (is_debug) {
-      auto mesh = Assets::builtin_sphere();
-      renderer.submit(
-        {
-          .mesh = mesh.get(),
-          .override_material = point_light_system.get_material(),
-        },
-        transform.compute(),
-        entt::to_integral(entity));
-    }
+    renderer.submit(
+      {
+        .mesh = sphere_mesh.get(),
+        .override_material = point_light_system.get_material(),
+      },
+      transform.compute(),
+      entt::to_integral(entity));
   }
 
   for (const auto view =

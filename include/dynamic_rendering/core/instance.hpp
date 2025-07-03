@@ -13,7 +13,6 @@ debug_callback(VkDebugUtilsMessageSeverityFlagBitsEXT,
                void*) -> VkBool32
 {
   Logger::log_error("Validation layer: {}", callback_data->pMessage);
-
   return VK_FALSE;
 }
 #endif

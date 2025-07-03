@@ -12,7 +12,60 @@
 #include <meshoptimizer.h>
 #include <tracy/Tracy.hpp>
 
+#include <assimp/DefaultLogger.hpp>
+#include <assimp/Logger.hpp>
+
 namespace {
+
+class SpdlogAssimpLogger final : public Assimp::Logger
+{
+public:
+  SpdlogAssimpLogger() = default;
+  ~SpdlogAssimpLogger() override = default;
+
+protected:
+  void OnDebug(const char* message) override
+  {
+    ::Logger::log_debug("[Assimp] {}", message);
+  }
+
+  void OnInfo(const char* message) override
+  {
+    ::Logger::log_info("[Assimp] {}", message);
+  }
+
+  void OnWarn(const char* message) override
+  {
+    ::Logger::log_warning("[Assimp] {}", message);
+  }
+
+  void OnError(const char* message) override
+  {
+    ::Logger::log_error("[Assimp] {}", message);
+  }
+
+  void OnVerboseDebug(const char* message) override
+  {
+    ::Logger::log_trace("[Assimp] {}", message);
+  }
+
+  bool attachStream(Assimp::LogStream*, unsigned int) override { return false; }
+  bool detachStream(Assimp::LogStream*, unsigned int) override { return false; }
+};
+
+auto
+setup_assimp_logger()
+{
+  using namespace Assimp;
+
+  // Avoid duplicate logger setup
+  if (DefaultLogger::isNullLogger()) {
+    auto* myLogger = new SpdlogAssimpLogger();
+
+    DefaultLogger::set(myLogger);
+    DefaultLogger::get()->info("Custom logger attached");
+  }
+}
 
 static constexpr auto assimp_flags =
   aiProcess_ConvertToLeftHanded | aiProcess_Triangulate |
@@ -959,4 +1012,12 @@ StaticMesh::upload_materials(const aiScene* scene,
 {
   upload_materials_impl_secondary(
     scene, device, directory, loaded_textures, materials);
+}
+
+StaticMesh::StaticMesh()
+{
+  if (!has_initialised_loader) {
+    setup_assimp_logger();
+    has_initialised_loader = true;
+  }
 }

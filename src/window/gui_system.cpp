@@ -18,6 +18,63 @@
 #include <core/fs.hpp>
 #include <implot.h>
 
+struct ImGui_ImplVulkan_FrameRenderBuffers
+{
+  VkDeviceMemory VertexBufferMemory;
+  VkDeviceMemory IndexBufferMemory;
+  VkDeviceSize VertexBufferSize;
+  VkDeviceSize IndexBufferSize;
+  VkBuffer VertexBuffer;
+  VkBuffer IndexBuffer;
+};
+
+struct ImGui_ImplVulkan_WindowRenderBuffers
+{
+  uint32_t Index;
+  uint32_t Count;
+  ImVector<ImGui_ImplVulkan_FrameRenderBuffers> FrameRenderBuffers;
+};
+
+struct ImGui_ImplVulkan_Texture
+{
+  VkDeviceMemory Memory;
+  VkImage Image;
+  VkImageView ImageView;
+  VkDescriptorSet DescriptorSet;
+
+  ImGui_ImplVulkan_Texture() { memset((void*)this, 0, sizeof(*this)); }
+};
+
+struct ImGui_ImplVulkan_Data
+{
+  ImGui_ImplVulkan_InitInfo VulkanInitInfo;
+  VkDeviceSize BufferMemoryAlignment;
+  VkPipelineCreateFlags PipelineCreateFlags;
+  VkDescriptorSetLayout DescriptorSetLayout;
+  VkPipelineLayout PipelineLayout;
+  VkPipeline Pipeline; // pipeline for main render pass (created by app)
+  VkPipeline PipelineForViewports; // pipeline for secondary viewports (created
+                                   // by backend)
+  VkShaderModule ShaderModuleVert;
+  VkShaderModule ShaderModuleFrag;
+  VkDescriptorPool DescriptorPool;
+
+  // Texture management
+  ImGui_ImplVulkan_Texture FontTexture;
+  VkSampler TexSampler;
+  VkCommandPool TexCommandPool;
+  VkCommandBuffer TexCommandBuffer;
+
+  // Render buffers for main window
+  ImGui_ImplVulkan_WindowRenderBuffers MainWindowRenderBuffers;
+
+  ImGui_ImplVulkan_Data()
+  {
+    memset((void*)this, 0, sizeof(*this));
+    BufferMemoryAlignment = 256;
+  }
+};
+
 auto
 GUISystem::begin_frame() const -> void
 {
@@ -73,6 +130,48 @@ GUISystem::end_frame(VkCommandBuffer cmd_buf) const -> void
   }
 }
 
+auto
+GUISystem::allocate_image_descriptor_set(const VkSampler sampler,
+                                         const VkImageView view,
+                                         const VkImageLayout layout)
+  -> VkDescriptorSet
+{
+  const auto context = ImGui::GetCurrentContext()
+                         ? static_cast<ImGui_ImplVulkan_Data*>(
+                             ImGui::GetIO().BackendRendererUserData)
+                         : nullptr;
+  if (!context)
+    std::terminate();
+
+  const auto& descriptor_layout = context->DescriptorSetLayout;
+
+  const auto set = descriptor_pool->allocate(descriptor_layout);
+
+  const VkDescriptorImageInfo desc_image{ .sampler = sampler,
+                                          .imageView = view,
+                                          .imageLayout = layout };
+
+  const VkWriteDescriptorSet write{ .sType =
+                                      VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                                    .dstSet = set,
+                                    .dstBinding = 0,
+                                    .dstArrayElement = 0,
+                                    .descriptorCount = 1,
+                                    .descriptorType =
+                                      VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                                    .pImageInfo = &desc_image };
+
+  vkUpdateDescriptorSets(
+    descriptor_pool->device->get_device(), 1, &write, 0, nullptr);
+  return set;
+}
+
+auto
+GUISystem::remove_image_descriptor_set(const VkDescriptorSet& set) -> void
+{
+  descriptor_pool->free(set);
+}
+
 GUISystem::~GUISystem()
 {
   if (!destroyed) {
@@ -86,6 +185,7 @@ GUISystem::GUISystem(const Core::Instance& instance,
                      Swapchain& sc)
 {
   init_for_vulkan(instance, device, window, sc);
+  descriptor_pool = std::make_unique<ImGuiDescriptorPool>(device);
 }
 
 auto
@@ -112,11 +212,11 @@ GUISystem::init_for_vulkan(const Core::Instance& instance,
   info.MinImageCount = swapchain.get_image_count();
   info.ImageCount = swapchain.get_image_count();
   info.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
-  info.DescriptorPoolSize = 100;
+  info.DescriptorPoolSize = 2;
   info.Allocator = nullptr;
   info.UseDynamicRendering = true;
 
-  const std::array formats = {
+  constexpr std::array formats = {
     VK_FORMAT_B8G8R8A8_SRGB,
   };
   info.PipelineRenderingCreateInfo.sType =
@@ -211,6 +311,8 @@ GUISystem::shutdown() -> void
   ImGui_ImplGlfw_Shutdown();
   ImGui::DestroyContext();
   ImPlot::DestroyContext();
+
+  descriptor_pool.reset();
 
   destroyed = true;
 }

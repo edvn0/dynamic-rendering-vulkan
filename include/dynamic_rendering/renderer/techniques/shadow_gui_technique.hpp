@@ -41,6 +41,4 @@ public:
 private:
   Assets::Pointer<Material> material;
   Assets::Pointer<Image> output_image;
-
-  const CameraEnvironment* renderer_camera_environment{ nullptr };
 };
