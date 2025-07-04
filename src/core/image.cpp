@@ -30,6 +30,8 @@ Image::resize(const uint32_t new_width, const uint32_t new_height) -> void
   if (!debug_name.empty()) {
     set_debug_name(debug_name);
   }
+
+  is_dirty = true;
 }
 
 auto

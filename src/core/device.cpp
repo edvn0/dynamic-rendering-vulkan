@@ -194,32 +194,24 @@ Device::destroy() -> void
   allocator.reset();
   vkb::destroy_device(device);
 }
+
 auto
 Device::get_max_sample_count(VkSampleCountFlags desired_flags) const
   -> VkSampleCountFlagBits
 {
-  auto available_counts = props->limits.framebufferColorSampleCounts;
+  auto available = props->limits.framebufferColorSampleCounts;
 
-  static constexpr auto select_max =
-    [](VkSampleCountFlags f) -> VkSampleCountFlagBits {
-    if (f & VK_SAMPLE_COUNT_64_BIT)
-      return VK_SAMPLE_COUNT_64_BIT;
-    if (f & VK_SAMPLE_COUNT_32_BIT)
-      return VK_SAMPLE_COUNT_32_BIT;
-    if (f & VK_SAMPLE_COUNT_16_BIT)
-      return VK_SAMPLE_COUNT_16_BIT;
-    if (f & VK_SAMPLE_COUNT_8_BIT)
-      return VK_SAMPLE_COUNT_8_BIT;
-    if (f & VK_SAMPLE_COUNT_4_BIT)
-      return VK_SAMPLE_COUNT_4_BIT;
-    if (f & VK_SAMPLE_COUNT_2_BIT)
-      return VK_SAMPLE_COUNT_2_BIT;
-    return VK_SAMPLE_COUNT_1_BIT;
+  static constexpr std::array<VkSampleCountFlagBits, 6> all_counts = {
+    VK_SAMPLE_COUNT_64_BIT, VK_SAMPLE_COUNT_32_BIT, VK_SAMPLE_COUNT_16_BIT,
+    VK_SAMPLE_COUNT_8_BIT,  VK_SAMPLE_COUNT_4_BIT,  VK_SAMPLE_COUNT_2_BIT,
   };
 
-  auto supported = desired_flags & available_counts;
+  for (auto count : all_counts | std::views::reverse) {
+    if ((desired_flags & count) && (available & count))
+      return count;
+  }
 
-  return supported ? select_max(supported) : select_max(available_counts);
+  return VK_SAMPLE_COUNT_1_BIT;
 }
 
 auto
@@ -274,11 +266,11 @@ Device::create_resettable_command_pool() const -> VkCommandPool
   return command_pool;
 }
 
-OneTimeCommand::OneTimeCommand(const Device& dev, VkQueue queue)
+OneTimeCommand::OneTimeCommand(const Device& dev, const VkQueue q)
   : device(dev)
-  , chosen_queue(queue)
+  , chosen_queue(q == nullptr ? device.graphics_queue() : q)
 {
-  auto&& [buf, p] = device.create_one_time_command_buffer(queue);
+  auto&& [buf, p] = device.create_one_time_command_buffer(chosen_queue);
   command_buffer = buf;
   command_pool = p;
 }

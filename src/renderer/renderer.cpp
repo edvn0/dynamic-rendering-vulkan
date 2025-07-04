@@ -30,9 +30,11 @@
 #include "window/swapchain.hpp"
 #include "window/window.hpp"
 
+#include <debug_break.h>
 #include <glm/gtx/quaternion.hpp>
 #include <glm/gtx/string_cast.hpp>
 #include <imgui.h>
+#include <utility>
 
 static constexpr auto tile_size = 16;
 static constexpr std::uint32_t num_z_slices = 24;
@@ -212,6 +214,13 @@ Renderer::Renderer(const Device& dev,
     CommandBufferType::Compute,
     VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT);
   {
+    if (auto result = Material::create(*device, "main_geometry");
+        result.has_value()) {
+      geometry_material = std::move(result.value());
+    } else {
+      assert(false && "Failed to create main geometry material.");
+    }
+
     geometry_image = Image::create(dev,
                                    ImageConfiguration{
                                      .extent = win.framebuffer_size(),
@@ -219,7 +228,7 @@ Renderer::Renderer(const Device& dev,
                                      .debug_name = "Main Geometry Image",
                                    });
 
-    auto sample_count = device->get_max_sample_count();
+    auto sample_count = device->get_max_sample_count(VK_SAMPLE_COUNT_2_BIT);
     geometry_msaa_image =
       Image::create(dev,
                     ImageConfiguration{
@@ -252,15 +261,8 @@ Renderer::Renderer(const Device& dev,
                       .aspect = VK_IMAGE_ASPECT_DEPTH_BIT,
                       .sample_count = sample_count,
                       .allow_in_ui = false,
-                      .debug_name = "Geometry Depth MSAA Image",
+                      .debug_name = "Geometry Depth Image (MSAA)",
                     });
-
-    if (auto result = Material::create(*device, "main_geometry");
-        result.has_value()) {
-      geometry_material = std::move(result.value());
-    } else {
-      assert(false && "Failed to create main geometry material.");
-    }
   }
 
   {
@@ -270,9 +272,6 @@ Renderer::Renderer(const Device& dev,
   {
     // Environment map
     skybox_image = Image::load_cubemap(*device, "sf.ktx2");
-    if (!skybox_image) {
-      assert(false && "Failed to load environment map.");
-    }
 
     auto result = Material::create(*device, "skybox");
     if (!result.has_value()) {
@@ -280,7 +279,9 @@ Renderer::Renderer(const Device& dev,
     }
 
     skybox_material = std::move(result.value());
-    skybox_material->upload("skybox_sampler", skybox_image.get());
+    skybox_material->upload("skybox_sampler",
+                            skybox_image == nullptr ? white_texture.get()
+                                                    : skybox_image.get());
 
     skybox_attachment_texture =
       Image::create(*device,
@@ -439,12 +440,12 @@ Renderer::Renderer(const Device& dev,
       assert(false && "Failed to create shadow material.");
     }
 
-    identifier_buffer = GPUBuffer::zero_initialise(
-      *device,
-      1'000'000 * sizeof(std::uint32_t),
-      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-      true,
-      "identifier_buffer");
+    identifier_buffer =
+      GPUBuffer::zero_initialise(*device,
+                                 1'000'000 * sizeof(std::uint32_t),
+                                 VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                                 true,
+                                 "identifier_buffer");
     identifier_material->upload("identifiers", identifier_buffer);
   }
 
@@ -523,33 +524,33 @@ Renderer::Renderer(const Device& dev,
     cull_prefix_sum_material_distribute =
       Material::create(*device, "cull_prefix_sum_distribute").value();
 
-    cull_visibility_material->upload("InstanceInput",
+    cull_visibility_material->upload("instance_input",
                                      instance_vertex_buffer.get());
-    cull_visibility_material->upload("VisibilityOutput",
+    cull_visibility_material->upload("visibility_output",
                                      visibility_buffer.get());
 
-    cull_scatter_material->upload("InstanceInput",
+    cull_scatter_material->upload("instance_input",
                                   instance_vertex_buffer.get());
-    cull_scatter_material->upload("VisibilityInput", visibility_buffer.get());
-    cull_scatter_material->upload("PrefixSumInput", prefix_sum_buffer.get());
-    cull_scatter_material->upload("InstanceOutput",
+    cull_scatter_material->upload("visibility_input", visibility_buffer.get());
+    cull_scatter_material->upload("prefix_sum_input", prefix_sum_buffer.get());
+    cull_scatter_material->upload("instance_output",
                                   culled_instance_vertex_buffer.get());
-    cull_scatter_material->upload("Counter",
+    cull_scatter_material->upload("cull_counter",
                                   culled_instance_count_buffer.get());
 
-    cull_prefix_sum_material_first->upload("VisibilityInput",
+    cull_prefix_sum_material_first->upload("visibility_input",
                                            visibility_buffer.get());
-    cull_prefix_sum_material_first->upload("PrefixSumOutput",
+    cull_prefix_sum_material_first->upload("prefix_sum_output",
                                            prefix_sum_buffer.get());
-    cull_prefix_sum_material_first->upload("WorkgroupSums",
+    cull_prefix_sum_material_first->upload("workgroup_sums",
                                            workgroup_sum_buffer.get());
 
-    cull_prefix_sum_material_second->upload("WorkgroupSums",
+    cull_prefix_sum_material_second->upload("workgroup_sums",
                                             workgroup_sum_buffer.get());
     cull_prefix_sum_material_second->upload("WorkgroupPrefix",
                                             workgroup_sum_prefix_buffer.get());
 
-    cull_prefix_sum_material_distribute->upload("PrefixSumOutput",
+    cull_prefix_sum_material_distribute->upload("prefix_sum_output",
                                                 prefix_sum_buffer.get());
     cull_prefix_sum_material_distribute->upload(
       "WorkgroupPrefix", workgroup_sum_prefix_buffer.get());
@@ -593,31 +594,37 @@ Renderer::Renderer(const Device& dev,
       false,
       "light_index_list_buffer");
 
-    light_culling_material->upload("LightIndexList", light_index_list_buffer);
-    light_culling_material->upload("LightGridData", light_grid_buffer);
-    light_culling_material->upload("LightIndexAllocator",
+    light_culling_material->upload("light_index_list", light_index_list_buffer);
+    light_culling_material->upload("light_grid_buffer", light_grid_buffer);
+    light_culling_material->upload("light_index_allocator",
                                    global_light_counter_buffer);
     light_culling_material->upload("debug_image", light_culling_debug_image);
 
-    geometry_material->upload("LightIndexList", light_index_list_buffer);
-    geometry_material->upload("LightGridData", light_grid_buffer);
+    geometry_material->upload("light_index_list", light_index_list_buffer);
+    geometry_material->upload("light_grid_buffer", light_grid_buffer);
   }
 
+  auto aligned_size_camera = get_aligned_buffer_size(
+    *device, sizeof(CameraBuffer), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT);
   camera_uniform_buffer =
     GPUBuffer::zero_initialise(*device,
-                               sizeof(CameraBuffer) * frames_in_flight,
+                               aligned_size_camera * frames_in_flight,
                                VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
                                true,
                                "camera_ubo");
+  auto aligned_size_shadow = get_aligned_buffer_size(
+    *device, sizeof(ShadowBuffer), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT);
   shadow_camera_buffer =
     GPUBuffer::zero_initialise(*device,
-                               sizeof(ShadowBuffer) * frames_in_flight,
+                               aligned_size_shadow * frames_in_flight,
                                VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
                                true,
                                "shadow_camera_ubo");
+  auto aligned_size_frustum = get_aligned_buffer_size(
+    *device, sizeof(FrustumBuffer), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT);
   frustum_buffer =
     GPUBuffer::zero_initialise(*device,
-                               sizeof(FrustumBuffer) * frames_in_flight,
+                               aligned_size_frustum * frames_in_flight,
                                VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
                                true,
                                "frustum_ubo");
@@ -682,6 +689,27 @@ Renderer::Renderer(const Device& dev,
     }
   };
 
+  material_registry["bloom_downsample"] = {
+    nullptr,
+    [this](const PipelineBlueprint& blueprint) {
+      bloom_pass->reload_pipeline(blueprint, BloomPipeline::Downsample);
+    }
+  };
+
+  material_registry["bloom_upsample"] = {
+    nullptr,
+    [this](const PipelineBlueprint& blueprint) {
+      bloom_pass->reload_pipeline(blueprint, BloomPipeline::Upsample);
+    }
+  };
+
+  material_registry["bloom_final_upsample"] = {
+    nullptr,
+    [this](const PipelineBlueprint& blueprint) {
+      bloom_pass->reload_pipeline(blueprint, BloomPipeline::FinalUpsample);
+    }
+  };
+
   material_registry["point_lights"] = {
     nullptr,
     [this](const PipelineBlueprint& bp) {
@@ -690,30 +718,43 @@ Renderer::Renderer(const Device& dev,
   };
 
 #pragma endregion
-
-  composite_attachment_material->upload("point_lights_input",
-                                        get_point_lights_image());
 }
 
 auto
 Renderer::on_interface() -> void
 {
   if (ImGui::Begin("Renderer settings")) {
-    ImGui::DragFloat3(
+    static bool automatic_far_plane = true;
+    ImGui::Checkbox("Auto light far plane", &automatic_far_plane);
+    bool position_changed = ImGui::DragFloat3(
       "Light Position", &light_environment.light_position[0], 0.5f);
+
+    if (position_changed && automatic_far_plane) {
+      light_environment.far_plane =
+        glm::length(light_environment.light_position);
+    }
+
     ImGui::DragFloat3("Light Target", &light_environment.target[0], 0.5f);
     ImGui::ColorEdit4("Light Color", &light_environment.light_color[0]);
     ImGui::ColorEdit4("Ambient Color", &light_environment.ambient_color[0]);
 
+    auto& colour_correction = light_environment.colour_correction;
+    ImGui::DragFloat("Exposure", &colour_correction.exposure, 0.01f, 0.f, 10.f);
+    ImGui::DragFloat("Contrast", &colour_correction.contrast, 0.01f, 0.f, 10.f);
+    ImGui::DragFloat("Gamma", &colour_correction.gamma, 0.01f, 0.f, 10.f);
     ImGui::DragFloat(
-      "Bloom strength", &light_environment.bloom_strength, 0.01f, 0.f, 10.f);
+      "Saturation", &colour_correction.saturation, 0.01f, 0.f, 10.f);
+    ImGui::ColorEdit3("Tint", &colour_correction.tint[0]);
 
     ImGui::DragFloat(
       "Ortho Size", &light_environment.ortho_size, 0.5f, 1.f, 200.f);
     ImGui::DragFloat(
       "Near Plane", &light_environment.near_plane, 0.01f, 0.01f, 10.f);
-    ImGui::DragFloat(
-      "Far Plane", &light_environment.far_plane, 0.1f, 1.f, 500.f);
+
+    if (!automatic_far_plane) {
+      ImGui::DragFloat(
+        "Far Plane", &light_environment.far_plane, 0.1f, 1.f, 500.f);
+    }
 
     static constexpr std::array<const char*, 3> view_mode_names = {
       "LookAtRH",
@@ -723,7 +764,8 @@ Renderer::on_interface() -> void
     static constexpr std::array<const char*, 5> projection_names = {
       "OrthoRH_ZO", "OrthoRH_NO", "OrthoLH_ZO", "OrthoLH_NO", "Default",
     };
-    int proj_index = static_cast<int>(light_environment.projection_mode);
+    auto proj_index =
+      static_cast<int>(std::to_underlying(light_environment.projection_mode));
     assert(proj_index >= 0 && proj_index < 5);
     if (ImGui::Combo("Projection Mode",
                      &proj_index,
@@ -733,7 +775,8 @@ Renderer::on_interface() -> void
         static_cast<ShadowProjectionMode>(proj_index);
     }
 
-    int view_index = static_cast<int>(light_environment.view_mode);
+    auto view_index =
+      static_cast<int>(std::to_underlying(light_environment.view_mode));
     assert(view_index >= 0 && view_index < 3);
     if (ImGui::Combo("View Mode",
                      &view_index,
@@ -746,6 +789,8 @@ Renderer::on_interface() -> void
                           ImGuiTreeNodeFlags_DefaultOpen |
                             ImGuiTreeNodeFlags_OpenOnDoubleClick)) {
       bloom_pass->on_interface();
+      ImGui::DragFloat(
+        "Bloom strength", &light_environment.bloom_strength, 0.01f, 0.f, 10.f);
       ImGui::TreePop();
     }
 
@@ -776,15 +821,13 @@ Renderer::~Renderer()
 }
 
 auto
-Renderer::submit(const RendererSubmit& cmd,
-                 const glm::mat4& transform,
-                 const std::uint32_t optional_identifier) -> void
+Renderer::submit(const RendererSubmit& cmd, const glm::mat4& transform) -> void
 {
   if (cmd.mesh == nullptr) {
     return;
   }
 
-  const bool has_optional_identifier = optional_identifier != 0;
+  const bool has_optional_identifier = cmd.identifier != 0;
 
   for (auto& submesh : cmd.mesh->get_submeshes()) {
     auto command = DrawCommand{
@@ -794,7 +837,7 @@ Renderer::submit(const RendererSubmit& cmd,
     };
     draw_commands[command].emplace_back(transform);
     if (has_optional_identifier) {
-      identifiers[command].emplace_back(optional_identifier);
+      identifiers[command].emplace_back(cmd.identifier);
     }
     if (cmd.casts_shadows) {
       shadow_draw_commands[command].emplace_back(transform);
@@ -802,18 +845,26 @@ Renderer::submit(const RendererSubmit& cmd,
   }
 }
 
+static constexpr auto pack_vec3_colour = +[](const glm::vec3& color) {
+  return (static_cast<std::uint32_t>(color.b * 255.0f) << 16) |
+         (static_cast<std::uint32_t>(color.g * 255.0f) << 8) |
+         (static_cast<std::uint32_t>(color.r * 255.0f) << 0);
+};
+
+static constexpr auto pack_vec4_colour = +[](const glm::vec4& color) {
+  return (static_cast<std::uint32_t>(color.a * 255.0f) << 24) |
+         (static_cast<std::uint32_t>(color.b * 255.0f) << 16) |
+         (static_cast<std::uint32_t>(color.g * 255.0f) << 8) |
+         (static_cast<std::uint32_t>(color.r * 255.0f) << 0);
+};
+
 auto
 Renderer::submit_lines(const glm::vec3& start,
                        const glm::vec3& end,
                        const float width,
                        const glm::vec4& colour) -> void
 {
-  std::uint32_t packed_color =
-    (static_cast<std::uint32_t>(colour.a * 255.0f) << 24) |
-    (static_cast<std::uint32_t>(colour.b * 255.0f) << 16) |
-    (static_cast<std::uint32_t>(colour.g * 255.0f) << 8) |
-    (static_cast<std::uint32_t>(colour.r * 255.0f) << 0);
-
+  const auto packed_color = pack_vec4_colour(colour);
   line_instances.emplace_back(start, width, end, packed_color);
 }
 
@@ -1062,9 +1113,9 @@ Renderer::end_frame() -> void
     return;
 
   {
+    ZoneScopedN("Submit compute buffer (waiting on geometry)");
     compute_command_buffer->begin_frame(frame_index);
     run_light_culling_pass();
-    ZoneScopedN("Submit compute buffer (waiting on geometry)");
     compute_command_buffer->submit_and_end(frame_index);
   }
 
@@ -1162,31 +1213,20 @@ Renderer::end_frame() -> void
     command_buffer->begin_frame(frame_index);
   }
 
-  thread_local std::vector<DrawItem> spheres;
-  thread_local std::vector<DrawItem> all_geometry;
-
-  {
-    ZoneScopedN("Filter geometry");
-    const auto sphere = Assets::builtin_sphere().get();
-    for (const auto& v : flat_draw_commands) {
-      if (v.command.mesh == sphere) {
-        spheres.push_back(v);
-      } else {
-        all_geometry.push_back(v);
-      }
-    }
-  }
-
   run_skybox_pass();
 
   run_shadow_pass(flat_shadow_draw_commands);
-  run_z_prepass(all_geometry);
+  run_z_prepass(flat_draw_commands);
 
-  run_geometry_pass(all_geometry);
-  run_point_light_pass(spheres);
+  run_geometry_pass(flat_draw_commands);
+
+  static constexpr bool run_point_lights_pass = true;
+  if constexpr (run_point_lights_pass) {
+    run_point_light_pass(flat_draw_commands);
+  }
 
   if constexpr (is_debug) {
-    run_identifier_pass(all_geometry);
+    run_identifier_pass(flat_draw_commands);
   }
   // Add image barrier to prepare geometry_image for compute shader read
   {
@@ -1247,9 +1287,6 @@ Renderer::end_frame() -> void
     command_buffer->submit_and_end(
       frame_index, bloom_complete_semaphores.at(frame_index), VK_NULL_HANDLE);
   }
-
-  spheres.clear();
-  all_geometry.clear();
 }
 
 auto
@@ -1601,8 +1638,8 @@ Renderer::run_point_light_pass(const DrawListView draw_list) -> void
   auto& material = *point_light_system->get_material().get();
   auto& pipeline = material.get_pipeline();
 
-  material.upload("LightIndexList", light_index_list_buffer);
-  material.upload("LightGridData", light_grid_buffer);
+  material.upload("light_index_list", light_index_list_buffer);
+  material.upload("light_grid_buffer", light_grid_buffer);
 
   vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.pipeline);
 
@@ -1736,8 +1773,8 @@ Renderer::run_geometry_pass(const DrawListView draw_list) -> void
         ? *Assets::Manager::the().get(cmd_info.override_material)
         : *submesh_material;
 
-    material.upload("LightIndexList", light_index_list_buffer);
-    material.upload("LightGridData", light_grid_buffer);
+    material.upload("light_index_list", light_index_list_buffer);
+    material.upload("light_grid_buffer", light_grid_buffer);
 
     std::array descriptor_sets{
       descriptor_set_manager->get_set(frame_index),
@@ -1936,66 +1973,68 @@ Renderer::run_identifier_pass(const DrawListView draw_list) -> void
 auto
 Renderer::run_light_culling_pass() -> void
 {
-  ZoneScopedN("Light culling pass");
-  const auto cmd = compute_command_buffer->get(frame_index);
-  Util::Vulkan::cmd_begin_debug_label(
-    cmd, "Light culling pass", { 1.0, 0.0, 0.0, 1.0 });
+  return; /*
 
-  {
-    ZoneScopedN("Upload via one time buffer");
-    static constexpr std::uint32_t zero = 0;
-    global_light_counter_buffer->upload(
-      std::span{ &zero, 1 }); // Reset atomic counter to 0
-  }
+   ZoneScopedN("Light culling pass");
+   const auto cmd = compute_command_buffer->get(frame_index);
+   Util::Vulkan::cmd_begin_debug_label(
+     cmd, "Light culling pass", { 1.0, 0.0, 0.0, 1.0 });
 
-  const std::uint32_t tiles_x =
-    (geometry_image->width() + tile_size - 1) / tile_size;
-  const std::uint32_t tiles_y =
-    (geometry_image->height() + tile_size - 1) / tile_size;
-  constexpr std::uint32_t tiles_z = num_z_slices;
+   {
+     ZoneScopedN("Upload via one time buffer");
+     static constexpr std::uint32_t zero = 0;
+     global_light_counter_buffer->upload(
+       std::span{ &zero, 1 }); // Reset atomic counter to 0
+   }
 
-  compute_command_buffer->begin_timer(frame_index, "light_culling");
+   const std::uint32_t tiles_x =
+     (geometry_image->width() + tile_size - 1) / tile_size;
+   const std::uint32_t tiles_y =
+     (geometry_image->height() + tile_size - 1) / tile_size;
+   constexpr std::uint32_t tiles_z = num_z_slices;
 
-  const auto& pipeline = light_culling_material->get_pipeline();
-  const std::array sets = {
-    descriptor_set_manager->get_set(frame_index),
-    light_culling_material->prepare_for_rendering(frame_index),
-  };
+   compute_command_buffer->begin_timer(frame_index, "light_culling");
 
-  vkCmdBindPipeline(cmd, pipeline.bind_point, pipeline.pipeline);
-  vkCmdBindDescriptorSets(cmd,
-                          pipeline.bind_point,
-                          pipeline.layout,
-                          0,
-                          static_cast<std::uint32_t>(sets.size()),
-                          sets.data(),
-                          0,
-                          nullptr);
+   const auto& pipeline = light_culling_material->get_pipeline();
+   const std::array sets = {
+     descriptor_set_manager->get_set(frame_index),
+     light_culling_material->prepare_for_rendering(frame_index),
+   };
 
-  const std::uint32_t dispatch_x = (tiles_x + 7) / 8;
-  const std::uint32_t dispatch_y = (tiles_y + 7) / 8;
-  constexpr std::uint32_t dispatch_z = (tiles_z + 3) / 4;
+   vkCmdBindPipeline(cmd, pipeline.bind_point, pipeline.pipeline);
+   vkCmdBindDescriptorSets(cmd,
+                           pipeline.bind_point,
+                           pipeline.layout,
+                           0,
+                           static_cast<std::uint32_t>(sets.size()),
+                           sets.data(),
+                           0,
+                           nullptr);
 
-  vkCmdDispatch(cmd, dispatch_x, dispatch_y, dispatch_z);
+   const std::uint32_t dispatch_x = (tiles_x + 7) / 8;
+   const std::uint32_t dispatch_y = (tiles_y + 7) / 8;
+   constexpr std::uint32_t dispatch_z = (tiles_z + 3) / 4;
 
-  VkMemoryBarrier memory_barrier = {};
-  memory_barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
-  memory_barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-  memory_barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+   vkCmdDispatch(cmd, dispatch_x, dispatch_y, dispatch_z);
 
-  vkCmdPipelineBarrier(cmd,
-                       VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-                       VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-                       0,
-                       1,
-                       &memory_barrier,
-                       0,
-                       nullptr,
-                       0,
-                       nullptr);
+   VkMemoryBarrier memory_barrier = {};
+   memory_barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+   memory_barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+   memory_barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
 
-  compute_command_buffer->end_timer(frame_index, "light_culling");
-  Util::Vulkan::cmd_end_debug_label(cmd);
+   vkCmdPipelineBarrier(cmd,
+                        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                        0,
+                        1,
+                        &memory_barrier,
+                        0,
+                        nullptr,
+                        0,
+                        nullptr);
+
+   compute_command_buffer->end_timer(frame_index, "light_culling");
+   Util::Vulkan::cmd_end_debug_label(cmd);*/
 }
 
 auto
@@ -2270,6 +2309,14 @@ Renderer::run_colour_correction_pass() -> void
                           descriptor_sets.data(),
                           0,
                           nullptr);
+
+  const auto& colour_correction = light_environment.colour_correction;
+  vkCmdPushConstants(cmd,
+                     pipeline.layout,
+                     VK_SHADER_STAGE_FRAGMENT_BIT,
+                     0,
+                     sizeof(light_environment.colour_correction),
+                     &colour_correction);
 
   vkCmdDraw(cmd, 3, 1, 0, 0);
   vkCmdEndRendering(cmd);

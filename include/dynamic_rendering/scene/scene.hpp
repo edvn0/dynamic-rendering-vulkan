@@ -158,17 +158,6 @@ private:
   glm::vec2 vp_min{};
   glm::vec2 vp_max{};
 
-  auto draw_vector3_slider(const char* label,
-                           glm::vec3& value,
-                           float v_min,
-                           float v_max,
-                           const char* format) -> bool;
-  auto draw_vector4_slider(const char* label,
-                           glm::vec4& value,
-                           float v_min,
-                           float v_max,
-                           const char* format) -> bool;
-  auto draw_quaternion_slider(const char* label, glm::quat& quaternion) -> bool;
   auto draw_entity_item(entt::entity entity, std::string_view tag) -> void;
   auto draw_entity_hierarchy(entt::entity entity, const std::string&) -> bool;
   auto has_matching_child(entt::entity entity, const std::string&) -> bool;

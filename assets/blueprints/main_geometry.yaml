@@ -2,7 +2,7 @@ shaders:
   - stage: vertex
     path: geometry.vert
   - stage: fragment
-    path: geometry.frag
+    path: geometry_debug.frag
 
 rasterization:
   cull_mode: front
@@ -28,4 +28,4 @@ attachments:
   - format: r32g32b32a32_sfloat
     blend_enable: true
 
-msaa_samples: 16
+msaa_samples: 2

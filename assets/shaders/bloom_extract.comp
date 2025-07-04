@@ -5,11 +5,11 @@
 layout(local_size_x = 8, local_size_y = 8) in;
 
 layout(set = 1, binding = 0) uniform sampler2D input_image;
-layout(set = 1, binding = 1, rgba32f) writeonly uniform image2D output_image;
+layout(set = 1, binding = 1, r11f_g11f_b10f) writeonly uniform image2D output_image;
 layout(set = 1,
        binding = 2,
-       rgba32f) writeonly uniform image2DArray bloom_image_array;
-layout(set = 1, binding = 3, rgba32f) writeonly uniform image2D other_array[5];
+       r11f_g11f_b10f) writeonly uniform image2DArray bloom_image_array;
+layout(set = 1, binding = 3, r11f_g11f_b10f) writeonly uniform image2D other_array[5];
 
 layout(push_constant) uniform Config
 {

@@ -28,65 +28,14 @@
 #include "window/swapchain.hpp"
 #include <tracy/Tracy.hpp>
 
-Scene::Scene(const std::string_view n)
-  : scene_name(n)
-{
-  scene_camera_entity = create_entity("SceneCamera");
-  scene_camera_entity.add_component<Component::FlyController>();
-  scene_camera_entity.add_component<Component::Camera>();
-};
-
-auto
-Scene::create_entity(const std::string_view n) -> Entity
-{
-  std::string final_name = n.empty() ? "Entity" : std::string(n);
-  if (!tag_registry.is_unique(final_name))
-    final_name = tag_registry.generate_unique_name(final_name);
-  const entt::entity handle = registry.create();
-  tag_registry.register_tag(final_name, handle);
-
-  const auto unique_id = tag_registry.get_unique_id(final_name).value();
-
-  registry.emplace<Component::Tag>(handle, final_name, unique_id);
-  registry.emplace<Component::Transform>(handle);
-
-  registry.emplace<Component::Hierarchy>(handle);
-
-  return { handle, this };
-}
-
-auto
-Scene::create_entt_entity() -> entt::entity
-{
-  return registry.create();
-}
-
-auto
-Scene::on_update(double dt) -> void
-{
-  update_fly_controllers(dt);
-
-  for (const auto view = registry.view<Component::Camera>();
-       auto&& [entity, camera] : view.each()) {
-    if (camera.clean())
-      return;
-
-    camera.projection = Camera::make_float_far_proj(
-      camera.fov, camera.aspect, camera.znear, camera.zfar);
-    camera.inverse_projection = Camera::make_float_far_proj(
-      camera.fov, camera.aspect, camera.zfar, camera.znear);
-
-    camera.dirty = true;
-  }
-}
-
+namespace Interface {
 // Helper function for fancy vector sliders
 bool
-Scene::draw_vector3_slider(const char* label,
-                           glm::vec3& value,
-                           float v_min = -100.0f,
-                           float v_max = 100.0f,
-                           const char* format = "%.3f")
+draw_vector3_slider(const char* label,
+                    glm::vec3& value,
+                    float v_min = -100.0f,
+                    float v_max = 100.0f,
+                    const char* format = "%.3f")
 {
   bool modified = false;
 
@@ -138,11 +87,11 @@ Scene::draw_vector3_slider(const char* label,
 
 // Helper function for fancy vector4 sliders
 bool
-Scene::draw_vector4_slider(const char* label,
-                           glm::vec4& value,
-                           float v_min = -100.0f,
-                           float v_max = 100.0f,
-                           const char* format = "%.3f")
+draw_vector4_slider(const char* label,
+                    glm::vec4& value,
+                    float v_min = -100.0f,
+                    float v_max = 100.0f,
+                    const char* format = "%.3f")
 {
   bool modified = false;
 
@@ -204,7 +153,7 @@ Scene::draw_vector4_slider(const char* label,
 
 // Helper function for quaternion sliders with euler angle display
 bool
-Scene::draw_quaternion_slider(const char* label, glm::quat& quaternion)
+draw_quaternion_slider(const char* label, glm::quat& quaternion)
 {
   bool modified = false;
 
@@ -289,6 +238,352 @@ Scene::draw_quaternion_slider(const char* label, glm::quat& quaternion)
   return modified;
 }
 
+auto
+draw_component(Component::Transform& transform_component,
+               bool& transform_was_changed)
+{
+  if (ImGui::TreeNode("Transform")) {
+    transform_was_changed |= Interface::draw_vector3_slider(
+      "Position", transform_component.position, -1000.0f, 1000.0f);
+    transform_was_changed |= Interface::draw_quaternion_slider(
+      "Rotation", transform_component.rotation);
+    transform_was_changed |= Interface::draw_vector3_slider(
+      "Scale", transform_component.scale, 0.001f, 100.0f);
+    ImGui::TreePop();
+  }
+}
+
+auto
+draw_component(Component::PointLight& point_light_component,
+               const bool transform_was_changed)
+{
+  if (ImGui::TreeNode("Point Light")) {
+    bool modified = false;
+    modified |= Interface::draw_vector3_slider(
+      "Color", point_light_component.color, 0.0f, 10.0f);
+    modified |= ImGui::SliderFloat(
+      "Intensity", &point_light_component.intensity, 0.0f, 100.0f);
+    modified |=
+      ImGui::SliderFloat("Radius", &point_light_component.radius, 0.0f, 100.0f);
+    modified |=
+      ImGui::Checkbox("Cast Shadows", &point_light_component.cast_shadows);
+
+    if (modified || transform_was_changed) {
+      point_light_component.dirty = true;
+    }
+
+    ImGui::TreePop();
+  }
+}
+
+auto
+draw_component(Component::Camera& camera_component)
+{
+  if (ImGui::TreeNode("Camera")) {
+    bool modified = false;
+
+    modified |= ImGui::SliderFloat("FOV", &camera_component.fov, 1.0f, 179.0f);
+    modified |=
+      ImGui::SliderFloat("Aspect", &camera_component.aspect, 0.1f, 5.0f);
+    modified |=
+      ImGui::SliderFloat("Z Near", &camera_component.znear, 0.01f, 10.0f);
+    modified |=
+      ImGui::SliderFloat("Z Far", &camera_component.zfar, 10.0f, 10000.0f);
+
+    if (modified) {
+      camera_component.dirty = true;
+    }
+
+    ImGui::TreePop();
+  }
+}
+
+auto
+draw_component(Component::Material& mat_component)
+{
+
+  auto* material = mat_component.material.get();
+  auto& mat_data = material->get_material_data();
+  if (ImGui::TreeNode("Material")) {
+    Interface::draw_vector4_slider("Albedo", mat_data.albedo, 0.0f, 1.0f);
+    ImGui::SliderFloat("Roughness", &mat_data.roughness, 0.0f, 1.0f);
+    ImGui::SliderFloat("Metallic", &mat_data.metallic, 0.0f, 1.0f);
+    ImGui::SliderFloat("AO", &mat_data.ao, 0.0f, 1.0f);
+    ImGui::SliderFloat(
+      "Emissive Strength", &mat_data.emissive_strength, 0.0f, 10.0f);
+    Interface::draw_vector3_slider(
+      "Emissive Color", mat_data.emissive_color, 0.0f, 10.0f);
+    ImGui::SliderFloat("Clearcoat", &mat_data.clearcoat, 0.0f, 1.0f);
+    ImGui::SliderFloat(
+      "Clearcoat Roughness", &mat_data.clearcoat_roughness, 0.0f, 1.0f);
+    ImGui::SliderFloat("Anisotropy", &mat_data.anisotropy, 0.0f, 1.0f);
+    ImGui::SliderFloat("Alpha Cutoff", &mat_data.alpha_cutoff, 0.0f, 1.0f);
+
+    ImGui::Separator();
+
+    // --- Texture Maps Section ---
+    if (ImGui::TreeNode("Texture Maps")) {
+      constexpr ImVec2 preview_size{ 64.0f, 64.0f };
+
+      auto draw_texture_slot = [&](const char* label,
+                                   const char* slot_name,
+                                   std::uint32_t flag,
+                                   VkFormat format,
+                                   const char* tooltip = nullptr) {
+        ImGui::PushID(slot_name); // Unique ID scope for ImGui widgets
+        ImGui::Text("%s:", label);
+
+        const Image* current_image = nullptr;
+        auto maybe_image = material->get_image(slot_name);
+        current_image = maybe_image.has_value() ? maybe_image.value()
+                                                : Renderer::get_white_texture();
+
+        // Draw Image or Placeholder Button
+        ImTextureID texture_id = *current_image->get_texture_id<ImTextureID>();
+        std::string unique_id = std::string("##") + slot_name;
+
+        if (texture_id) {
+          ImGui::Image(texture_id, preview_size);
+        } else {
+          ImGui::Button(("Drop Image" + unique_id).c_str(), preview_size);
+        }
+
+        // Accept drag-drop payload
+        if (ImGui::BeginDragDropTarget()) {
+          if (const ImGuiPayload* payload =
+                ImGui::AcceptDragDropPayload("FILE_BROWSER_ENTRY")) {
+            std::string buffer;
+            buffer.resize(256, '\0');
+            std::memcpy(buffer.data(),
+                        payload->Data,
+                        std::min(static_cast<std::size_t>(payload->DataSize),
+                                 buffer.size() - 1));
+
+            auto paths = std::filesystem::path(buffer);
+            if (!std::filesystem::exists(paths)) {
+              ImGui::EndDragDropTarget();
+              ImGui::PopID();
+              return;
+            }
+            std::filesystem::path found = paths;
+
+            SampledTextureImageConfiguration config;
+            config.format = format;
+
+            if (auto image = Assets::Manager::the()
+                               .load<::Image, SampledTextureImageConfiguration>(
+                                 found.string(), config);
+                image.is_valid()) {
+              material->upload(slot_name, image.get());
+              mat_data.flags |= flag;
+
+              if (flag == MaterialData::FLAG_EMISSIVE_MAP &&
+                  !(mat_data.flags & MaterialData::FLAG_EMISSIVE)) {
+                mat_data.set_emissive(true);
+              }
+            }
+          }
+          ImGui::EndDragDropTarget();
+        }
+
+        // Right-click to clear texture
+        if (ImGui::IsItemHovered() &&
+            ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
+          if (mat_data.flags & flag) {
+            material->upload(slot_name, Renderer::get_white_texture());
+            mat_data.flags &= ~flag;
+
+            if (flag == MaterialData::FLAG_EMISSIVE_MAP) {
+              bool has_emissive_color = mat_data.emissive_color.x > 0.0f ||
+                                        mat_data.emissive_color.y > 0.0f ||
+                                        mat_data.emissive_color.z > 0.0f;
+              if (!has_emissive_color && mat_data.emissive_strength <= 0.0f) {
+                mat_data.set_emissive(false);
+              }
+            }
+          }
+        }
+
+        // Tooltip
+        if (tooltip && ImGui::IsItemHovered()) {
+          ImGui::SetTooltip("%s\n\nRight-click to clear texture.", tooltip);
+        }
+
+        ImGui::Spacing();
+        ImGui::PopID();
+      };
+
+      draw_texture_slot(
+        "Albedo Map",
+        "albedo_map",
+        MaterialData::FLAG_ALBEDO_TEXTURE,
+        VK_FORMAT_R8G8B8A8_SRGB,
+        "Drag & drop albedo/diffuse texture here. Right-click to clear.");
+
+      draw_texture_slot("Normal Map",
+                        "normal_map",
+                        MaterialData::FLAG_NORMAL_MAP,
+                        VK_FORMAT_R8G8B8A8_UNORM,
+                        "Drag & drop normal map here. Right-click to clear.");
+
+      draw_texture_slot(
+        "Roughness Map",
+        "roughness_map",
+        MaterialData::FLAG_ROUGHNESS_MAP,
+        VK_FORMAT_R8G8B8A8_UNORM,
+        "Drag & drop roughness texture here. Right-click to clear.");
+
+      draw_texture_slot(
+        "Metallic Map",
+        "metallic_map",
+        MaterialData::FLAG_METALLIC_MAP,
+        VK_FORMAT_R8G8B8A8_UNORM,
+        "Drag & drop metallic texture here. Right-click to clear.");
+
+      draw_texture_slot("AO Map",
+                        "ao_map",
+                        MaterialData::FLAG_AO_MAP,
+                        VK_FORMAT_R8G8B8A8_UNORM,
+
+                        "Drag & drop ambient occlusion texture here. "
+                        "Right-click to clear.");
+
+      draw_texture_slot(
+        "Emissive Map",
+        "emissive_map",
+        MaterialData::FLAG_EMISSIVE_MAP,
+        VK_FORMAT_R8G8B8A8_UNORM,
+        "Drag & drop emissive texture here. Right-click to clear.");
+
+      ImGui::TreePop();
+    }
+
+    ImGui::Separator();
+
+    // --- Material Flags Section ---
+    if (ImGui::TreeNode("Flags")) {
+      bool alpha_test = mat_data.is_alpha_testing();
+      if (ImGui::Checkbox("Alpha Testing", &alpha_test)) {
+        mat_data.set_alpha_testing(alpha_test);
+      }
+
+      bool double_sided = mat_data.flags & MaterialData::FLAG_DOUBLE_SIDED;
+      if (ImGui::Checkbox("Double Sided", &double_sided)) {
+        mat_data.set_double_sided(double_sided);
+      }
+
+      bool emissive = mat_data.is_emissive();
+      if (ImGui::Checkbox("Emissive", &emissive)) {
+        mat_data.set_emissive(emissive);
+      }
+
+      ImGui::Separator();
+      ImGui::Text("Texture Flags (Read-only):");
+      ImGui::Text("Albedo Texture: %s",
+                  mat_data.has_albedo_texture() ? "Yes" : "No");
+      ImGui::Text("Normal Map: %s", mat_data.has_normal_map() ? "Yes" : "No");
+      ImGui::Text("Roughness Map: %s",
+                  mat_data.has_roughness_map() ? "Yes" : "No");
+      ImGui::Text("Metallic Map: %s",
+                  mat_data.has_metallic_map() ? "Yes" : "No");
+      ImGui::Text("AO Map: %s", mat_data.has_ao_map() ? "Yes" : "No");
+      ImGui::Text("Emissive Map: %s",
+                  mat_data.has_emissive_map() ? "Yes" : "No");
+
+      ImGui::TreePop();
+    }
+
+    ImGui::TreePop();
+  }
+}
+
+auto
+draw_component(Component::Mesh& mesh)
+{
+  if (ImGui::TreeNode("Mesh")) {
+    ImGui::Checkbox("Casts Shadows", &mesh.casts_shadows);
+    ImGui::Checkbox("Draw AABBs", &mesh.draw_aabb);
+
+    // Drop target
+    if (ImGui::BeginDragDropTarget()) {
+      if (const ImGuiPayload* payload =
+            ImGui::AcceptDragDropPayload("FILE_BROWSER_ENTRY")) {
+        auto paths =
+          std::filesystem::path(static_cast<const char*>(payload->Data));
+        if (!std::filesystem::exists(paths)) {
+          ImGui::EndDragDropTarget();
+          ImGui::PopID();
+          return;
+        }
+        const auto& found = paths;
+
+        if (const auto mesh_asset =
+              Assets::Manager::the().load<::StaticMesh>(found.string());
+            mesh_asset.is_valid()) {
+          mesh.mesh = mesh_asset;
+        }
+      }
+      ImGui::EndDragDropTarget();
+    }
+
+    ImGui::TreePop();
+  }
+}
+
+}
+
+Scene::Scene(const std::string_view n)
+  : scene_name(n)
+{
+  scene_camera_entity = create_entity("SceneCamera");
+  scene_camera_entity.add_component<Component::FlyController>();
+  scene_camera_entity.add_component<Component::Camera>();
+};
+
+auto
+Scene::create_entity(const std::string_view n) -> Entity
+{
+  std::string final_name = n.empty() ? "Entity" : std::string(n);
+  if (!tag_registry.is_unique(final_name))
+    final_name = tag_registry.generate_unique_name(final_name);
+  const entt::entity handle = registry.create();
+  tag_registry.register_tag(final_name, handle);
+
+  const auto unique_id = tag_registry.get_unique_id(final_name).value();
+
+  registry.emplace<Component::Tag>(handle, final_name, unique_id);
+  registry.emplace<Component::Transform>(handle);
+
+  registry.emplace<Component::Hierarchy>(handle);
+
+  return { handle, this };
+}
+
+auto
+Scene::create_entt_entity() -> entt::entity
+{
+  return registry.create();
+}
+
+auto
+Scene::on_update(double dt) -> void
+{
+  update_fly_controllers(dt);
+
+  for (const auto view = registry.view<Component::Camera>();
+       auto&& [entity, camera] : view.each()) {
+    if (camera.clean())
+      return;
+
+    camera.projection = Camera::make_float_far_proj(
+      camera.fov, camera.aspect, camera.znear, camera.zfar);
+    camera.inverse_projection = Camera::make_float_far_proj(
+      camera.fov, camera.aspect, camera.zfar, camera.znear);
+
+    camera.dirty = true;
+  }
+}
+
 // Enhanced entity display with icons and better formatting
 void
 Scene::draw_entity_item(entt::entity entity, const std::string_view tag)
@@ -319,284 +614,27 @@ Scene::draw_entity_item(entt::entity entity, const std::string_view tag)
   if (expanded) {
     ImGui::Indent();
 
+    bool transform_was_changed = false;
+
     if (auto* transform = registry.try_get<Component::Transform>(entity)) {
-      if (ImGui::TreeNode("Transform")) {
-        draw_vector3_slider("Position", transform->position, -1000.0f, 1000.0f);
-        draw_quaternion_slider("Rotation", transform->rotation);
-        draw_vector3_slider("Scale", transform->scale, 0.001f, 100.0f);
-        ImGui::TreePop();
-      }
+      Interface::draw_component(*transform, transform_was_changed);
+    }
+    if (auto* light = registry.try_get<Component::PointLight>(entity)) {
+      Interface::draw_component(*light, transform_was_changed);
     }
 
     // Mesh component
     if (auto* mesh = registry.try_get<Component::Mesh>(entity)) {
-      if (ImGui::TreeNode("Mesh")) {
-        // ImGui::Text("Mesh Asset: %p", static_cast<const void*>(mesh->mesh));
-        ImGui::Checkbox("Casts Shadows", &mesh->casts_shadows);
-        ImGui::Checkbox("Draw AABBs", &mesh->draw_aabb);
-
-        // Drop target
-        if (ImGui::BeginDragDropTarget()) {
-          if (const ImGuiPayload* payload =
-                ImGui::AcceptDragDropPayload("FILE_BROWSER_ENTRY")) {
-            auto paths =
-              std::filesystem::path(static_cast<const char*>(payload->Data));
-            if (!std::filesystem::exists(paths)) {
-              ImGui::EndDragDropTarget();
-              ImGui::PopID();
-              return;
-            }
-            std::filesystem::path found = paths;
-
-            if (auto mesh_asset =
-                  Assets::Manager::the().load<::StaticMesh>(found.string());
-                mesh_asset.is_valid()) {
-              mesh->mesh = mesh_asset;
-            }
-          }
-          ImGui::EndDragDropTarget();
-        }
-
-        ImGui::TreePop();
-      }
+      Interface::draw_component(*mesh);
     }
 
     if (auto* mat_component = registry.try_get<Component::Material>(entity);
         mat_component) {
-      auto* material = mat_component->material.get();
-      auto& mat_data = material->get_material_data();
-      if (ImGui::TreeNode("Material")) {
-        draw_vector4_slider("Albedo", mat_data.albedo, 0.0f, 1.0f);
-        ImGui::SliderFloat("Roughness", &mat_data.roughness, 0.0f, 1.0f);
-        ImGui::SliderFloat("Metallic", &mat_data.metallic, 0.0f, 1.0f);
-        ImGui::SliderFloat("AO", &mat_data.ao, 0.0f, 1.0f);
-        ImGui::SliderFloat(
-          "Emissive Strength", &mat_data.emissive_strength, 0.0f, 10.0f);
-        draw_vector3_slider(
-          "Emissive Color", mat_data.emissive_color, 0.0f, 10.0f);
-        ImGui::SliderFloat("Clearcoat", &mat_data.clearcoat, 0.0f, 1.0f);
-        ImGui::SliderFloat(
-          "Clearcoat Roughness", &mat_data.clearcoat_roughness, 0.0f, 1.0f);
-        ImGui::SliderFloat("Anisotropy", &mat_data.anisotropy, 0.0f, 1.0f);
-        ImGui::SliderFloat("Alpha Cutoff", &mat_data.alpha_cutoff, 0.0f, 1.0f);
-
-        ImGui::Separator();
-
-        // --- Texture Maps Section ---
-        if (ImGui::TreeNode("Texture Maps")) {
-          constexpr ImVec2 preview_size{ 64.0f, 64.0f };
-
-          auto draw_texture_slot = [&](const char* label,
-                                       const char* slot_name,
-                                       std::uint32_t flag,
-                                       VkFormat format,
-                                       const char* tooltip = nullptr) {
-            ImGui::PushID(slot_name); // Unique ID scope for ImGui widgets
-            ImGui::Text("%s:", label);
-
-            const Image* current_image = nullptr;
-            auto maybe_image = material->get_image(slot_name);
-            current_image = maybe_image.has_value()
-                              ? maybe_image.value()
-                              : Renderer::get_white_texture();
-
-            // Draw Image or Placeholder Button
-            ImTextureID texture_id =
-              *current_image->get_texture_id<ImTextureID>();
-            std::string unique_id = std::string("##") + slot_name;
-
-            if (texture_id) {
-              ImGui::Image(texture_id, preview_size);
-            } else {
-              ImGui::Button(("Drop Image" + unique_id).c_str(), preview_size);
-            }
-
-            // Accept drag-drop payload
-            if (ImGui::BeginDragDropTarget()) {
-              if (const ImGuiPayload* payload =
-                    ImGui::AcceptDragDropPayload("FILE_BROWSER_ENTRY")) {
-                std::string buffer;
-                buffer.resize(256, '\0');
-                std::memcpy(
-                  buffer.data(),
-                  payload->Data,
-                  std::min(static_cast<std::size_t>(payload->DataSize),
-                           buffer.size() - 1));
-
-                auto paths = std::filesystem::path(buffer);
-                if (!std::filesystem::exists(paths)) {
-                  ImGui::EndDragDropTarget();
-                  ImGui::PopID();
-                  return;
-                }
-                std::filesystem::path found = paths;
-
-                SampledTextureImageConfiguration config;
-                config.format = format;
-
-                if (auto image =
-                      Assets::Manager::the()
-                        .load<::Image, SampledTextureImageConfiguration>(
-                          found.string(), config);
-                    image.is_valid()) {
-                  material->upload(slot_name, image.get());
-                  mat_data.flags |= flag;
-
-                  if (flag == MaterialData::FLAG_EMISSIVE_MAP &&
-                      !(mat_data.flags & MaterialData::FLAG_EMISSIVE)) {
-                    mat_data.set_emissive(true);
-                  }
-                }
-              }
-              ImGui::EndDragDropTarget();
-            }
-
-            // Right-click to clear texture
-            if (ImGui::IsItemHovered() &&
-                ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
-              if (mat_data.flags & flag) {
-                material->upload(slot_name, Renderer::get_white_texture());
-                mat_data.flags &= ~flag;
-
-                if (flag == MaterialData::FLAG_EMISSIVE_MAP) {
-                  bool has_emissive_color = mat_data.emissive_color.x > 0.0f ||
-                                            mat_data.emissive_color.y > 0.0f ||
-                                            mat_data.emissive_color.z > 0.0f;
-                  if (!has_emissive_color &&
-                      mat_data.emissive_strength <= 0.0f) {
-                    mat_data.set_emissive(false);
-                  }
-                }
-              }
-            }
-
-            // Tooltip
-            if (tooltip && ImGui::IsItemHovered()) {
-              ImGui::SetTooltip("%s\n\nRight-click to clear texture.", tooltip);
-            }
-
-            ImGui::Spacing();
-            ImGui::PopID();
-          };
-
-          draw_texture_slot(
-            "Albedo Map",
-            "albedo_map",
-            MaterialData::FLAG_ALBEDO_TEXTURE,
-            VK_FORMAT_R8G8B8A8_SRGB,
-            "Drag & drop albedo/diffuse texture here. Right-click to clear.");
-
-          draw_texture_slot(
-            "Normal Map",
-            "normal_map",
-            MaterialData::FLAG_NORMAL_MAP,
-            VK_FORMAT_R8G8B8A8_UNORM,
-            "Drag & drop normal map here. Right-click to clear.");
-
-          draw_texture_slot(
-            "Roughness Map",
-            "roughness_map",
-            MaterialData::FLAG_ROUGHNESS_MAP,
-            VK_FORMAT_R8G8B8A8_UNORM,
-            "Drag & drop roughness texture here. Right-click to clear.");
-
-          draw_texture_slot(
-            "Metallic Map",
-            "metallic_map",
-            MaterialData::FLAG_METALLIC_MAP,
-            VK_FORMAT_R8G8B8A8_UNORM,
-            "Drag & drop metallic texture here. Right-click to clear.");
-
-          draw_texture_slot("AO Map",
-                            "ao_map",
-                            MaterialData::FLAG_AO_MAP,
-                            VK_FORMAT_R8G8B8A8_UNORM,
-
-                            "Drag & drop ambient occlusion texture here. "
-                            "Right-click to clear.");
-
-          draw_texture_slot(
-            "Emissive Map",
-            "emissive_map",
-            MaterialData::FLAG_EMISSIVE_MAP,
-            VK_FORMAT_R8G8B8A8_UNORM,
-            "Drag & drop emissive texture here. Right-click to clear.");
-
-          ImGui::TreePop();
-        }
-
-        ImGui::Separator();
-
-        // --- Material Flags Section ---
-        if (ImGui::TreeNode("Flags")) {
-          bool alpha_test = mat_data.is_alpha_testing();
-          if (ImGui::Checkbox("Alpha Testing", &alpha_test)) {
-            mat_data.set_alpha_testing(alpha_test);
-          }
-
-          bool double_sided = mat_data.flags & MaterialData::FLAG_DOUBLE_SIDED;
-          if (ImGui::Checkbox("Double Sided", &double_sided)) {
-            mat_data.set_double_sided(double_sided);
-          }
-
-          bool emissive = mat_data.is_emissive();
-          if (ImGui::Checkbox("Emissive", &emissive)) {
-            mat_data.set_emissive(emissive);
-          }
-
-          ImGui::Separator();
-          ImGui::Text("Texture Flags (Read-only):");
-          ImGui::Text("Albedo Texture: %s",
-                      mat_data.has_albedo_texture() ? "Yes" : "No");
-          ImGui::Text("Normal Map: %s",
-                      mat_data.has_normal_map() ? "Yes" : "No");
-          ImGui::Text("Roughness Map: %s",
-                      mat_data.has_roughness_map() ? "Yes" : "No");
-          ImGui::Text("Metallic Map: %s",
-                      mat_data.has_metallic_map() ? "Yes" : "No");
-          ImGui::Text("AO Map: %s", mat_data.has_ao_map() ? "Yes" : "No");
-          ImGui::Text("Emissive Map: %s",
-                      mat_data.has_emissive_map() ? "Yes" : "No");
-
-          ImGui::TreePop();
-        }
-
-        ImGui::TreePop();
-      }
+      Interface::draw_component(*mat_component);
     }
 
     if (auto* camera = registry.try_get<Component::Camera>(entity)) {
-      if (ImGui::TreeNode("Camera")) {
-        bool modified = false;
-
-        modified |= ImGui::SliderFloat("FOV", &camera->fov, 1.0f, 179.0f);
-        modified |= ImGui::SliderFloat("Aspect", &camera->aspect, 0.1f, 5.0f);
-        modified |= ImGui::SliderFloat("Z Near", &camera->znear, 0.01f, 10.0f);
-        modified |= ImGui::SliderFloat("Z Far", &camera->zfar, 10.0f, 10000.0f);
-
-        if (modified) {
-          camera->dirty = true;
-        }
-
-        ImGui::TreePop();
-      }
-    }
-
-    if (auto* light = registry.try_get<Component::PointLight>(entity)) {
-      if (ImGui::TreeNode("Point Light")) {
-        bool modified = false;
-        modified |= draw_vector3_slider("Color", light->color, 0.0f, 10.0f);
-        modified |=
-          ImGui::SliderFloat("Intensity", &light->intensity, 0.0f, 100.0f);
-        modified |= ImGui::SliderFloat("Radius", &light->radius, 0.0f, 100.0f);
-        modified |= ImGui::Checkbox("Cast Shadows", &light->cast_shadows);
-
-        if (modified) {
-          light->dirty = true;
-        }
-
-        ImGui::TreePop();
-      }
+      Interface::draw_component(*camera);
     }
 
     // Add component button
@@ -644,7 +682,7 @@ Scene::draw_entity_hierarchy(entt::entity entity,
   const bool name_matches = name.contains(search_term);
 
   bool child_matches = false;
-  for (entt::entity child : hierarchy.children) {
+  for (const auto& child : hierarchy.children) {
     if (has_matching_child(child, search_term)) {
       child_matches = true;
       break;
@@ -654,7 +692,7 @@ Scene::draw_entity_hierarchy(entt::entity entity,
   if (!name_matches && !child_matches)
     return false;
 
-  ImGuiTreeNodeFlags flags =
+  const ImGuiTreeNodeFlags flags =
     ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth |
     (hierarchy.children.empty() ? ImGuiTreeNodeFlags_Leaf : 0) |
     (selected_entity == entity ? ImGuiTreeNodeFlags_Selected : 0);
@@ -669,7 +707,7 @@ Scene::draw_entity_hierarchy(entt::entity entity,
     selected_entity = entity;
 
   if (node_open) {
-    for (entt::entity child : hierarchy.children) {
+    for (const auto& child : hierarchy.children) {
       draw_entity_hierarchy(child, search_term);
     }
     ImGui::TreePop();
@@ -782,7 +820,6 @@ auto
 Scene::on_render(Renderer& renderer) -> void
 {
   auto& point_light_system = renderer.get_point_light_system();
-  auto sphere_mesh = Assets::builtin_sphere();
   for (const auto view =
          registry.view<Component::PointLight, const Component::Transform>();
        auto&& [entity, light, transform] : view.each()) {
@@ -793,14 +830,6 @@ Scene::on_render(Renderer& renderer) -> void
                                                 light);
       light.dirty = false;
     }
-
-    renderer.submit(
-      {
-        .mesh = sphere_mesh.get(),
-        .override_material = point_light_system.get_material(),
-      },
-      transform.compute(),
-      entt::to_integral(entity));
   }
 
   for (const auto view =
@@ -824,9 +853,9 @@ Scene::on_render(Renderer& renderer) -> void
         .mesh = actual_mesh,
         .override_material = mat,
         .casts_shadows = mesh.casts_shadows,
+        .identifier = identifier->identifier,
       },
-      transform.compute(),
-      identifier->identifier);
+      transform.compute());
 
     if (mesh.draw_aabb) {
       std::ranges::for_each(

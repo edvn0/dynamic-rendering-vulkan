@@ -76,14 +76,14 @@ public:
     (clear<Ts>(), ...);
   }
 
-  static auto initialise(const Device&, BS::priority_thread_pool*) -> void;
-  static auto the() -> Manager&;
-
   template<typename... Ts>
-  auto log_allocation_info() -> void
+  auto log_allocation_info() const -> void
   {
     (log_allocation_info_impl<Ts>(), ...);
   }
+
+  static auto initialise(const Device&, BS::priority_thread_pool*) -> void;
+  static auto the() -> Manager&;
 
 private:
   Manager(const Device& device, BS::priority_thread_pool* pool)
@@ -143,10 +143,9 @@ private:
   template<typename T>
   auto clear()
   {
-    Logger::log_info("Destroying storage for: {}", typeid(T).name());
-
     auto& data = storage<T>();
     data.clear();
+    Logger::log_info("Destroyed storage for: {}", typeid(T).name());
   }
 
   template<typename T>

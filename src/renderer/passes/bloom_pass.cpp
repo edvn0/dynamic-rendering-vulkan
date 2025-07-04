@@ -75,7 +75,7 @@ BloomPass::BloomPass(const Device& d, const Image* fb, int mips)
     *device,
     {
       .extent = source_image->size(),
-      .format = VK_FORMAT_R32G32B32A32_SFLOAT,
+      .format = VK_FORMAT_B10G11R11_UFLOAT_PACK32,
       .usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
       .initial_layout = VK_IMAGE_LAYOUT_GENERAL,
       .sampler_config = clamp_to_edge_sampler_config,
@@ -94,7 +94,7 @@ BloomPass::BloomPass(const Device& d, const Image* fb, int mips)
       *device,
       {
         .extent = current_size,
-        .format = VK_FORMAT_R32G32B32A32_SFLOAT,
+        .format = VK_FORMAT_B10G11R11_UFLOAT_PACK32,
         .usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
         .initial_layout = VK_IMAGE_LAYOUT_GENERAL,
         .sampler_config = clamp_to_edge_sampler_config,
@@ -114,7 +114,7 @@ BloomPass::BloomPass(const Device& d, const Image* fb, int mips)
       *device,
       {
         .extent = current_size,
-        .format = VK_FORMAT_R32G32B32A32_SFLOAT,
+        .format = VK_FORMAT_B10G11R11_UFLOAT_PACK32,
         .usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
         .initial_layout = VK_IMAGE_LAYOUT_GENERAL,
         .sampler_config = clamp_to_edge_sampler_config,
@@ -127,7 +127,8 @@ BloomPass::BloomPass(const Device& d, const Image* fb, int mips)
     mip_chain.emplace_back(std::move(mip));
   }
 
-  final_upsample_material = Material::create(*device, "bloom_upsample").value();
+  final_upsample_material =
+    Material::create(*device, "bloom_final_upsample").value();
 }
 
 void
@@ -171,46 +172,38 @@ BloomPass::on_interface() -> void
 
 auto
 BloomPass::reload_pipeline(const PipelineBlueprint& blueprint,
-                           BloomPipeline pipeline_type) -> void
+                           const BloomPipeline pipeline_type) -> void
 {
+  const auto reload_and_invalidate = [&](auto& material) {
+    material->reload(blueprint);
+    material->invalidate_all();
+  };
+
+  if (pipeline_type == BloomPipeline::FinalUpsample) {
+    reload_and_invalidate(final_upsample_material);
+    return;
+  }
+
   for (const auto& mip : mip_chain) {
     switch (pipeline_type) {
       case BloomPipeline::Horizontal: {
-        mip.blur_horizontal->reload(blueprint);
-        mip.blur_horizontal->upload("input_image", mip.image.get());
-        mip.blur_horizontal->upload(
-          "output_image", blur_temp_chain[mip_chain.size() - 1].get());
-        mip.blur_horizontal->invalidate(mip.image.get());
-        mip.blur_horizontal->invalidate(
-          blur_temp_chain[mip_chain.size() - 1].get());
+        reload_and_invalidate(mip.blur_horizontal);
         break;
       }
       case BloomPipeline::Vertical: {
-        mip.blur_vertical->reload(blueprint);
-        mip.blur_vertical->upload("input_image",
-                                  blur_temp_chain[mip_chain.size() - 1].get());
-        mip.blur_vertical->upload("output_image", mip.image.get());
-        mip.blur_vertical->invalidate(
-          blur_temp_chain[mip_chain.size() - 1].get());
-        mip.blur_vertical->invalidate(mip.image.get());
-        break;
-      }
-      case BloomPipeline::FinalUpsample: {
-        final_upsample_material->reload(blueprint);
-        final_upsample_material->upload("input_image", mip.image.get());
-        final_upsample_material->upload("output_image", extract_image.get());
-        final_upsample_material->invalidate(mip.image.get());
-        final_upsample_material->invalidate(extract_image.get());
+        reload_and_invalidate(mip.blur_vertical);
         break;
       }
       case BloomPipeline::Downsample: {
-        mip.downsample_material->reload(blueprint);
-        mip.downsample_material->upload("input_image", extract_image.get());
-        mip.downsample_material->upload("output_image", mip.image.get());
-        mip.downsample_material->invalidate(extract_image.get());
-        mip.downsample_material->invalidate(mip.image.get());
+        reload_and_invalidate(mip.downsample_material);
         break;
       }
+      case BloomPipeline::Upsample: {
+        reload_and_invalidate(mip.upsample_material);
+        break;
+      }
+      default:
+        break;
     }
   }
 }

@@ -24,14 +24,13 @@ public:
   {
     vkb::InstanceBuilder builder;
 #ifdef IS_DEBUG
-    auto result = builder.set_app_name("Example Vulkan Application")
+    auto result = builder.set_app_name("Dynamic Rendering")
                     .request_validation_layers()
                     .require_api_version(1, 3)
-                    .use_default_debug_messenger()
                     .set_debug_callback(debug_callback)
                     .build();
 #else
-    auto result = builder.set_app_name("Example Vulkan Application")
+    auto result = builder.set_app_name("Dynamic Rendering")
                     .require_api_version(1, 3)
                     .build();
 #endif

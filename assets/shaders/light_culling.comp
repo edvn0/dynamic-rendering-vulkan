@@ -7,7 +7,7 @@
 
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 4) in;
 
-layout(std430, set = 1, binding = 1) restrict buffer writeonly LightIndexList
+layout(std430, set = 1, binding = 1) restrict buffer writeonly light_index_list
 {
   uint light_indices[];
 };
@@ -19,14 +19,14 @@ struct LightGridEntry
   uint pad0;
   uint pad1;
 };
-layout(std430, set = 1, binding = 2) restrict buffer writeonly LightGridData
+layout(std430, set = 1, binding = 2) restrict buffer writeonly light_grid_buffer
 {
   LightGridEntry tile_light_grids[];
 };
 
 layout(std430,
        set = 1,
-       binding = 3) restrict buffer writeonly LightIndexAllocator
+       binding = 3) restrict buffer writeonly light_index_allocator
 {
   uint global_light_list_counter;
 };

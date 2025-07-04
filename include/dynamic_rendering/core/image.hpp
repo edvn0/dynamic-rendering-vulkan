@@ -102,6 +102,9 @@ public:
   auto set_debug_name(std::string_view name) -> void;
   auto upload_rgba(std::span<const unsigned char>) -> void;
 
+  auto reset_dirty(Badge<Material>) -> void { is_dirty = false; }
+  auto dirty() const -> bool { return is_dirty; }
+
   static auto load_from_file(const Device&,
                              const std::string&,
                              bool flip_y = true) -> Assets::Pointer<Image>;
@@ -158,6 +161,9 @@ private:
   // For UI systems.
   bool allow_in_ui{ true }; // For UI systems
   std::uint64_t texture_implementation_pointer{};
+
+  // For material automatic updates.
+  bool is_dirty{ true };
 
   auto upload_rgba_with_command_buffer(std::span<const unsigned char>,
                                        VkCommandBuffer) -> void;

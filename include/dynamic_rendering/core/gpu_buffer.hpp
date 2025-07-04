@@ -12,6 +12,20 @@
 #include <vk_mem_alloc.h>
 #include <vulkan/vulkan.h>
 
+auto
+align_buffer_offset(std::size_t offset, std::size_t alignment) -> std::size_t;
+auto
+get_aligned_buffer_size(const Device& device,
+                        std::size_t requested_size,
+                        VkBufferUsageFlags usage_flags) -> std::size_t;
+auto
+get_aligned_buffer_size(const Device& device,
+                        std::size_t requested_size,
+                        const GPUBuffer&) -> std::size_t;
+auto
+get_buffer_alignment(const Device& device, VkBufferUsageFlags usage_flags)
+  -> std::size_t;
+
 template<typename T>
 concept AdmitsGPUBuffer =
   std::is_trivially_copyable_v<T> && std::is_trivially_destructible_v<T>;

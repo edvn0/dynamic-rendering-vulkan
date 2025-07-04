@@ -2,7 +2,7 @@
 
 layout(set = 1, binding = 0) uniform sampler2D skybox_input;
 layout(set = 1, binding = 1) uniform sampler2D geometry_input;
-layout(set = 1, binding = 2, rgba32f) readonly uniform image2D bloom_input;
+layout(set = 1, binding = 2, r11f_g11f_b10f) readonly uniform image2D bloom_input;
 
 layout(location = 0) out vec4 out_color;
 

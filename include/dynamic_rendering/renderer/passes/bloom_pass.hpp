@@ -19,6 +19,7 @@ enum class BloomPipeline : std::uint8_t
 {
   Horizontal,
   Vertical,
+  Upsample,
   FinalUpsample,
   Downsample
 };

@@ -22,7 +22,9 @@ PointLightSystem::PointLightSystem(const Device& d)
   point_light_material =
     Assets::Manager::the().load<::Material>("point_lights");
 
-  static constexpr auto size = frames_in_flight * size_buffer;
+  const auto aligned_size = get_aligned_buffer_size(
+    *device, size_buffer, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+  const auto size = frames_in_flight * aligned_size;
   point_lights_gpu =
     GPUBuffer::zero_initialise(*device,
                                size,
@@ -127,7 +129,6 @@ PointLightSystem::remove_light(std::uint32_t entity_id) -> void
   if (light_index == UINT32_MAX || light_index >= active_light_count)
     return;
 
-  // Swap with last element to maintain dense array
   if (const auto last_index = active_light_count - 1;
       light_index != last_index) {
     positions[light_index] = positions[last_index];
@@ -137,13 +138,11 @@ PointLightSystem::remove_light(std::uint32_t entity_id) -> void
     cast_shadows[light_index] = cast_shadows[last_index];
     dirty_flags[light_index] = dirty_flags[last_index];
 
-    // Update mapping for swapped element
     const auto moved_entity = light_index_to_entity[last_index];
     light_index_to_entity[light_index] = moved_entity;
     entity_to_light_index[moved_entity] = light_index;
   }
 
-  // Clear mapping for removed entity
   entity_to_light_index[entity_id] = UINT32_MAX;
   --active_light_count;
   set_all();
@@ -155,16 +154,19 @@ PointLightSystem::upload_to_gpu(const std::uint32_t frame_index) -> void
   if (!gpu_buffer_dirty[frame_index])
     return;
 
-  const auto offset = sizeof(PointLightSSBO) * frame_index;
+  const auto offset = get_aligned_buffer_size(
+                        *device, sizeof(PointLightSSBO), *point_lights_gpu) *
+                      frame_index;
 
   void* mapped_data = nullptr;
+
   if (vmaMapMemory(device->get_allocator().get(),
                    point_lights_gpu->get_allocation(),
                    &mapped_data) != VK_SUCCESS) {
     return;
   }
 
-  auto* ssbo = reinterpret_cast<PointLightSSBO*>(
+  auto* ssbo = std::bit_cast<PointLightSSBO*>(
     static_cast<std::uint8_t*>(mapped_data) + offset);
 
   ssbo->light_count = active_light_count;

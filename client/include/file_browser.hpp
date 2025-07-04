@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/util.hpp"
+
 #include <algorithm>
 #include <deque>
 #include <filesystem>
@@ -41,7 +43,7 @@ private:
   std::string preview_file_path;
   Assets::Handle<Image> preview_image;
   bool preview_loading{ false };
-  ImTextureID preview_texture_id;
+  ImTextureID preview_texture_id{ 0 };
 
   // Constants
   static inline const std::vector<std::string> IMAGE_EXTENSIONS = {
@@ -49,7 +51,7 @@ private:
   };
 
 public:
-  FileBrowser(const std::filesystem::path& initial_path)
+  explicit FileBrowser(const std::filesystem::path& initial_path)
     : current_path(std::filesystem::canonical(initial_path).string())
   {
     const auto canonical_path =
@@ -87,5 +89,7 @@ private:
 
   bool is_image_file(const std::string& extension) const;
 
-  std::string format_file_size(size_t bytes) const;
+  string_hash_map<Assets::Handle<Image>> cached_image_handles;
+
+  [[nodiscard]] std::string format_file_size(size_t bytes) const;
 };

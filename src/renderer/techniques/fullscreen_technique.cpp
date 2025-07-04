@@ -182,8 +182,11 @@ FullscreenTechniqueFactory::create(std::string_view path,
 {
   const auto actual_path =
     assets_path() / "techniques" / std::format("{}.yaml", path);
-  if (!std::filesystem::exists(actual_path))
+  if (!std::filesystem::exists(actual_path)) {
+    Logger::log_error("Fullscreen technique file '{}' does not exist",
+                      actual_path);
     return nullptr;
+  }
 
   const auto root = YAML::LoadFile(actual_path.generic_string());
   const auto type = root["type"].as<std::string>();

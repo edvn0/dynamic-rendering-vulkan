@@ -66,8 +66,7 @@ public:
   ~Renderer();
 
   auto submit(const RendererSubmit& cmd,
-              const glm::mat4& transform = glm::mat4{ 1.0F },
-              std::uint32_t optional_identifier = 0) -> void;
+              const glm::mat4& transform = glm::mat4{ 1.0F }) -> void;
   auto submit_lines(const glm::vec3&, const glm::vec3&, float, const glm::vec4&)
     -> void;
   auto submit_aabb(const glm::vec3& min,
@@ -117,7 +116,7 @@ public:
   {
     return image == white_texture.get() || image == black_texture.get();
   }
-  [[nodiscard]] auto get_point_light_system() -> PointLightSystem&
+  [[nodiscard]] auto get_point_light_system() const -> PointLightSystem&
   {
     return *point_light_system;
   }

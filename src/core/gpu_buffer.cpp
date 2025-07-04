@@ -20,25 +20,28 @@ get_aligned_buffer_size(const Device& device,
   const auto& limits = device.get_physical_device_properties().limits;
 
   if (usage_flags & VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT) {
-    alignment = std::max(
-      alignment,
-      static_cast<std::size_t>(limits.minUniformBufferOffsetAlignment));
+    alignment = std::max(alignment, limits.minUniformBufferOffsetAlignment);
   }
 
   if (usage_flags & VK_BUFFER_USAGE_STORAGE_BUFFER_BIT) {
-    alignment = std::max(
-      alignment,
-      static_cast<std::size_t>(limits.minStorageBufferOffsetAlignment));
+    alignment = std::max(alignment, limits.minStorageBufferOffsetAlignment);
   }
 
   if (usage_flags & VK_BUFFER_USAGE_UNIFORM_TEXEL_BUFFER_BIT ||
       usage_flags & VK_BUFFER_USAGE_STORAGE_TEXEL_BUFFER_BIT) {
-    alignment =
-      std::max(alignment,
-               static_cast<std::size_t>(limits.minTexelBufferOffsetAlignment));
+    alignment = std::max(alignment, limits.minTexelBufferOffsetAlignment);
   }
 
   return align_buffer_offset(requested_size, alignment);
+}
+
+auto
+get_aligned_buffer_size(const Device& device,
+                        std::size_t requested_size,
+                        const GPUBuffer& buffer) -> std::size_t
+{
+  return get_aligned_buffer_size(
+    device, requested_size, buffer.get_usage_flags());
 }
 
 auto
@@ -49,22 +52,16 @@ get_buffer_alignment(const Device& device, VkBufferUsageFlags usage_flags)
   const auto& limits = device.get_physical_device_properties().limits;
 
   if (usage_flags & VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT) {
-    alignment = std::max(
-      alignment,
-      static_cast<std::size_t>(limits.minUniformBufferOffsetAlignment));
+    alignment = std::max(alignment, limits.minUniformBufferOffsetAlignment);
   }
 
   if (usage_flags & VK_BUFFER_USAGE_STORAGE_BUFFER_BIT) {
-    alignment = std::max(
-      alignment,
-      static_cast<std::size_t>(limits.minStorageBufferOffsetAlignment));
+    alignment = std::max(alignment, limits.minStorageBufferOffsetAlignment);
   }
 
   if (usage_flags & VK_BUFFER_USAGE_UNIFORM_TEXEL_BUFFER_BIT ||
       usage_flags & VK_BUFFER_USAGE_STORAGE_TEXEL_BUFFER_BIT) {
-    alignment =
-      std::max(alignment,
-               static_cast<std::size_t>(limits.minTexelBufferOffsetAlignment));
+    alignment = std::max(alignment, limits.minTexelBufferOffsetAlignment);
   }
 
   return alignment;
@@ -74,7 +71,7 @@ auto
 upload_to_device_buffer(const Device& device,
                         GPUBuffer& target_buffer,
                         std::span<const std::byte> data,
-                        std::size_t offset) -> void
+                        const std::size_t offset) -> void
 {
   const auto aligned_offset = align_buffer_offset(
     offset, get_buffer_alignment(device, target_buffer.get_usage_flags()));
@@ -87,17 +84,15 @@ upload_to_device_buffer(const Device& device,
   };
   staging.upload(data);
 
-  VkBufferCopy copy_region{
+  const VkBufferCopy copy_region{
     .srcOffset = 0,
     .dstOffset = aligned_offset,
     .size = data.size_bytes(),
   };
 
-  auto&& [command_buffer, command_pool] =
-    device.create_one_time_command_buffer();
+  const OneTimeCommand command{ device };
   vkCmdCopyBuffer(
-    command_buffer, staging.get(), target_buffer.get(), 1, &copy_region);
-  device.flush(command_buffer, command_pool);
+    *command, staging.get(), target_buffer.get(), 1, &copy_region);
 }
 
 auto

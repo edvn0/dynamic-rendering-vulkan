@@ -65,12 +65,12 @@ FileBrowser::render_image_preview(const std::string& image_path)
     ImGui::Text("Preview:");
 
     // Calculate preview size while maintaining aspect ratio
-    auto* real_image = preview_image.get();
-    float width = static_cast<float>(real_image->width());
-    float height = static_cast<float>(real_image->height());
+    const auto* real_image = preview_image.get();
+    const auto width = static_cast<float>(real_image->width());
+    const auto height = static_cast<float>(real_image->height());
 
-    float scale = std::min(max_size / width, max_size / height);
-    ImVec2 preview_size(width * scale, height * scale);
+    const float scale = std::min(max_size / width, max_size / height);
+    const ImVec2 preview_size(width * scale, height * scale);
 
     ImGui::Image(preview_texture_id, preview_size);
 
@@ -147,24 +147,31 @@ void
 FileBrowser::load_image_preview(const std::string& image_path)
 {
   if (preview_file_path == image_path && preview_image.is_valid()) {
-    return; // Already loaded
+    return;
   }
 
   clear_preview();
   preview_file_path = image_path;
   preview_loading = true;
 
-  SampledTextureImageConfiguration config;
-  config.extent = { max_size_uint, max_size_uint };
+  if (const auto it = cached_image_handles.find(image_path);
+      it != cached_image_handles.end() && it->second.is_valid()) {
+    preview_image = it->second;
+  } else {
+    SampledTextureImageConfiguration config;
+    config.extent = { max_size_uint, max_size_uint };
 
-  // Use your asset manager to load the image
-  preview_image =
-    Assets::Manager::the().load<Image, SampledTextureImageConfiguration>(
-      image_path, config);
+    const auto handle =
+      Assets::Manager::the().load<Image, SampledTextureImageConfiguration>(
+        image_path, config);
+
+    if (handle.is_valid())
+      cached_image_handles[image_path] = handle;
+
+    preview_image = handle;
+  }
 
   if (preview_image.is_valid()) {
-    // Convert to ImGui texture - this depends on your graphics backend
-    // You'll need to implement get_imgui_texture_id() in your Image class
     preview_texture_id =
       preview_image.get()->get_texture_id<ImTextureID>().value_or(0);
   } else {
@@ -183,14 +190,11 @@ FileBrowser::navigate_to(const std::string& path)
       return;
     }
 
-    // Add to history if this is a new navigation
     if (history_index == -1 || history[history_index] != path) {
-      // Remove everything after current position
       history.erase(history.begin() + history_index + 1, history.end());
       history.push_back(path);
       history_index = static_cast<std::int32_t>(history.size()) - 1;
 
-      // Limit history size
       if (history.size() > 50) {
         history.pop_front();
         history_index--;
@@ -203,7 +207,6 @@ FileBrowser::navigate_to(const std::string& path)
     clear_preview();
 
   } catch (const fs::filesystem_error& e) {
-    // Handle error - could show in status bar
     Logger::log_error("Failed to navigate: {}", e.what());
   }
 }
@@ -214,20 +217,17 @@ FileBrowser::refresh_entries()
   current_entries.clear();
 
   try {
-    // Add parent directory entry if not at root
     if (current_path != fs::current_path().root_path()) {
       current_entries.emplace_back(
         "..", fs::path(current_path).parent_path().string(), true);
     }
 
-    // Collect all entries
     std::vector<FileEntry> directories;
     std::vector<FileEntry> files;
 
     for (const auto& entry : fs::directory_iterator(current_path)) {
       std::string filename = entry.path().filename().string();
 
-      // Skip hidden files if not showing them
       if (!show_hidden_files && filename[0] == '.') {
         continue;
       }
@@ -245,22 +245,19 @@ FileBrowser::refresh_entries()
       }
     }
 
-    // Sort directories and files separately
     auto sort_pred = [](const FileEntry& a, const FileEntry& b) {
       return a.name < b.name;
     };
 
-    std::sort(directories.begin(), directories.end(), sort_pred);
-    std::sort(files.begin(), files.end(), sort_pred);
+    std::ranges::sort(directories, sort_pred);
+    std::ranges::sort(files, sort_pred);
 
-    // Add to current_entries
     current_entries.insert(
       current_entries.end(), directories.begin(), directories.end());
     current_entries.insert(current_entries.end(), files.begin(), files.end());
 
   } catch (const fs::filesystem_error& e) {
     Logger::log_error("Failed to refresh entries: {}", e.what());
-    // Handle error
   }
 }
 
@@ -277,11 +274,10 @@ FileBrowser::render_file_list()
     for (int i = clipper.DisplayStart; i < clipper.DisplayEnd; i++) {
       const auto& entry = current_entries[i];
 
-      // Selection handling
-      bool is_selected = (selected_index == i);
-      ImGuiSelectableFlags flags = ImGuiSelectableFlags_AllowDoubleClick;
+      const bool is_selected = (selected_index == i);
+      constexpr ImGuiSelectableFlags flags =
+        ImGuiSelectableFlags_AllowDoubleClick;
 
-      // Icon and name
       std::string display_name =
         entry.is_directory ? ("📁 " + entry.name) : ("📄 " + entry.name);
 
@@ -289,7 +285,6 @@ FileBrowser::render_file_list()
         selected_index = i;
         update_selection();
 
-        // Double-click to activate
         if (ImGui::IsMouseDoubleClicked(0)) {
           queued_navigation = i;
         }
@@ -297,7 +292,6 @@ FileBrowser::render_file_list()
 
       const auto valid_entry = !entry.is_directory && entry.file_size > 0;
 
-      // Drag drop for files, not directories and not empty files
       if (valid_entry &&
           ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) {
         std::string payload_type = "FILE_BROWSER_ENTRY";
@@ -344,7 +338,6 @@ FileBrowser::render_preview_panel()
       ImGui::Text("Size: %s", format_file_size(entry.file_size).c_str());
       ImGui::Text("Extension: %s", entry.extension.c_str());
 
-      // Show image preview if applicable
       if (is_image_file(entry.extension)) {
         ImGui::Separator();
         render_image_preview(entry.full_path);
@@ -417,8 +410,8 @@ FileBrowser::update_selection()
 {
   // Update preview when selection changes
   if (selected_index >= 0 && selected_index < current_entries.size()) {
-    const auto& entry = current_entries[selected_index];
-    if (!entry.is_directory && is_image_file(entry.extension)) {
+    if (const auto& entry = current_entries[selected_index];
+        !entry.is_directory && is_image_file(entry.extension)) {
       load_image_preview(entry.full_path);
     } else {
       clear_preview();
