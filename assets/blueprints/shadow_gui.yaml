@@ -4,12 +4,11 @@ shaders:
   - stage: fragment
     path: shadow_gui.frag
 vertex_input:
-  bindings: [ ]
-  attributes: [ ]
+  bindings: []
+  attributes: []
 attachments:
   - format: b8g8r8a8_srgb
     blend_enable: false
-    write_mask_rgba: true
 depth_stencil:
   depth_test: false
   depth_write: false

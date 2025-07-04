@@ -341,7 +341,7 @@ CommandBuffer::write_timestamp(const uint32_t frame_index,
 
 void
 CommandBuffer::begin_timer(const uint32_t frame_index,
-                           const std::string_view name)
+                           const std::string_view name) const
 {
   auto& index = next_query_index[frame_index];
   auto begin_idx = index++;
@@ -355,7 +355,7 @@ CommandBuffer::begin_timer(const uint32_t frame_index,
 
 void
 CommandBuffer::end_timer(const uint32_t frame_index,
-                         const std::string_view name)
+                         const std::string_view name) const
 {
   auto& index = next_query_index[frame_index];
   auto end_idx = index++;

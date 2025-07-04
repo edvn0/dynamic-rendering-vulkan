@@ -10,10 +10,12 @@
 #include "core/image_transition.hpp"
 #include "core/logger.hpp"
 #include "renderer/material_bindings.hpp"
+#include "window/gui_system.hpp"
 
 #include <ktx.h>
 #include <ktxvulkan.h>
 #include <stb_image.h>
+#include <stb_image_resize2.h>
 
 auto
 Image::resize(const uint32_t new_width, const uint32_t new_height) -> void
@@ -28,6 +30,8 @@ Image::resize(const uint32_t new_width, const uint32_t new_height) -> void
   if (!debug_name.empty()) {
     set_debug_name(debug_name);
   }
+
+  is_dirty = true;
 }
 
 auto
@@ -99,12 +103,15 @@ Image::recreate() -> void
   VmaAllocationCreateInfo alloc_info{};
   alloc_info.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
 
-  vmaCreateImage(device->get_allocator().get(),
-                 &image_info,
-                 &alloc_info,
-                 &image,
-                 &allocation,
-                 nullptr);
+  if (vmaCreateImage(device->get_allocator().get(),
+                     &image_info,
+                     &alloc_info,
+                     &image,
+                     &allocation,
+                     nullptr) != VK_SUCCESS) {
+    assert(false && "Failed to create image");
+    return;
+  }
 
   const bool is_array = array_layers > 1;
   VkImageViewType view_type = VK_IMAGE_VIEW_TYPE_2D;
@@ -223,7 +230,7 @@ Image::recreate() -> void
 
   if (allow_in_ui && sample_count == VK_SAMPLE_COUNT_1_BIT) {
     texture_implementation_pointer =
-      std::bit_cast<std::uint64_t>(ImGui_ImplVulkan_AddTexture(
+      std::bit_cast<std::uint64_t>(GUISystem::allocate_image_descriptor_set(
         sampler, default_view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL));
   }
 
@@ -242,12 +249,8 @@ Image::recreate() -> void
   }
 
   if (initial_layout != VK_IMAGE_LAYOUT_UNDEFINED) {
-    auto&& [buf, pool] =
-      device->create_one_time_command_buffer(device->compute_queue());
-
-    CoreUtils::cmd_transition_to_general(buf, *this);
-
-    device->flush(buf, pool, device->compute_queue());
+    OneTimeCommand command(*device, device->compute_queue());
+    CoreUtils::cmd_transition_to_general(*command, *this);
   }
 }
 
@@ -286,7 +289,7 @@ auto
 Image::destroy() -> void
 {
   if (texture_implementation_pointer != 0) {
-    ImGui_ImplVulkan_RemoveTexture(
+    GUISystem::remove_image_descriptor_set(
       std::bit_cast<VkDescriptorSet>(texture_implementation_pointer));
     texture_implementation_pointer = 0;
   }
@@ -319,7 +322,12 @@ Image::upload_rgba(const std::span<const unsigned char> data) -> void
   auto&& [cmd, pool] =
     device->create_one_time_command_buffer(device->graphics_queue());
 
-  GPUBuffer staging{ *device, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, true };
+  GPUBuffer staging{
+    *device,
+    VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+    true,
+    "Image (RGBA) staging buffer",
+  };
   staging.upload(data);
 
   CoreUtils::cmd_transition_image(
@@ -447,11 +455,13 @@ Image::load_from_file(const Device& device,
     return nullptr;
   }
 
+  const auto mip_levels = 1 + static_cast<std::uint32_t>(
+                                std::floor(std::log2(std::max(width, height))));
+
   const auto img_config = ImageConfiguration{
     .extent = { static_cast<uint32_t>(width), static_cast<uint32_t>(height) },
     .format = VK_FORMAT_R8G8B8A8_SRGB,
-    .mip_levels = 1 + static_cast<std::uint32_t>(
-                        std::floor(std::log2(std::max(width, height)))),
+    .mip_levels =mip_levels,
     .array_layers = 1,
     .usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT |
              VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
@@ -459,9 +469,89 @@ Image::load_from_file(const Device& device,
     .sample_count = VK_SAMPLE_COUNT_1_BIT,
     .sampler_config = {
       .min_lod = 0.0f,
-      .max_lod = static_cast<float>(1.0F + static_cast<float>(
-                        std::floor(std::log2(std::max(width, height))))),
+      .max_lod = static_cast<float>(mip_levels),
     },
+    .allow_in_ui = true,
+    .debug_name = std::filesystem::path{ path }.filename().string(),
+  };
+
+  auto image = create(device, img_config);
+
+  image->upload_rgba(
+    std::span{ pixels, static_cast<size_t>(width * height * STBI_rgb_alpha) });
+
+  stbi_image_free(pixels);
+
+  return image;
+}
+
+auto
+Image::load_from_file(const Device& device,
+                      const std::string& path,
+                      const SampledTextureImageConfiguration& config,
+                      bool flip_y) -> Assets::Pointer<Image>
+{
+  stbi_set_flip_vertically_on_load(flip_y ? 1 : 0);
+
+  int width;
+  int height;
+  int channels;
+  stbi_uc* pixels =
+    stbi_load(path.c_str(), &width, &height, &channels, STBI_rgb_alpha);
+
+  if (config.extent.has_value()) {
+    auto method_choice = config.format == VK_FORMAT_R8G8B8A8_SRGB
+                           ? stbir_resize_uint8_srgb
+                           : stbir_resize_uint8_linear;
+
+    // Resize using stb_image_resize
+    stbi_uc* resized_pixels = nullptr;
+    const auto new_width = config.extent->width;
+    const auto new_height = config.extent->height;
+    resized_pixels = method_choice(pixels,
+                                   width,
+                                   height,
+                                   0,
+                                   nullptr,
+                                   new_width,
+                                   new_height,
+                                   0,
+                                   stbir_pixel_layout::STBIR_RGBA);
+    if (!resized_pixels) {
+      Logger::log_error(
+        "Failed to resize image: {}. Reason: {}", path, stbi_failure_reason());
+      stbi_image_free(pixels);
+      return nullptr;
+    }
+    width = new_width;
+    height = new_height;
+    stbi_image_free(pixels);
+    pixels = resized_pixels;
+  }
+
+  if (!pixels) {
+    Logger::log_error(
+      "Failed to load image: {}. Reason: {}", path, stbi_failure_reason());
+    return nullptr;
+  }
+
+  const auto mip_levels = 1 + static_cast<std::uint32_t>(
+                                std::floor(std::log2(std::max(width, height))));
+
+  SamplerConfiguration copy_sampler_config = config.sampler_config;
+  copy_sampler_config.max_lod = copy_sampler_config.max_lod > 0.0f
+                                  ? copy_sampler_config.max_lod
+                                  : static_cast<float>(mip_levels - 1);
+  const auto img_config = ImageConfiguration{
+    .extent = { static_cast<uint32_t>(width), static_cast<uint32_t>(height) },
+    .format = config.format,
+    .mip_levels = mip_levels,
+    .array_layers = 1,
+    .usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT |
+             VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+    .aspect = VK_IMAGE_ASPECT_COLOR_BIT,
+    .sample_count = VK_SAMPLE_COUNT_1_BIT,
+    .sampler_config = copy_sampler_config,
     .allow_in_ui = true,
     .debug_name = std::filesystem::path{ path }.filename().string(),
   };
@@ -545,7 +635,12 @@ Image::load_cubemap(const Device& device, const std::string& path)
     }
   }
 
-  GPUBuffer staging{ device, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, true };
+  GPUBuffer staging{
+    device,
+    VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+    true,
+    "Staging buffer (Cubemap)",
+  };
   staging.upload(std::span{
     static_cast<const std::uint8_t*>(ktxTexture_GetData(ktxTexture(texture))),
     total_size });
@@ -741,7 +836,8 @@ Image::load_from_file_with_staging(const Device& dev,
                                    const std::string& path,
                                    bool flip_y,
                                    bool ui_allow,
-                                   VkCommandBuffer cmd) -> ImageWithStaging
+                                   VkCommandBuffer cmd,
+                                   VkFormat image_format) -> ImageWithStaging
 {
   stbi_set_flip_vertically_on_load(flip_y ? 1 : 0);
 
@@ -760,20 +856,24 @@ Image::load_from_file_with_staging(const Device& dev,
   const size_t byte_count = static_cast<size_t>(width * height * 4);
   std::span<const std::uint8_t> rgba_data{ pixels, byte_count };
 
+  const auto mip_levels =
+    1 + static_cast<uint32_t>(std::floor(std::log2(std::max(width, height))));
   const auto config = ImageConfiguration{
     .extent = { static_cast<uint32_t>(width), static_cast<uint32_t>(height) },
-    .format = VK_FORMAT_R8G8B8A8_SRGB,
+    .format = image_format,
     .mip_levels =
-      1 + static_cast<uint32_t>(std::floor(std::log2(std::max(width, height)))),
+      mip_levels,
     .array_layers = 1,
     .usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT |
              VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
     .aspect = VK_IMAGE_ASPECT_COLOR_BIT,
     .sample_count = VK_SAMPLE_COUNT_1_BIT,
     .sampler_config = {
+      .address_mode_u = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+      .address_mode_v = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+      .address_mode_w = VK_SAMPLER_ADDRESS_MODE_REPEAT,
       .min_lod = 0.0f,
-      .max_lod = static_cast<float>(1.0F + static_cast<float>(
-                        std::floor(std::log2(std::max(width, height))))),
+      .max_lod =static_cast<float>(mip_levels),
     },
     .allow_in_ui = ui_allow,
     .debug_name = std::filesystem::path{ path }.filename().string(),
@@ -781,8 +881,8 @@ Image::load_from_file_with_staging(const Device& dev,
 
   auto img = Image::create(dev, config);
 
-  auto staging =
-    std::make_unique<GPUBuffer>(dev, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, true);
+  auto staging = std::make_unique<GPUBuffer>(
+    dev, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, true, "Image (RGBA) staging buffer");
   staging->upload(rgba_data);
   img->record_upload_rgba_with_staging(cmd, *staging, width, height);
 

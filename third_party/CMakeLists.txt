@@ -24,6 +24,7 @@ function(generate_imgui)
     )
     target_include_directories(imgui PUBLIC ${IMGUI_DIR} ${IMGUI_DIR}/backends)
     target_link_libraries(imgui PRIVATE Vulkan::Vulkan glfw)
+    target_compile_definitions(imgui PUBLIC IMGUI_USE_WCHAR32)
 endfunction()
 
 generate_imgui()

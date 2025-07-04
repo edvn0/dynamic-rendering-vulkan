@@ -7,23 +7,23 @@ struct InstanceData {
   mat4 transform;
 };
 
-layout(std430, set = 1, binding = 0) readonly buffer InstanceInput {
+layout(std430, set = 1, binding = 0) readonly buffer instance_input {
   InstanceData instances[];
 };
 
-layout(std430, set = 1, binding = 1) readonly buffer VisibilityInput {
+layout(std430, set = 1, binding = 1) readonly buffer visibility_input {
   uint visibility[];
 };
 
-layout(std430, set = 1, binding = 2) readonly buffer PrefixSumInput {
+layout(std430, set = 1, binding = 2) readonly buffer prefix_sum_input {
   uint prefix_sum[];
 };
 
-layout(std430, set = 1, binding = 3) buffer InstanceOutput {
+layout(std430, set = 1, binding = 3) buffer instance_output {
   InstanceData culled_instances[];
 };
 
-layout(std430, set = 1, binding = 4) buffer Counter {
+layout(std430, set = 1, binding = 4) buffer cull_counter {
   uint culled_instance_count;
 };
 

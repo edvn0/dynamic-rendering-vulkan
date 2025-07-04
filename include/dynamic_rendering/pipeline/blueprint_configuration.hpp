@@ -22,6 +22,31 @@ struct VertexAttribute
   std::uint32_t offset;
 };
 
+struct AttachmentBlendState
+{
+  bool enabled{ false };
+  VkBlendFactor src_color_factor{ VK_BLEND_FACTOR_ONE };
+  VkBlendFactor dst_color_factor{ VK_BLEND_FACTOR_ZERO };
+  VkBlendOp color_op{ VK_BLEND_OP_ADD };
+  VkBlendFactor src_alpha_factor{ VK_BLEND_FACTOR_ONE };
+  VkBlendFactor dst_alpha_factor{ VK_BLEND_FACTOR_ZERO };
+  VkBlendOp alpha_op{ VK_BLEND_OP_ADD };
+  VkColorComponentFlags color_write_mask{ VK_COLOR_COMPONENT_R_BIT |
+                                          VK_COLOR_COMPONENT_G_BIT |
+                                          VK_COLOR_COMPONENT_B_BIT |
+                                          VK_COLOR_COMPONENT_A_BIT };
+
+  auto is_default() const -> bool
+  {
+    return !enabled && src_color_factor == VK_BLEND_FACTOR_ONE &&
+           dst_color_factor == VK_BLEND_FACTOR_ZERO &&
+           color_op == VK_BLEND_OP_ADD &&
+           src_alpha_factor == VK_BLEND_FACTOR_ONE &&
+           dst_alpha_factor == VK_BLEND_FACTOR_ZERO &&
+           alpha_op == VK_BLEND_OP_ADD;
+  }
+};
+
 struct DepthBias
 {
   float constant_factor{ 1.75F };
@@ -32,8 +57,6 @@ struct DepthBias
 struct Attachment
 {
   VkFormat format{ VK_FORMAT_UNDEFINED };
-  bool blend_enable{ false };
-  bool write_mask_rgba{ true };
 
   auto is_depth() const -> bool
   {
@@ -54,13 +77,13 @@ struct PipelineBlueprint
   std::vector<VertexBinding> bindings{};
   std::vector<VertexAttribute> attributes{};
   std::vector<Attachment> attachments{};
+  std::vector<AttachmentBlendState> color_blend_states{};
   std::optional<Attachment> depth_attachment{};
   std::optional<DepthBias> depth_bias{};
   VkCullModeFlags cull_mode{ VK_CULL_MODE_BACK_BIT };
   VkPolygonMode polygon_mode{ VK_POLYGON_MODE_FILL };
   VkPrimitiveTopology topology{ VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST };
   VkFrontFace winding{ VK_FRONT_FACE_COUNTER_CLOCKWISE };
-  bool blend_enable{ false };
   bool depth_test{ false };
   bool depth_write{ false };
   VkSampleCountFlags msaa_samples{ VK_SAMPLE_COUNT_1_BIT };

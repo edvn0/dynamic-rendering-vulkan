@@ -6,8 +6,10 @@
 #include "dynamic_rendering/core/fs.hpp"
 #include "dynamic_rendering/renderer/techniques/shadow_gui_technique.hpp"
 #include "renderer/descriptor_manager.hpp"
+#include "renderer/techniques/point_lights_technique.hpp"
 #include "renderer/techniques/shadow_gui_technique.hpp"
 
+#include <tracy/Tracy.hpp>
 #include <yaml-cpp/yaml.h>
 
 struct TechniqueParseError
@@ -42,20 +44,35 @@ parse_fullscreen_technique_yaml(const YAML::Node& root)
       desc.bind_point = VK_PIPELINE_BIND_POINT_GRAPHICS;
     }
   } else {
-    Logger::log_warning("No bind_point specified, defaulting to graphics");
+    Logger::log_info("No bind_point specified, defaulting to graphics");
     desc.bind_point = VK_PIPELINE_BIND_POINT_GRAPHICS;
   }
 
   if (root["inputs"]) {
     for (const auto& input : root["inputs"]) {
-      if (!input["binding"] || !input["source"]) {
+      std::string binding;
+      std::string source;
+
+      const auto has_binding = input["binding"];
+      const auto has_source = input["source"];
+
+      if (has_binding && has_source) {
+        binding = input["binding"].as<std::string>();
+        source = input["source"].as<std::string>();
+      } else if (has_binding) {
+        binding = input["binding"].as<std::string>();
+        source = binding;
+      } else if (has_source) {
+        source = input["source"].as<std::string>();
+        binding = source;
+      } else {
         Logger::log_warning(
-          "Skipping input entry due to missing 'binding' or 'source'");
+          "Skipping input entry due to missing both 'binding' and 'source'");
         continue;
       }
 
-      desc.inputs.push_back({ .binding = input["binding"].as<std::string>(),
-                              .source = input["source"].as<std::string>() });
+      desc.inputs.push_back(
+        { .binding = std::move(binding), .source = std::move(source) });
     }
   }
 
@@ -165,8 +182,11 @@ FullscreenTechniqueFactory::create(std::string_view path,
 {
   const auto actual_path =
     assets_path() / "techniques" / std::format("{}.yaml", path);
-  if (!std::filesystem::exists(actual_path))
+  if (!std::filesystem::exists(actual_path)) {
+    Logger::log_error("Fullscreen technique file '{}' does not exist",
+                      actual_path);
     return nullptr;
+  }
 
   const auto root = YAML::LoadFile(actual_path.generic_string());
   const auto type = root["type"].as<std::string>();
@@ -175,7 +195,18 @@ FullscreenTechniqueFactory::create(std::string_view path,
     return load_from_file<ShadowGUITechnique>(
       device, dsm, actual_path.string());
 
+  if (type == "point_lights") {
+    return load_from_file<PointLightsTechnique>(
+      device, dsm, actual_path.string());
+  }
+
   assert(false &&
          "Type could not be matched to any implemented full screen pass");
   return nullptr;
+}
+
+auto
+FullscreenTechniqueBase::perform(const CommandBuffer&, std::uint32_t) const
+  -> void
+{
 }

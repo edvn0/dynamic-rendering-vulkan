@@ -3,14 +3,17 @@ shaders:
     path: fullscreen.vert
   - stage: fragment
     path: colour_correction.frag
+
 vertex_input:
   bindings: []
   attributes: []
+
 attachments:
   - format: b8g8r8a8_srgb
     blend_enable: false
-    write_mask_rgba: true
+
 depth_stencil:
   depth_test: false
   depth_write: false
+
 msaa_samples: 1

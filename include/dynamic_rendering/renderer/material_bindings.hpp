@@ -9,8 +9,9 @@ class GPUBinding
 {
 public:
   virtual ~GPUBinding() = default;
-  virtual auto write_descriptor(std::uint32_t, VkDescriptorSet&)
-    -> VkWriteDescriptorSet = 0;
+  virtual auto write_descriptor(std::uint32_t,
+                                const VkDescriptorSet&,
+                                std::vector<VkWriteDescriptorSet>&) -> void = 0;
 };
 
 template<typename WriteBufferInfo>
@@ -53,8 +54,9 @@ public:
 
   auto get_underlying_buffer() const -> const GPUBuffer* { return buffer; }
 
-  auto write_descriptor(std::uint32_t frame_index, VkDescriptorSet& set)
-    -> VkWriteDescriptorSet override;
+  auto write_descriptor(std::uint32_t,
+                        const VkDescriptorSet&,
+                        std::vector<VkWriteDescriptorSet>&) -> void override;
 
 private:
   const GPUBuffer* buffer;
@@ -73,10 +75,26 @@ public:
   ~ImageBinding() override = default;
 
   auto get_underlying_image() const -> const Image* { return image; }
-
-  auto write_descriptor(std::uint32_t frame_index, VkDescriptorSet& set)
-    -> VkWriteDescriptorSet override;
+  auto write_descriptor(std::uint32_t,
+                        const VkDescriptorSet&,
+                        std::vector<VkWriteDescriptorSet>&) -> void override;
 
 private:
   const Image* image;
+};
+
+class ImageArrayBinding final : public BaseGPUBinding<VkDescriptorImageInfo>
+{
+public:
+  ImageArrayBinding(const ImageArray*, VkDescriptorType, std::uint32_t);
+  ~ImageArrayBinding() override = default;
+
+  auto get_underlying_image() const -> const ImageArray* { return image; }
+
+  auto write_descriptor(std::uint32_t,
+                        const VkDescriptorSet&,
+                        std::vector<VkWriteDescriptorSet>&) -> void override;
+
+private:
+  const ImageArray* image;
 };

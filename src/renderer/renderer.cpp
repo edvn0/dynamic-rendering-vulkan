@@ -23,20 +23,33 @@
 #include "renderer/camera.hpp"
 #include "renderer/editor_camera.hpp"
 #include "renderer/mesh.hpp"
+#include "renderer/renderer_util.hpp"
 #include "renderer/techniques/fullscreen_technique.hpp"
+#include "renderer/techniques/point_lights_technique.hpp"
 #include "renderer/techniques/shadow_gui_technique.hpp"
+#include "window/swapchain.hpp"
 #include "window/window.hpp"
 
+#include <debug_break.h>
 #include <glm/gtx/quaternion.hpp>
+#include <glm/gtx/string_cast.hpp>
+#include <imgui.h>
+#include <utility>
+
+static constexpr auto tile_size = 16;
+static constexpr std::uint32_t num_z_slices = 24;
+static constexpr std::size_t max_lights_per_tile = 64;
 
 struct CameraBuffer
 {
-  alignas(16) const glm::mat4 vp;
-  alignas(16) const glm::mat4 inverse_vp;
-  alignas(16) const glm::mat4 projection;
-  alignas(16) const glm::mat4 view;
-  alignas(16) const glm::vec4 camera_position;
-  std::array<glm::vec4, 3> padding{};
+  alignas(16) glm::mat4 vp;
+  alignas(16) glm::mat4 inverse_vp;
+  alignas(16) glm::mat4 projection;
+  alignas(16) glm::mat4 view;
+  alignas(16) glm::mat4 inverse_projection;
+  alignas(16) glm::vec4 camera_position;
+  alignas(16) glm::vec4 screen_size_near_far;
+  alignas(16) std::array<float, 8> _padding{};
 };
 ASSERT_VULKAN_UBO_COMPATIBLE(CameraBuffer);
 
@@ -57,13 +70,15 @@ struct ShadowBuffer
 };
 ASSERT_VULKAN_UBO_COMPATIBLE(ShadowBuffer);
 
-template<typename T, std::size_t N = frames_in_flight>
-static constexpr auto
-create_sized_array(const T& value) -> std::array<T, N>
+auto
+bind_sets(auto cmd, auto layout, std::ranges::contiguous_range auto sets)
 {
-  std::array<T, N> arr{};
-  arr.fill(value);
-  return arr;
+  auto valid = sets | std::views::filter(
+                        [](const auto& v) { return v != VK_NULL_HANDLE; });
+  for (auto& v : valid) {
+    vkCmdBindDescriptorSets(
+      cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 0, 1, &v, 0, nullptr);
+  }
 }
 
 static constexpr auto stages = VK_SHADER_STAGE_VERTEX_BIT |
@@ -95,60 +110,98 @@ static constexpr std::array renderer_bindings_metadata{
     .stage_flags = VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT,
     .name = "shadow_depth",
   },
+  DescriptorBindingMetadata{
+    .binding = 4,
+    .descriptor_type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+    .stage_flags = stages,
+    .name = "point_lights_ssbo",
+  },
 };
 
-auto
-to_renderpass(const std::string_view name) -> RenderPass
+void
+Renderer::initialise_techniques()
 {
-  auto lowercase = std::string(name);
-  std::ranges::transform(
-    lowercase.begin(), lowercase.end(), lowercase.begin(), ::tolower);
-  if (lowercase == "main_geometry") {
-    return RenderPass::MainGeometry;
+  {
+    auto&& [tech, could] = techniques.try_emplace("shadow_gui");
+    tech->second = FullscreenTechniqueFactory::create(
+      "shadow_gui", *device, *descriptor_set_manager);
   }
-  if (lowercase == "shadow") {
-    return RenderPass::Shadow;
+  /*
+    {
+      auto&& [tech, could] = techniques.try_emplace("point_lights");
+      tech->second = FullscreenTechniqueFactory::create(
+        "point_lights", *device, *descriptor_set_manager);
+    }
+    */
+
+  string_hash_map<const Image*> image_technique_map;
+  string_hash_map<const GPUBuffer*> buffer_technique_map;
+  image_technique_map["shadow_depth_image"] = shadow_depth_image.get();
+  image_technique_map["scene_depth"] = geometry_depth_image.get();
+
+  buffer_technique_map["point_light_buffer"] = point_light_system->get_ssbo({});
+
+  for (const auto& t : techniques | std::views::values) {
+    t->initialise(*this, image_technique_map, buffer_technique_map);
   }
-  if (lowercase == "line") {
-    return RenderPass::Line;
-  }
-  if (lowercase == "z_prepass") {
-    return RenderPass::ZPrepass;
-  }
-  if (lowercase == "colour_correction") {
-    return RenderPass::ColourCorrection;
-  }
-  if (lowercase == "skybox") {
-    return RenderPass::Skybox;
-  }
-  if (lowercase == "cull_prefix_sum_first") {
-    return RenderPass::ComputePrefixCullingFirst;
-  }
-  if (lowercase == "cull_prefix_sum_second") {
-    return RenderPass::ComputePrefixCullingSecond;
-  }
-  if (lowercase == "cull_prefix_sum_distribute") {
-    return RenderPass::ComputePrefixCullingDistribute;
-  }
-  if (lowercase == "cull_scatter") {
-    return RenderPass::ComputeCullingScatter;
-  }
-  if (lowercase == "cull_visibility") {
-    return RenderPass::ComputeCullingVisibility;
-  }
-  if (lowercase == "shadow_gui") {
-    return RenderPass::ShadowGUI;
+}
+
+auto
+Renderer::initialise_textures(const Device& device) -> void
+{
+  static bool called = false;
+  if (called) {
+    return;
   }
 
-  return RenderPass::Invalid;
+  white_texture = Image::create(device,
+                                {
+                                  .extent = { 1, 1 },
+                                  .format = VK_FORMAT_R8G8B8A8_SRGB,
+                                  .usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
+                                           VK_IMAGE_USAGE_SAMPLED_BIT |
+                                           VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                                  .sample_count = VK_SAMPLE_COUNT_1_BIT,
+                                  .allow_in_ui = true,
+                                  .debug_name = "white_texture",
+                                });
+  static constexpr std::array<unsigned char, 4> white_pixel = {
+    0xff, 0xff, 0xff, 0xff
+  };
+  white_texture->upload_rgba(white_pixel);
+
+  black_texture = Image::create(device,
+                                {
+                                  .extent = { 1, 1 },
+                                  .format = VK_FORMAT_R8G8B8A8_SRGB,
+                                  .usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
+                                           VK_IMAGE_USAGE_SAMPLED_BIT |
+                                           VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                                  .sample_count = VK_SAMPLE_COUNT_1_BIT,
+                                  .allow_in_ui = true,
+                                  .debug_name = "black_texture",
+                                });
+
+  static constexpr std::array<unsigned char, 4> black_pixel = {
+    0x0, 0x0, 0x0, 0x0
+  };
+  black_texture->upload_rgba(black_pixel);
+
+  called = true;
 }
 
 Renderer::Renderer(const Device& dev,
+                   const Swapchain& sc,
                    const Window& win,
                    BS::priority_thread_pool& p)
   : device(&dev)
+  , swapchain(&sc)
   , thread_pool(&p)
+  , geometry_complete_semaphores(dev)
+  , bloom_complete_semaphores(dev)
 {
+  point_light_system = std::make_unique<PointLightSystem>(*device);
+
   DescriptorLayoutBuilder builder(renderer_bindings_metadata);
   descriptor_set_manager =
     std::make_unique<DescriptorSetManager>(*device, std::move(builder));
@@ -161,6 +214,13 @@ Renderer::Renderer(const Device& dev,
     CommandBufferType::Compute,
     VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT);
   {
+    if (auto result = Material::create(*device, "main_geometry");
+        result.has_value()) {
+      geometry_material = std::move(result.value());
+    } else {
+      assert(false && "Failed to create main geometry material.");
+    }
+
     geometry_image = Image::create(dev,
                                    ImageConfiguration{
                                      .extent = win.framebuffer_size(),
@@ -168,7 +228,7 @@ Renderer::Renderer(const Device& dev,
                                      .debug_name = "Main Geometry Image",
                                    });
 
-    auto sample_count = device->get_max_sample_count();
+    auto sample_count = device->get_max_sample_count(VK_SAMPLE_COUNT_2_BIT);
     geometry_msaa_image =
       Image::create(dev,
                     ImageConfiguration{
@@ -184,7 +244,8 @@ Renderer::Renderer(const Device& dev,
                     ImageConfiguration{
                       .extent = win.framebuffer_size(),
                       .format = VK_FORMAT_D32_SFLOAT,
-                      .usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+                      .usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT |
+                               VK_IMAGE_USAGE_SAMPLED_BIT,
                       .aspect = VK_IMAGE_ASPECT_DEPTH_BIT,
                       .sample_count = VK_SAMPLE_COUNT_1_BIT,
                       .allow_in_ui = false,
@@ -195,19 +256,13 @@ Renderer::Renderer(const Device& dev,
                     ImageConfiguration{
                       .extent = win.framebuffer_size(),
                       .format = VK_FORMAT_D32_SFLOAT,
-                      .usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+                      .usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT |
+                               VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT,
                       .aspect = VK_IMAGE_ASPECT_DEPTH_BIT,
                       .sample_count = sample_count,
                       .allow_in_ui = false,
-                      .debug_name = "Geometry Depth MSAA Image",
+                      .debug_name = "Geometry Depth Image (MSAA)",
                     });
-
-    if (auto result = Material::create(*device, "main_geometry");
-        result.has_value()) {
-      geometry_material = std::move(result.value());
-    } else {
-      assert(false && "Failed to create main geometry material.");
-    }
   }
 
   {
@@ -217,9 +272,6 @@ Renderer::Renderer(const Device& dev,
   {
     // Environment map
     skybox_image = Image::load_cubemap(*device, "sf.ktx2");
-    if (!skybox_image) {
-      assert(false && "Failed to load environment map.");
-    }
 
     auto result = Material::create(*device, "skybox");
     if (!result.has_value()) {
@@ -227,7 +279,9 @@ Renderer::Renderer(const Device& dev,
     }
 
     skybox_material = std::move(result.value());
-    skybox_material->upload("skybox_sampler", skybox_image.get());
+    skybox_material->upload("skybox_sampler",
+                            skybox_image == nullptr ? white_texture.get()
+                                                    : skybox_image.get());
 
     skybox_attachment_texture =
       Image::create(*device,
@@ -386,24 +440,33 @@ Renderer::Renderer(const Device& dev,
       assert(false && "Failed to create shadow material.");
     }
 
-    identifier_buffer = GPUBuffer::zero_initialise(
-      *device,
-      1'000'000 * sizeof(std::uint32_t),
-      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+    identifier_buffer =
+      GPUBuffer::zero_initialise(*device,
+                                 1'000'000 * sizeof(std::uint32_t),
+                                 VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                                 true,
+                                 "identifier_buffer");
     identifier_material->upload("identifiers", identifier_buffer);
   }
 
   {
 
-    culled_instance_count_buffer = std::make_unique<GPUBuffer>(
-      *device, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, true);
+    culled_instance_count_buffer = GPUBuffer::zero_initialise(
+      *device,
+      sizeof(std::uint32_t),
+      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT |
+        VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+      true,
+      "culled_instance_count_buffer");
     static constexpr std::uint32_t zero = 0;
     culled_instance_count_buffer->upload(std::span{ &zero, 1 });
 
-    culled_instance_vertex_buffer = std::make_unique<GPUBuffer>(
+    culled_instance_vertex_buffer = GPUBuffer::zero_initialise(
       *device,
-      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-      true);
+      sizeof(InstanceData) * 1'000'000,
+      VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+      true,
+      "culled_instance_vertex_buffer");
 
     {
       auto&& [bytes, instance_size_bytes] =
@@ -461,121 +524,277 @@ Renderer::Renderer(const Device& dev,
     cull_prefix_sum_material_distribute =
       Material::create(*device, "cull_prefix_sum_distribute").value();
 
-    cull_visibility_material->upload("InstanceInput",
+    cull_visibility_material->upload("instance_input",
                                      instance_vertex_buffer.get());
-    cull_visibility_material->upload("VisibilityOutput",
+    cull_visibility_material->upload("visibility_output",
                                      visibility_buffer.get());
 
-    cull_scatter_material->upload("InstanceInput",
+    cull_scatter_material->upload("instance_input",
                                   instance_vertex_buffer.get());
-    cull_scatter_material->upload("VisibilityInput", visibility_buffer.get());
-    cull_scatter_material->upload("PrefixSumInput", prefix_sum_buffer.get());
-    cull_scatter_material->upload("InstanceOutput",
+    cull_scatter_material->upload("visibility_input", visibility_buffer.get());
+    cull_scatter_material->upload("prefix_sum_input", prefix_sum_buffer.get());
+    cull_scatter_material->upload("instance_output",
                                   culled_instance_vertex_buffer.get());
-    cull_scatter_material->upload("Counter",
+    cull_scatter_material->upload("cull_counter",
                                   culled_instance_count_buffer.get());
 
-    cull_prefix_sum_material_first->upload("VisibilityInput",
+    cull_prefix_sum_material_first->upload("visibility_input",
                                            visibility_buffer.get());
-    cull_prefix_sum_material_first->upload("PrefixSumOutput",
+    cull_prefix_sum_material_first->upload("prefix_sum_output",
                                            prefix_sum_buffer.get());
-    cull_prefix_sum_material_first->upload("WorkgroupSums",
+    cull_prefix_sum_material_first->upload("workgroup_sums",
                                            workgroup_sum_buffer.get());
 
-    cull_prefix_sum_material_second->upload("WorkgroupSums",
+    cull_prefix_sum_material_second->upload("workgroup_sums",
                                             workgroup_sum_buffer.get());
     cull_prefix_sum_material_second->upload("WorkgroupPrefix",
                                             workgroup_sum_prefix_buffer.get());
 
-    cull_prefix_sum_material_distribute->upload("PrefixSumOutput",
+    cull_prefix_sum_material_distribute->upload("prefix_sum_output",
                                                 prefix_sum_buffer.get());
     cull_prefix_sum_material_distribute->upload(
       "WorkgroupPrefix", workgroup_sum_prefix_buffer.get());
   }
 
+  {
+    light_culling_material = Material::create(*device, "light_culling").value();
+
+    light_culling_debug_image = Image::create(
+      *device,
+      {
+        .extent = geometry_image->size(),
+        .format = VK_FORMAT_R8G8B8A8_UINT,
+        .usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+        .initial_layout = VK_IMAGE_LAYOUT_GENERAL,
+        .debug_name = "light_culling_debug_image",
+      });
+
+    global_light_counter_buffer = GPUBuffer::zero_initialise(
+      *device,
+      sizeof(std::uint32_t),
+      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT |
+        VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+      true,
+      "global_light_counter_buffer");
+
+    std::size_t num_tiles =
+      (geometry_image->width() * geometry_image->height()) / tile_size;
+    light_grid_buffer = GPUBuffer::zero_initialise(
+      *device,
+      num_tiles * sizeof(uint32_t) * 4, // offset, count, pad0, pad1
+      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+      false,
+      "light_grid_buffer");
+
+    std::size_t max_total_indices = num_tiles * max_lights_per_tile;
+    light_index_list_buffer = GPUBuffer::zero_initialise(
+      *device,
+      max_total_indices * sizeof(std::uint32_t),
+      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+      false,
+      "light_index_list_buffer");
+
+    light_culling_material->upload("light_index_list", light_index_list_buffer);
+    light_culling_material->upload("light_grid_buffer", light_grid_buffer);
+    light_culling_material->upload("light_index_allocator",
+                                   global_light_counter_buffer);
+    light_culling_material->upload("debug_image", light_culling_debug_image);
+
+    geometry_material->upload("light_index_list", light_index_list_buffer);
+    geometry_material->upload("light_grid_buffer", light_grid_buffer);
+  }
+
+  auto aligned_size_camera = get_aligned_buffer_size(
+    *device, sizeof(CameraBuffer), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT);
   camera_uniform_buffer =
     GPUBuffer::zero_initialise(*device,
-                               sizeof(CameraBuffer) * frames_in_flight,
+                               aligned_size_camera * frames_in_flight,
                                VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
                                true,
                                "camera_ubo");
+  auto aligned_size_shadow = get_aligned_buffer_size(
+    *device, sizeof(ShadowBuffer), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT);
   shadow_camera_buffer =
     GPUBuffer::zero_initialise(*device,
-                               sizeof(ShadowBuffer) * frames_in_flight,
+                               aligned_size_shadow * frames_in_flight,
                                VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
                                true,
                                "shadow_camera_ubo");
+  auto aligned_size_frustum = get_aligned_buffer_size(
+    *device, sizeof(FrustumBuffer), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT);
   frustum_buffer =
     GPUBuffer::zero_initialise(*device,
-                               sizeof(FrustumBuffer) * frames_in_flight,
+                               aligned_size_frustum * frames_in_flight,
                                VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
                                true,
                                "frustum_ubo");
 
   std::array uniforms{ camera_uniform_buffer.get(),
                        shadow_camera_buffer.get(),
-                       frustum_buffer.get() };
+                       frustum_buffer.get(),
+                       point_light_system->get_ssbo({}) };
   std::array images{ shadow_depth_image.get() };
   descriptor_set_manager->allocate_sets(std::span(uniforms), std::span(images));
 
-  white_texture = Image::create(*device,
-                                {
-                                  .extent = { 1, 1 },
-                                  .format = VK_FORMAT_R8G8B8A8_SRGB,
-                                  .usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
-                                           VK_IMAGE_USAGE_SAMPLED_BIT |
-                                           VK_IMAGE_USAGE_TRANSFER_DST_BIT,
-                                  .sample_count = VK_SAMPLE_COUNT_1_BIT,
-                                  .allow_in_ui = false,
-                                  .debug_name = "white_texture",
-                                });
-  static constexpr std::array<unsigned char, 4> white_pixel = {
-    0xff, 0xff, 0xff, 0xff
-  };
-  white_texture->upload_rgba(white_pixel);
+  initialise_techniques();
 
-  black_texture = Image::create(*device,
-                                {
-                                  .extent = { 1, 1 },
-                                  .format = VK_FORMAT_R8G8B8A8_SRGB,
-                                  .usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
-                                           VK_IMAGE_USAGE_SAMPLED_BIT |
-                                           VK_IMAGE_USAGE_TRANSFER_DST_BIT,
-                                  .sample_count = VK_SAMPLE_COUNT_1_BIT,
-                                  .allow_in_ui = false,
-                                  .debug_name = "black_texture",
-                                });
+#pragma region Material reload
+#define REGISTER_MATERIAL(name_str, mat_ptr)                                   \
+  material_registry[name_str] = { mat_ptr,                                     \
+                                  [mat = mat_ptr](                             \
+                                    const PipelineBlueprint& blueprint) {      \
+                                    mat->reload(blueprint);                    \
+                                  } };
 
-  static constexpr std::array<unsigned char, 4> black_pixel = {
-    0x0, 0x0, 0x0, 0x0
-  };
-  black_texture->upload_rgba(black_pixel);
+#define REGISTER_TECHNIQUE_MATERIAL(name_str)                                  \
+  material_registry[name_str] = { techniques.at(name_str)->get_material(),     \
+                                  [tech = techniques.at(name_str).get()](      \
+                                    const PipelineBlueprint& blueprint) {      \
+                                    tech->get_material()->reload(blueprint);   \
+                                  } };
 
-  VkSemaphoreCreateInfo semaphore_create_info{
-    .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
-    .pNext = nullptr,
-    .flags = 0,
-  };
-  for (auto& sema : geometry_complete_semaphores) {
-    vkCreateSemaphore(
-      device->get_device(), &semaphore_create_info, nullptr, &sema);
+  REGISTER_MATERIAL("main_geometry", geometry_material.get());
+  REGISTER_MATERIAL("shadow", shadow_material.get());
+  REGISTER_MATERIAL("z_prepass", z_prepass_material.get());
+  REGISTER_MATERIAL("skybox", skybox_material.get());
+  REGISTER_MATERIAL("colour_correction", colour_corrected_material.get());
+  REGISTER_MATERIAL("cull_prefix_sum_first",
+                    cull_prefix_sum_material_first.get());
+  REGISTER_MATERIAL("cull_prefix_sum_second",
+                    cull_prefix_sum_material_second.get());
+  REGISTER_MATERIAL("cull_prefix_sum_distribute",
+                    cull_prefix_sum_material_distribute.get());
+  REGISTER_MATERIAL("cull_scatter", cull_scatter_material.get());
+  REGISTER_MATERIAL("cull_visibility", cull_visibility_material.get());
+  REGISTER_MATERIAL("composite", composite_attachment_material.get());
+  REGISTER_MATERIAL("identifier", identifier_material.get());
+  REGISTER_MATERIAL("line", line_material.get());
+  REGISTER_MATERIAL("light_culling", light_culling_material.get());
+
+  for (const auto& name : techniques | std::views::keys) {
+    REGISTER_TECHNIQUE_MATERIAL(name);
   }
 
-  for (auto& sema : bloom_complete_semaphores) {
-    vkCreateSemaphore(
-      device->get_device(), &semaphore_create_info, nullptr, &sema);
-  }
+  material_registry["bloom_horizontal"] = {
+    nullptr,
+    [this](const PipelineBlueprint& blueprint) {
+      bloom_pass->reload_pipeline(blueprint, BloomPipeline::Horizontal);
+    }
+  };
 
-  auto&& [tech, could] = techniques.try_emplace("shadow_gui");
-  tech->second = FullscreenTechniqueFactory::create(
-    "shadow_gui", *device, *descriptor_set_manager);
+  material_registry["bloom_vertical"] = {
+    nullptr,
+    [this](const PipelineBlueprint& blueprint) {
+      bloom_pass->reload_pipeline(blueprint, BloomPipeline::Vertical);
+    }
+  };
 
-  string_hash_map<const Image*> image_technique_map;
-  string_hash_map<const GPUBuffer*> buffer_technique_map;
-  image_technique_map["shadow_depth_image"] = shadow_depth_image.get();
+  material_registry["bloom_downsample"] = {
+    nullptr,
+    [this](const PipelineBlueprint& blueprint) {
+      bloom_pass->reload_pipeline(blueprint, BloomPipeline::Downsample);
+    }
+  };
 
-  for (auto&& [k, t] : techniques) {
-    t->initialise(*this, image_technique_map, buffer_technique_map);
+  material_registry["bloom_upsample"] = {
+    nullptr,
+    [this](const PipelineBlueprint& blueprint) {
+      bloom_pass->reload_pipeline(blueprint, BloomPipeline::Upsample);
+    }
+  };
+
+  material_registry["bloom_final_upsample"] = {
+    nullptr,
+    [this](const PipelineBlueprint& blueprint) {
+      bloom_pass->reload_pipeline(blueprint, BloomPipeline::FinalUpsample);
+    }
+  };
+
+  material_registry["point_lights"] = {
+    nullptr,
+    [this](const PipelineBlueprint& bp) {
+      point_light_system->get_material().get()->reload(bp);
+    }
+  };
+
+#pragma endregion
+}
+
+auto
+Renderer::on_interface() -> void
+{
+  if (ImGui::Begin("Renderer settings")) {
+    static bool automatic_far_plane = true;
+    ImGui::Checkbox("Auto light far plane", &automatic_far_plane);
+    bool position_changed = ImGui::DragFloat3(
+      "Light Position", &light_environment.light_position[0], 0.5f);
+
+    if (position_changed && automatic_far_plane) {
+      light_environment.far_plane =
+        glm::length(light_environment.light_position);
+    }
+
+    ImGui::DragFloat3("Light Target", &light_environment.target[0], 0.5f);
+    ImGui::ColorEdit4("Light Color", &light_environment.light_color[0]);
+    ImGui::ColorEdit4("Ambient Color", &light_environment.ambient_color[0]);
+
+    auto& colour_correction = light_environment.colour_correction;
+    ImGui::DragFloat("Exposure", &colour_correction.exposure, 0.01f, 0.f, 10.f);
+    ImGui::DragFloat("Contrast", &colour_correction.contrast, 0.01f, 0.f, 10.f);
+    ImGui::DragFloat("Gamma", &colour_correction.gamma, 0.01f, 0.f, 10.f);
+    ImGui::DragFloat(
+      "Saturation", &colour_correction.saturation, 0.01f, 0.f, 10.f);
+    ImGui::ColorEdit3("Tint", &colour_correction.tint[0]);
+
+    ImGui::DragFloat(
+      "Ortho Size", &light_environment.ortho_size, 0.5f, 1.f, 200.f);
+    ImGui::DragFloat(
+      "Near Plane", &light_environment.near_plane, 0.01f, 0.01f, 10.f);
+
+    if (!automatic_far_plane) {
+      ImGui::DragFloat(
+        "Far Plane", &light_environment.far_plane, 0.1f, 1.f, 500.f);
+    }
+
+    static constexpr std::array<const char*, 3> view_mode_names = {
+      "LookAtRH",
+      "LookAtLH",
+      "Default",
+    };
+    static constexpr std::array<const char*, 5> projection_names = {
+      "OrthoRH_ZO", "OrthoRH_NO", "OrthoLH_ZO", "OrthoLH_NO", "Default",
+    };
+    auto proj_index =
+      static_cast<int>(std::to_underlying(light_environment.projection_mode));
+    assert(proj_index >= 0 && proj_index < 5);
+    if (ImGui::Combo("Projection Mode",
+                     &proj_index,
+                     projection_names.data(),
+                     static_cast<int>(projection_names.size()))) {
+      light_environment.projection_mode =
+        static_cast<ShadowProjectionMode>(proj_index);
+    }
+
+    auto view_index =
+      static_cast<int>(std::to_underlying(light_environment.view_mode));
+    assert(view_index >= 0 && view_index < 3);
+    if (ImGui::Combo("View Mode",
+                     &view_index,
+                     view_mode_names.data(),
+                     static_cast<int>(view_mode_names.size()))) {
+      light_environment.view_mode = static_cast<ShadowViewMode>(view_index);
+    }
+
+    if (ImGui::TreeNodeEx("Bloom",
+                          ImGuiTreeNodeFlags_DefaultOpen |
+                            ImGuiTreeNodeFlags_OpenOnDoubleClick)) {
+      bloom_pass->on_interface();
+      ImGui::DragFloat(
+        "Bloom strength", &light_environment.bloom_strength, 0.01f, 0.f, 10.f);
+      ImGui::TreePop();
+    }
+
+    ImGui::End();
   }
 }
 
@@ -589,15 +808,11 @@ Renderer::get_renderer_descriptor_set_layout(Badge<AssetReloader>) const
 auto
 Renderer::destroy() -> void
 {
-  for (auto& sema : geometry_complete_semaphores) {
-    vkDestroySemaphore(device->get_device(), sema, nullptr);
-  }
-  for (auto& sema : bloom_complete_semaphores) {
-    vkDestroySemaphore(device->get_device(), sema, nullptr);
-  }
-
   white_texture.reset();
   black_texture.reset();
+
+  geometry_complete_semaphores.clear();
+  bloom_complete_semaphores.clear();
 }
 
 Renderer::~Renderer()
@@ -606,15 +821,13 @@ Renderer::~Renderer()
 }
 
 auto
-Renderer::submit(const RendererSubmit& cmd,
-                 const glm::mat4& transform,
-                 const std::uint32_t optional_identifier) -> void
+Renderer::submit(const RendererSubmit& cmd, const glm::mat4& transform) -> void
 {
   if (cmd.mesh == nullptr) {
     return;
   }
 
-  const bool has_optional_identifier = optional_identifier != 0;
+  const bool has_optional_identifier = cmd.identifier != 0;
 
   for (auto& submesh : cmd.mesh->get_submeshes()) {
     auto command = DrawCommand{
@@ -624,7 +837,7 @@ Renderer::submit(const RendererSubmit& cmd,
     };
     draw_commands[command].emplace_back(transform);
     if (has_optional_identifier) {
-      identifiers[command].emplace_back(optional_identifier);
+      identifiers[command].emplace_back(cmd.identifier);
     }
     if (cmd.casts_shadows) {
       shadow_draw_commands[command].emplace_back(transform);
@@ -632,18 +845,26 @@ Renderer::submit(const RendererSubmit& cmd,
   }
 }
 
+static constexpr auto pack_vec3_colour = +[](const glm::vec3& color) {
+  return (static_cast<std::uint32_t>(color.b * 255.0f) << 16) |
+         (static_cast<std::uint32_t>(color.g * 255.0f) << 8) |
+         (static_cast<std::uint32_t>(color.r * 255.0f) << 0);
+};
+
+static constexpr auto pack_vec4_colour = +[](const glm::vec4& color) {
+  return (static_cast<std::uint32_t>(color.a * 255.0f) << 24) |
+         (static_cast<std::uint32_t>(color.b * 255.0f) << 16) |
+         (static_cast<std::uint32_t>(color.g * 255.0f) << 8) |
+         (static_cast<std::uint32_t>(color.r * 255.0f) << 0);
+};
+
 auto
 Renderer::submit_lines(const glm::vec3& start,
                        const glm::vec3& end,
                        const float width,
                        const glm::vec4& colour) -> void
 {
-  std::uint32_t packed_color =
-    (static_cast<std::uint32_t>(colour.a * 255.0f) << 24) |
-    (static_cast<std::uint32_t>(colour.b * 255.0f) << 16) |
-    (static_cast<std::uint32_t>(colour.g * 255.0f) << 8) |
-    (static_cast<std::uint32_t>(colour.r * 255.0f) << 0);
-
+  const auto packed_color = pack_vec4_colour(colour);
   line_instances.emplace_back(start, width, end, packed_color);
 }
 
@@ -757,7 +978,7 @@ Renderer::upload_line_instance_data() -> void
 }
 
 auto
-Renderer::update_shadow_buffers(const std::uint32_t frame_index) -> void
+Renderer::update_shadow_buffers() -> void
 {
   constexpr glm::vec3 up{ camera_constants::WORLD_UP };
 
@@ -769,6 +990,10 @@ Renderer::update_shadow_buffers(const std::uint32_t frame_index) -> void
       break;
     case ShadowViewMode::LookAtLH:
       view = glm::lookAtLH(
+        light_environment.light_position, light_environment.target, up);
+      break;
+    case ShadowViewMode::Default:
+      view = glm::lookAt(
         light_environment.light_position, light_environment.target, up);
       break;
   }
@@ -790,6 +1015,9 @@ Renderer::update_shadow_buffers(const std::uint32_t frame_index) -> void
       break;
     case ShadowProjectionMode::OrthoLH_NO:
       proj = glm::orthoLH_NO(-s, s, -s, s, n, f);
+      break;
+    case ShadowProjectionMode::Default:
+      proj = glm::ortho(-s, s, -s, s, n, f);
       break;
   }
 
@@ -825,8 +1053,7 @@ Renderer::update_identifiers()
 }
 
 auto
-Renderer::update_uniform_buffers(const std::uint32_t frame_index,
-                                 const glm::mat4& view,
+Renderer::update_uniform_buffers(const glm::mat4& view,
                                  const glm::mat4& projection,
                                  const glm::mat4& inverse_projection,
                                  const glm::vec3& camera_position) const -> void
@@ -836,30 +1063,31 @@ Renderer::update_uniform_buffers(const std::uint32_t frame_index,
     .inverse_vp = inverse_projection * view,
     .projection = projection,
     .view = view,
+    .inverse_projection = glm::inverse(projection),
     .camera_position = { camera_position, 1.0F },
+    .screen_size_near_far = {geometry_image->width(), geometry_image->height(), camera_environment.z_near, camera_environment.z_far,},
   };
   camera_uniform_buffer->upload_with_offset(std::span{ &buffer, 1 },
                                             sizeof(CameraBuffer) * frame_index);
-
   const FrustumBuffer frustum{ camera_frustum.planes };
   frustum_buffer->upload_with_offset(std::span{ &frustum, 1 },
                                      sizeof(FrustumBuffer) * frame_index);
 }
 
 auto
-Renderer::begin_frame(const std::uint32_t frame_index, const VP& matrices)
-  -> void
+Renderer::begin_frame(const VP& matrices) -> void
 {
+  frame_index = swapchain->get_frame_index();
   const auto vp = matrices.projection * matrices.view;
   const auto position = matrices.view[3];
-  update_uniform_buffers(frame_index,
-                         matrices.view,
-                         matrices.projection,
-                         matrices.inverse_projection,
-                         position);
-  update_shadow_buffers(frame_index);
+  update_uniform_buffers(
+    matrices.view, matrices.projection, matrices.inverse_projection, position);
+  update_shadow_buffers();
   update_frustum(vp);
   update_identifiers();
+
+  point_light_system->upload_to_gpu(frame_index);
+
   draw_commands.clear();
   shadow_draw_commands.clear();
   identifiers.clear();
@@ -877,12 +1105,19 @@ static constexpr auto run_technique_passes =
   };
 
 auto
-Renderer::end_frame(const std::uint32_t frame_index) -> void
+Renderer::end_frame() -> void
 {
   ZoneScopedN("End frame");
 
   if (shadow_draw_commands.empty() && draw_commands.empty())
     return;
+
+  {
+    ZoneScopedN("Submit compute buffer (waiting on geometry)");
+    compute_command_buffer->begin_frame(frame_index);
+    run_light_culling_pass();
+    compute_command_buffer->submit_and_end(frame_index);
+  }
 
   DrawList flat_shadow_draw_commands;
   DrawList flat_draw_commands;
@@ -978,16 +1213,21 @@ Renderer::end_frame(const std::uint32_t frame_index) -> void
     command_buffer->begin_frame(frame_index);
   }
 
-  run_skybox_pass(frame_index);
+  run_skybox_pass();
 
-  run_shadow_pass(frame_index, flat_shadow_draw_commands);
-  run_z_prepass(frame_index, flat_draw_commands);
-  run_geometry_pass(frame_index, flat_draw_commands);
+  run_shadow_pass(flat_shadow_draw_commands);
+  run_z_prepass(flat_draw_commands);
 
-#if IS_DEBUG
-  run_identifier_pass(frame_index, flat_draw_commands);
-#endif
+  run_geometry_pass(flat_draw_commands);
 
+  static constexpr bool run_point_lights_pass = true;
+  if constexpr (run_point_lights_pass) {
+    run_point_light_pass(flat_draw_commands);
+  }
+
+  if constexpr (is_debug) {
+    run_identifier_pass(flat_draw_commands);
+  }
   // Add image barrier to prepare geometry_image for compute shader read
   {
     ZoneScopedN("Geometry to Compute Barrier");
@@ -1023,27 +1263,35 @@ Renderer::end_frame(const std::uint32_t frame_index) -> void
   // Begin compute work
   compute_command_buffer->begin_frame(frame_index);
 
-  run_bloom_pass(frame_index);
+  run_bloom_pass();
 
-  compute_command_buffer->submit_and_end(
-    frame_index,
-    geometry_complete_semaphores.at(frame_index),
-    bloom_complete_semaphores.at(frame_index));
+  {
+    ZoneScopedN("Submit compute buffer (waiting on geometry)");
+    compute_command_buffer->submit_and_end(
+      frame_index,
+      geometry_complete_semaphores.at(frame_index),
+      bloom_complete_semaphores.at(frame_index));
+  }
 
-  // Begin final graphics work
+  // Begin frame_index graphics work
   command_buffer->begin_frame_persist_query_pools(frame_index);
-
-  run_composite_pass(frame_index);
-  run_postprocess_passes(frame_index);
 
   run_technique_passes(techniques, *command_buffer, frame_index);
 
-  command_buffer->submit_and_end(
-    frame_index, bloom_complete_semaphores.at(frame_index), VK_NULL_HANDLE);
+  run_composite_pass();
+  run_postprocess_passes();
+
+  {
+    ZoneScopedN("Submit geometry buffer (waiting on compute)");
+
+    command_buffer->submit_and_end(
+      frame_index, bloom_complete_semaphores.at(frame_index), VK_NULL_HANDLE);
+  }
 }
 
 auto
-Renderer::resize(const std::uint32_t width, const std::uint32_t height) -> void
+Renderer::on_resize(const std::uint32_t width, const std::uint32_t height)
+  -> void
 {
   geometry_image->resize(width, height);
   geometry_msaa_image->resize(width, height);
@@ -1052,16 +1300,25 @@ Renderer::resize(const std::uint32_t width, const std::uint32_t height) -> void
   skybox_attachment_texture->resize(width, height);
   composite_attachment_texture->resize(width, height);
   colour_corrected_image->resize(width, height);
+  identifier_image->resize(width, height);
+  light_culling_debug_image->resize(width, height);
 
   bloom_pass->resize(width, height);
+
+  for (const auto& t : techniques | std::views::values) {
+    t->on_resize(width, height);
+  }
 
   if (skybox_material)
     skybox_material->invalidate(skybox_attachment_texture.get());
 
   if (composite_attachment_material) {
-    composite_attachment_material->invalidate(skybox_attachment_texture.get());
-    composite_attachment_material->invalidate(geometry_image.get());
-    composite_attachment_material->invalidate(&bloom_pass->get_output_image());
+    std::array<const Image*, 3> images = {
+      skybox_attachment_texture.get(),
+      geometry_image.get(),
+      &bloom_pass->get_output_image(),
+    };
+    composite_attachment_material->invalidate(images);
   }
 
   if (colour_corrected_material)
@@ -1072,6 +1329,20 @@ auto
 Renderer::get_output_image() const -> const Image&
 {
   return *colour_corrected_image;
+}
+
+auto
+Renderer::get_shadow_image() const -> const Image*
+{
+  return techniques.at("shadow_gui")->get_output();
+}
+
+auto
+Renderer::get_point_lights_image() const -> const Image*
+{
+  if (!techniques.contains("point_lights"))
+    return nullptr;
+  return techniques.at("point_lights")->get_output();
 }
 
 auto
@@ -1088,10 +1359,25 @@ Renderer::update_camera(const EditorCamera& camera) -> void
   };
 }
 
+auto
+Renderer::update_material_by_name(const std::string& name,
+                                  const PipelineBlueprint& blueprint) -> bool
+{
+  const auto it = material_registry.find(name);
+  if (it == material_registry.end()) {
+    Logger::log_error(
+      "Renderer::update_material_by_name: Material '{}' not found.", name);
+    return false;
+  }
+
+  it->second.reload_callback(blueprint);
+  return true;
+}
+
 #pragma region RenderPasses
 
 auto
-Renderer::run_skybox_pass(std::uint32_t frame_index) -> void
+Renderer::run_skybox_pass() -> void
 {
   ZoneScopedN("Skybox pass");
 
@@ -1163,27 +1449,19 @@ Renderer::run_skybox_pass(std::uint32_t frame_index) -> void
                           0,
                           nullptr);
 
-  if (const auto mesh_expected =
-        MeshCache::the().get_mesh<MeshType::CubeOnlyPosition>();
+  if (const auto mesh_expected = MeshCache::the().get_mesh<MeshType::Cube>();
       mesh_expected.has_value()) {
     const auto& mesh = mesh_expected.value();
-    const auto& vertex_buffer = mesh->get_vertex_buffer();
-    const auto& index_buffer = mesh->get_index_buffer();
+    const auto* submesh = mesh->get_submesh(0);
+    Util::Renderer::bind_mesh_buffers<PositionOnlyVertex>(
+      cmd,
+      {
+        .mesh = mesh,
+      },
+      submesh,
+      *instance_shadow_vertex_buffer);
 
-    const std::array vertex_buffers = {
-      vertex_buffer->get(),
-    };
-    constexpr std::array<VkDeviceSize, 1> offsets = { 0 };
-    vkCmdBindVertexBuffers(cmd,
-                           0,
-                           static_cast<std::uint32_t>(vertex_buffers.size()),
-                           vertex_buffers.data(),
-                           offsets.data());
-    vkCmdBindIndexBuffer(
-      cmd, index_buffer->get(), 0, index_buffer->get_index_type());
-
-    vkCmdDrawIndexed(
-      cmd, static_cast<std::uint32_t>(index_buffer->get_count()), 1, 0, 0, 0);
+    vkCmdDrawIndexed(cmd, submesh->index_count, 1, 0, 0, 0);
   }
 
   vkCmdEndRendering(cmd);
@@ -1197,19 +1475,7 @@ Renderer::run_skybox_pass(std::uint32_t frame_index) -> void
 }
 
 auto
-bind_sets(auto cmd, auto layout, std::ranges::contiguous_range auto sets)
-{
-  auto valid = sets | std::views::filter(
-                        [](const auto& v) { return v != VK_NULL_HANDLE; });
-  for (auto& v : valid) {
-    vkCmdBindDescriptorSets(
-      cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 0, 1, &v, 0, nullptr);
-  }
-}
-
-auto
-Renderer::run_z_prepass(std::uint32_t frame_index, const DrawList& draw_list)
-  -> void
+Renderer::run_z_prepass(const DrawListView draw_list) -> void
 {
   ZoneScopedN("Z Prepass");
 
@@ -1221,6 +1487,8 @@ Renderer::run_z_prepass(std::uint32_t frame_index, const DrawList& draw_list)
 
   CoreUtils::cmd_transition_to_depth_attachment(
     cmd, geometry_depth_msaa_image->get_image());
+  CoreUtils::cmd_transition_to_depth_attachment(
+    cmd, geometry_depth_image->get_image());
 
   constexpr VkClearValue depth_clear = { .depthStencil = { 0.0f, 0 } };
   VkRenderingAttachmentInfo depth_attachment = {
@@ -1276,20 +1544,8 @@ Renderer::run_z_prepass(std::uint32_t frame_index, const DrawList& draw_list)
     if (!submesh)
       continue;
 
-    const auto& vb = cmd_info.mesh->get_vertex_buffer();
-    const auto& ib = cmd_info.mesh->get_index_buffer();
-
-    const VkDeviceSize vb_offset = submesh->vertex_offset * sizeof(Vertex);
-    const std::array vertex_buffers = { vb->get(),
-                                        instance_vertex_buffer->get() };
-    const std::array offsets = { vb_offset, 0ULL };
-
-    vkCmdBindVertexBuffers(cmd,
-                           0,
-                           static_cast<std::uint32_t>(vertex_buffers.size()),
-                           vertex_buffers.data(),
-                           offsets.data());
-    vkCmdBindIndexBuffer(cmd, ib->get(), 0, ib->get_index_type());
+    Util::Renderer::bind_mesh_buffers<PositionOnlyVertex>(
+      cmd, cmd_info, submesh, *instance_vertex_buffer);
 
     vkCmdDrawIndexed(cmd,
                      submesh->index_count,
@@ -1300,33 +1556,25 @@ Renderer::run_z_prepass(std::uint32_t frame_index, const DrawList& draw_list)
   }
 
   vkCmdEndRendering(cmd);
+  CoreUtils::cmd_transition_depth_to_shader_read(
+    cmd, geometry_depth_image->get_image());
   command_buffer->end_timer(frame_index, "z_prepass");
 
   Util::Vulkan::cmd_end_debug_label(cmd);
 }
 
 auto
-Renderer::run_geometry_pass(std::uint32_t frame_index,
-                            const DrawList& draw_list) -> void
+Renderer::run_point_light_pass(const DrawListView draw_list) -> void
 {
-  ZoneScopedN("Geometry pass");
+  ZoneScopedN("Point light pass");
 
-  command_buffer->begin_timer(frame_index, "geometry_pass");
+  command_buffer->begin_timer(frame_index, "point_light_pass");
 
   const VkCommandBuffer& cmd = command_buffer->get(frame_index);
   Util::Vulkan::cmd_begin_debug_label(
-    cmd, "Geometry Pass", { 0.5F, 0.5F, 0.0F, 1.0F });
-  CoreUtils::cmd_transition_image(
-    cmd,
-    {
-      .image = geometry_image->get_image(),
-      .old_layout = VK_IMAGE_LAYOUT_UNDEFINED,
-      .new_layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-      .src_access_mask = VK_ACCESS_SHADER_READ_BIT,
-      .dst_access_mask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
-      .src_stage_mask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-      .dst_stage_mask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-    });
+    cmd, "Point light pass", { 0.5F, 0.5F, 0.9F, 1.0F });
+  CoreUtils::cmd_transition_to_color_attachment(cmd,
+                                                geometry_image->get_image());
 
   constexpr VkClearValue clear_value = { .color = { { 0.f, 0.f, 0.f, 0.f } } };
   const VkRenderingAttachmentInfo color_attachment = {
@@ -1337,7 +1585,7 @@ Renderer::run_geometry_pass(std::uint32_t frame_index,
     .resolveMode = VK_RESOLVE_MODE_AVERAGE_BIT_KHR,
     .resolveImageView = geometry_image->get_view(),
     .resolveImageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-    .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+    .loadOp = VK_ATTACHMENT_LOAD_OP_LOAD,
     .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
     .clearValue = clear_value
   };
@@ -1386,23 +1634,19 @@ Renderer::run_geometry_pass(std::uint32_t frame_index,
   vkCmdSetScissor(cmd, 0, 1, &render_info.renderArea);
 
   // The pipeline should still come from the geometry main material.
-  auto& pipeline = geometry_material->get_pipeline();
+
+  auto& material = *point_light_system->get_material().get();
+  auto& pipeline = material.get_pipeline();
+
+  material.upload("light_index_list", light_index_list_buffer);
+  material.upload("light_grid_buffer", light_grid_buffer);
+
   vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.pipeline);
 
   for (auto&& [cmd_info, offset, instance_count] : draw_list) {
     const auto* submesh = cmd_info.mesh->get_submesh(cmd_info.submesh_index);
     if (!submesh)
       continue;
-
-    const auto& vertex_buffer = cmd_info.mesh->get_vertex_buffer();
-    const auto& index_buffer = cmd_info.mesh->get_index_buffer();
-    const auto& submesh_material =
-      cmd_info.mesh->get_material_by_submesh_index(cmd_info.submesh_index);
-
-    Material& material =
-      cmd_info.override_material.is_valid()
-        ? *Assets::Manager::the().get(cmd_info.override_material)
-        : *submesh_material;
 
     const auto& material_set = material.prepare_for_rendering(frame_index);
 
@@ -1419,24 +1663,138 @@ Renderer::run_geometry_pass(std::uint32_t frame_index,
                             0,
                             nullptr);
 
-    const VkDeviceSize vertex_offset_bytes =
-      submesh->vertex_offset * sizeof(Vertex);
-    const std::array vertex_buffers = {
-      vertex_buffer->get(),
-      instance_vertex_buffer->get(),
-    };
-    const std::array offsets = { vertex_offset_bytes, 0ULL };
-
-    vkCmdBindVertexBuffers(cmd,
-                           0,
-                           static_cast<std::uint32_t>(vertex_buffers.size()),
-                           vertex_buffers.data(),
-                           offsets.data());
-    vkCmdBindIndexBuffer(
-      cmd, index_buffer->get(), 0, index_buffer->get_index_type());
+    Util::Renderer::bind_mesh_buffers<Vertex>(
+      cmd, cmd_info, submesh, *instance_vertex_buffer);
 
     auto&& [pc_stage, pc_offset, pc_size, pc_pointer] =
       material.generate_push_constant_data();
+
+    vkCmdPushConstants(
+      cmd, pipeline.layout, pc_stage, pc_offset, pc_size, pc_pointer);
+
+    vkCmdDrawIndexed(cmd,
+                     submesh->index_count,
+                     instance_count,
+                     submesh->index_offset,
+                     0,
+                     offset);
+  }
+
+  vkCmdEndRendering(cmd);
+
+  command_buffer->end_timer(frame_index, "point_light_pass");
+
+  Util::Vulkan::cmd_end_debug_label(cmd);
+}
+
+auto
+Renderer::run_geometry_pass(const DrawListView draw_list) -> void
+{
+  ZoneScopedN("Geometry pass");
+
+  command_buffer->begin_timer(frame_index, "geometry_pass");
+
+  const VkCommandBuffer& cmd = command_buffer->get(frame_index);
+  Util::Vulkan::cmd_begin_debug_label(
+    cmd, "Geometry Pass", { 0.5F, 0.5F, 0.0F, 1.0F });
+  CoreUtils::cmd_transition_to_color_attachment(cmd,
+                                                geometry_image->get_image());
+
+  constexpr VkClearValue clear_value = { .color = { { 0.f, 0.f, 0.f, 0.f } } };
+  const VkRenderingAttachmentInfo color_attachment = {
+    .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+    .pNext = nullptr,
+    .imageView = geometry_msaa_image->get_view(),
+    .imageLayout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
+    .resolveMode = VK_RESOLVE_MODE_AVERAGE_BIT_KHR,
+    .resolveImageView = geometry_image->get_view(),
+    .resolveImageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+    .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+    .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+    .clearValue = clear_value
+  };
+
+  VkRenderingAttachmentInfo depth_attachment = {
+    .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+    .pNext = nullptr,
+    .imageView = geometry_depth_msaa_image->get_view(),
+    .imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+    .resolveMode = VK_RESOLVE_MODE_NONE,
+    .resolveImageView = VK_NULL_HANDLE,
+    .resolveImageLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+    .loadOp = VK_ATTACHMENT_LOAD_OP_LOAD,
+    .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+    .clearValue = {},
+  };
+
+  const std::array colour_attachments = { color_attachment };
+  const VkRenderingInfo render_info = {
+    .sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
+    .pNext = nullptr,
+    .flags = 0,
+    .renderArea = { .offset = { 0, 0 },
+                    .extent = { geometry_image->width(),
+                                geometry_image->height() } },
+    .layerCount = 1,
+    .viewMask = 0,
+    .colorAttachmentCount =
+      static_cast<std::uint32_t>(colour_attachments.size()),
+    .pColorAttachments = colour_attachments.data(),
+    .pDepthAttachment = &depth_attachment,
+    .pStencilAttachment = nullptr,
+  };
+
+  vkCmdBeginRendering(cmd, &render_info);
+
+  const VkViewport viewport = {
+    .x = 0.f,
+    .y = static_cast<float>(geometry_image->height()),
+    .width = static_cast<float>(geometry_image->width()),
+    .height = -static_cast<float>(geometry_image->height()),
+    .minDepth = 1.f,
+    .maxDepth = 0.f,
+  };
+  vkCmdSetViewport(cmd, 0, 1, &viewport);
+  vkCmdSetScissor(cmd, 0, 1, &render_info.renderArea);
+
+  auto& pipeline = geometry_material->get_pipeline();
+  vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.pipeline);
+
+  for (auto&& [cmd_info, offset, instance_count] : draw_list) {
+    const auto* submesh = cmd_info.mesh->get_submesh(cmd_info.submesh_index);
+    if (!submesh)
+      continue;
+
+    const auto& submesh_material =
+      cmd_info.mesh->get_material_by_submesh_index(cmd_info.submesh_index);
+
+    Material& material =
+      cmd_info.override_material.is_valid()
+        ? *Assets::Manager::the().get(cmd_info.override_material)
+        : *submesh_material;
+
+    material.upload("light_index_list", light_index_list_buffer);
+    material.upload("light_grid_buffer", light_grid_buffer);
+
+    std::array descriptor_sets{
+      descriptor_set_manager->get_set(frame_index),
+      material.prepare_for_rendering(frame_index),
+    };
+    vkCmdBindDescriptorSets(cmd,
+                            VK_PIPELINE_BIND_POINT_GRAPHICS,
+                            pipeline.layout,
+                            0,
+                            static_cast<std::uint32_t>(descriptor_sets.size()),
+                            descriptor_sets.data(),
+                            0,
+                            nullptr);
+
+    Util::Renderer::bind_mesh_buffers<Vertex>(
+      cmd, cmd_info, submesh, *instance_vertex_buffer);
+
+    auto&& [pc_stage, pc_offset, pc_size, pc_pointer] =
+      material.generate_push_constant_data();
+
     vkCmdPushConstants(
       cmd, pipeline.layout, pc_stage, pc_offset, pc_size, pc_pointer);
 
@@ -1481,7 +1839,7 @@ Renderer::run_geometry_pass(std::uint32_t frame_index,
 }
 
 auto
-Renderer::run_bloom_pass(uint32_t frame_index) -> void
+Renderer::run_bloom_pass() -> void
 {
   compute_command_buffer->begin_timer(frame_index, "bloom_pass");
 
@@ -1494,8 +1852,7 @@ Renderer::run_bloom_pass(uint32_t frame_index) -> void
 }
 
 auto
-Renderer::run_identifier_pass(const std::uint32_t frame_index,
-                              const DrawList& draw_list) -> void
+Renderer::run_identifier_pass(const DrawListView draw_list) -> void
 {
   ZoneScopedN("Identifier pass");
 
@@ -1585,20 +1942,8 @@ Renderer::run_identifier_pass(const std::uint32_t frame_index,
     if (!submesh)
       continue;
 
-    const auto& vb = cmd_info.mesh->get_vertex_buffer();
-    const auto& ib = cmd_info.mesh->get_index_buffer();
-
-    const VkDeviceSize vb_offset = submesh->vertex_offset * sizeof(Vertex);
-    const std::array vertex_buffers = { vb->get(),
-                                        instance_vertex_buffer->get() };
-    const std::array offsets = { vb_offset, 0ULL };
-
-    vkCmdBindVertexBuffers(cmd,
-                           0,
-                           static_cast<std::uint32_t>(vertex_buffers.size()),
-                           vertex_buffers.data(),
-                           offsets.data());
-    vkCmdBindIndexBuffer(cmd, ib->get(), 0, ib->get_index_type());
+    Util::Renderer::bind_mesh_buffers<PositionOnlyVertex>(
+      cmd, cmd_info, submesh, *instance_vertex_buffer);
 
     vkCmdBindDescriptorSets(cmd,
                             VK_PIPELINE_BIND_POINT_GRAPHICS,
@@ -1626,7 +1971,74 @@ Renderer::run_identifier_pass(const std::uint32_t frame_index,
 }
 
 auto
-Renderer::run_culling_compute_pass(std::uint32_t frame_index) -> void
+Renderer::run_light_culling_pass() -> void
+{
+  return; /*
+
+   ZoneScopedN("Light culling pass");
+   const auto cmd = compute_command_buffer->get(frame_index);
+   Util::Vulkan::cmd_begin_debug_label(
+     cmd, "Light culling pass", { 1.0, 0.0, 0.0, 1.0 });
+
+   {
+     ZoneScopedN("Upload via one time buffer");
+     static constexpr std::uint32_t zero = 0;
+     global_light_counter_buffer->upload(
+       std::span{ &zero, 1 }); // Reset atomic counter to 0
+   }
+
+   const std::uint32_t tiles_x =
+     (geometry_image->width() + tile_size - 1) / tile_size;
+   const std::uint32_t tiles_y =
+     (geometry_image->height() + tile_size - 1) / tile_size;
+   constexpr std::uint32_t tiles_z = num_z_slices;
+
+   compute_command_buffer->begin_timer(frame_index, "light_culling");
+
+   const auto& pipeline = light_culling_material->get_pipeline();
+   const std::array sets = {
+     descriptor_set_manager->get_set(frame_index),
+     light_culling_material->prepare_for_rendering(frame_index),
+   };
+
+   vkCmdBindPipeline(cmd, pipeline.bind_point, pipeline.pipeline);
+   vkCmdBindDescriptorSets(cmd,
+                           pipeline.bind_point,
+                           pipeline.layout,
+                           0,
+                           static_cast<std::uint32_t>(sets.size()),
+                           sets.data(),
+                           0,
+                           nullptr);
+
+   const std::uint32_t dispatch_x = (tiles_x + 7) / 8;
+   const std::uint32_t dispatch_y = (tiles_y + 7) / 8;
+   constexpr std::uint32_t dispatch_z = (tiles_z + 3) / 4;
+
+   vkCmdDispatch(cmd, dispatch_x, dispatch_y, dispatch_z);
+
+   VkMemoryBarrier memory_barrier = {};
+   memory_barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+   memory_barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+   memory_barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+
+   vkCmdPipelineBarrier(cmd,
+                        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                        0,
+                        1,
+                        &memory_barrier,
+                        0,
+                        nullptr,
+                        0,
+                        nullptr);
+
+   compute_command_buffer->end_timer(frame_index, "light_culling");
+   Util::Vulkan::cmd_end_debug_label(cmd);*/
+}
+
+auto
+Renderer::run_culling_compute_pass() -> void
 {
   ZoneScopedN("Compute pass");
 
@@ -1713,8 +2125,7 @@ Renderer::run_culling_compute_pass(std::uint32_t frame_index) -> void
 }
 
 auto
-Renderer::run_shadow_pass(std::uint32_t frame_index, const DrawList& draw_list)
-  -> void
+Renderer::run_shadow_pass(const DrawListView draw_list) -> void
 {
   ZoneScopedN("Shadow pass");
 
@@ -1793,20 +2204,8 @@ Renderer::run_shadow_pass(std::uint32_t frame_index, const DrawList& draw_list)
     if (!submesh)
       continue;
 
-    const auto& vb = cmd_info.mesh->get_vertex_buffer();
-    const auto& ib = cmd_info.mesh->get_index_buffer();
-
-    const VkDeviceSize vb_offset = submesh->vertex_offset * sizeof(Vertex);
-    const std::array vertex_buffers = { vb->get(),
-                                        instance_vertex_buffer->get() };
-    const std::array offsets = { vb_offset, 0ULL };
-
-    vkCmdBindVertexBuffers(cmd,
-                           0,
-                           static_cast<std::uint32_t>(vertex_buffers.size()),
-                           vertex_buffers.data(),
-                           offsets.data());
-    vkCmdBindIndexBuffer(cmd, ib->get(), 0, ib->get_index_type());
+    Util::Renderer::bind_mesh_buffers<PositionOnlyVertex>(
+      cmd, cmd_info, submesh, *instance_shadow_vertex_buffer);
 
     vkCmdBindDescriptorSets(cmd,
                             VK_PIPELINE_BIND_POINT_GRAPHICS,
@@ -1835,7 +2234,7 @@ Renderer::run_shadow_pass(std::uint32_t frame_index, const DrawList& draw_list)
 }
 
 auto
-Renderer::run_colour_correction_pass(std::uint32_t frame_index) -> void
+Renderer::run_colour_correction_pass() -> void
 {
   ZoneScopedN("Colour correction pass");
 
@@ -1858,7 +2257,7 @@ Renderer::run_colour_correction_pass(std::uint32_t frame_index) -> void
       .dst_stage_mask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
     });
 
-  const VkClearValue clear_value = { .color = { { 0.F, 0.F, 0.F, 0.F } } };
+  constexpr VkClearValue clear_value = { .color = { { 0.F, 0.F, 0.F, 0.F } } };
   VkRenderingAttachmentInfo color_attachment = {
     .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
     .imageView = colour_corrected_image->get_view(),
@@ -1911,6 +2310,14 @@ Renderer::run_colour_correction_pass(std::uint32_t frame_index) -> void
                           0,
                           nullptr);
 
+  const auto& colour_correction = light_environment.colour_correction;
+  vkCmdPushConstants(cmd,
+                     pipeline.layout,
+                     VK_SHADER_STAGE_FRAGMENT_BIT,
+                     0,
+                     sizeof(light_environment.colour_correction),
+                     &colour_correction);
+
   vkCmdDraw(cmd, 3, 1, 0, 0);
   vkCmdEndRendering(cmd);
 
@@ -1922,7 +2329,7 @@ Renderer::run_colour_correction_pass(std::uint32_t frame_index) -> void
 }
 
 auto
-Renderer::run_composite_pass(const std::uint32_t frame_index) -> void
+Renderer::run_composite_pass() -> void
 {
   ZoneScopedN("Composite pass");
 
@@ -1985,6 +2392,14 @@ Renderer::run_composite_pass(const std::uint32_t frame_index) -> void
                           0,
                           nullptr);
 
+  const auto& bloom_strength = light_environment.bloom_strength;
+  vkCmdPushConstants(cmd,
+                     pipeline.layout,
+                     VK_SHADER_STAGE_FRAGMENT_BIT,
+                     0,
+                     sizeof(float),
+                     &bloom_strength);
+
   vkCmdDraw(cmd, 3, 1, 0, 0);
   vkCmdEndRendering(cmd);
 
@@ -1995,4 +2410,4 @@ Renderer::run_composite_pass(const std::uint32_t frame_index) -> void
   Util::Vulkan::cmd_end_debug_label(cmd);
 }
 
-#pragma endregion RenderPasses
+#pragma endregion RenderPass

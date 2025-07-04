@@ -125,13 +125,22 @@ enum class MouseCode : std::uint8_t
   MouseButton6 = 5,
   MouseButton7 = 6,
   MouseButton8 = 7,
-  MouseButtonLast = 7,
-  MouseButtonLeft = 0,
-  MouseButtonRight = 1,
-  MouseButtonMiddle = 2
+  MouseButtonLast = MouseButton8,
+  MouseButtonLeft = MouseButton1,
+  MouseButtonRight = MouseButton2,
+  MouseButtonMiddle = MouseButton3,
+  Back = MouseButton4,
+  Forward = MouseButton5
 };
 auto
 operator<<(std::ostream& os, KeyCode key) -> std::ostream&;
+
+// Comparison with std::integral types
+constexpr auto
+operator==(MouseCode lhs, std::integral auto rhs) -> bool
+{
+  return static_cast<std::uint8_t>(lhs) == static_cast<std::uint8_t>(rhs);
+}
 
 enum class EventType : std::int8_t
 {
@@ -179,6 +188,28 @@ enum class EventCategory : std::int32_t
   Editor = bit(6)
 };
 
+enum class Modifiers : std::int32_t
+{
+  Shift = 1,
+  Control = 2,
+  Alt = 4,
+  Super = 8,
+  CapsLock = 16,
+  NumLock = 32,
+};
+constexpr auto
+operator|(Modifiers l, Modifiers r) -> Modifiers
+{
+  return static_cast<Modifiers>(static_cast<std::int32_t>(l) |
+                                static_cast<std::int32_t>(r));
+}
+constexpr auto
+operator&(Modifiers l, Modifiers r) -> Modifiers
+{
+  return static_cast<Modifiers>(static_cast<std::int32_t>(l) &
+                                static_cast<std::int32_t>(r));
+}
+
 #define EVENT_CLASS_TYPE(type)                                                 \
   static auto get_static_type() -> EventType                                   \
   {                                                                            \
@@ -224,7 +255,8 @@ public:
     requires std::invocable<Fn, Evt&>
   auto dispatch(Fn&& fn) -> bool
   {
-    if (event.get_event_type() == Evt::get_static_type() && !event.handled) {
+    const auto should_bubble = !event.handled;
+    if (event.get_event_type() == Evt::get_static_type() && should_bubble) {
       auto& concrete = static_cast<Evt&>(event);
       event.handled = fn(concrete);
       return true;
@@ -295,13 +327,18 @@ public:
 class KeyPressedEvent : public Event
 {
 public:
-  explicit KeyPressedEvent(KeyCode keyCode, std::int32_t repeat = 0)
-    : key(keyCode)
+  explicit KeyPressedEvent(KeyCode key_code,
+                           Modifiers mods,
+                           std::int32_t repeat = 0)
+    : key(key_code)
     , repeat_count(repeat)
+    , modifiers(mods)
   {
   }
   KeyCode key;
   std::int32_t repeat_count;
+  Modifiers modifiers;
+
   EVENT_CLASS_TYPE(KeyPressed)
   EVENT_CLASS_CATEGORY(Keyboard)
 };
@@ -309,11 +346,13 @@ public:
 class KeyReleasedEvent : public Event
 {
 public:
-  explicit KeyReleasedEvent(KeyCode keyCode)
-    : key(keyCode)
+  explicit KeyReleasedEvent(KeyCode key_code, Modifiers mods)
+    : key(key_code)
+    , modifiers(mods)
   {
   }
   KeyCode key;
+  Modifiers modifiers;
   EVENT_CLASS_TYPE(KeyReleased)
   EVENT_CLASS_CATEGORY(Keyboard)
 };
@@ -333,8 +372,8 @@ public:
 class MouseButtonPressedEvent : public Event
 {
 public:
-  explicit MouseButtonPressedEvent(std::int32_t button)
-    : button(button)
+  explicit MouseButtonPressedEvent(MouseCode b)
+    : button(std::to_underlying(b))
   {
   }
   std::int32_t button;
@@ -345,8 +384,8 @@ public:
 class MouseButtonReleasedEvent : public Event
 {
 public:
-  explicit MouseButtonReleasedEvent(std::int32_t button)
-    : button(button)
+  explicit MouseButtonReleasedEvent(MouseCode b)
+    : button(std::to_underlying(b))
   {
   }
   std::int32_t button;

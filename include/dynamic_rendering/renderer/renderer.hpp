@@ -1,6 +1,8 @@
 #pragma once
 
+#include "environments.hpp"
 #include "mesh.hpp"
+#include "point_light_system.hpp"
 
 #include <concepts>
 #include <glm/glm.hpp>
@@ -15,13 +17,12 @@
 #include "core/device.hpp"
 #include "core/gpu_buffer.hpp"
 #include "core/image.hpp"
+#include "core/semaphore.hpp"
 #include "passes/bloom_pass.hpp"
 #include "pipeline/blueprint_registry.hpp"
 #include "renderer/draw_command.hpp"
 #include "renderer/frustum.hpp"
 #include "renderer/material.hpp"
-#include "techniques/fullscreen_technique.hpp"
-#include "techniques/shadow_gui_technique.hpp"
 
 #include <BS_thread_pool.hpp>
 
@@ -40,9 +41,10 @@ enum class RenderPass : std::uint8_t
   ComputeCullingVisibility,
   Skybox,
   ShadowGUI,
+  Composite,
+  BloomBlurHorizontal,
+  BloomBlurVertical,
 };
-auto
-to_renderpass(std::string_view name) -> RenderPass;
 
 struct LineInstanceData
 {
@@ -57,12 +59,14 @@ static_assert(sizeof(LineInstanceData) == 32,
 class Renderer
 {
 public:
-  Renderer(const Device&, const Window&, BS::priority_thread_pool&);
+  Renderer(const Device&,
+           const Swapchain&,
+           const Window&,
+           BS::priority_thread_pool&);
   ~Renderer();
 
-  auto submit(const RendererSubmit&,
-              const glm::mat4& = glm::mat4{ 1.0F },
-              std::uint32_t optional_identifier = 0) -> void;
+  auto submit(const RendererSubmit& cmd,
+              const glm::mat4& transform = glm::mat4{ 1.0F }) -> void;
   auto submit_lines(const glm::vec3&, const glm::vec3&, float, const glm::vec4&)
     -> void;
   auto submit_aabb(const glm::vec3& min,
@@ -71,7 +75,7 @@ public:
                    float width = 1.f) -> void;
   auto submit_aabb(const AABB& aabb,
                    const glm::vec4& color = { 1.f, 1.f, 0.f, 1.f },
-                   float width = 1.f)
+                   const float width = 1.f)
   {
     submit_aabb(aabb.min(), aabb.max(), color, width);
   }
@@ -82,18 +86,13 @@ public:
     const glm::mat4& inverse_projection;
     const glm::mat4& view;
   };
-  auto begin_frame(std::uint32_t, const VP&) -> void;
-  auto end_frame(std::uint32_t) -> void;
-  auto resize(std::uint32_t, std::uint32_t) -> void;
+  auto begin_frame(const VP&) -> void;
+  auto end_frame() -> void;
+  auto on_resize(std::uint32_t, std::uint32_t) -> void;
   [[nodiscard]] auto get_output_image() const -> const Image&;
-  [[nodiscard]] auto get_shadow_image() const -> const Image&
-  {
-    auto* shadow_mapped = techniques.at("shadow_gui").get();
-    if (const auto* p = dynamic_cast<ShadowGUITechnique*>(shadow_mapped)) {
-      return p->get_output();
-    }
-    throw;
-  }
+  [[nodiscard]] auto get_shadow_image() const -> const Image*;
+  [[nodiscard]] auto get_point_lights_image() const -> const Image*;
+
   [[nodiscard]] auto get_command_buffer() const -> CommandBuffer&
   {
     return *command_buffer;
@@ -108,69 +107,54 @@ public:
     camera_frustum.update(vp);
   }
 
-  auto get_light_environment() -> auto& { return light_environment; }
-  [[nodiscard]] auto get_light_environment() const -> const auto&
-  {
-    return light_environment;
-  }
-  auto get_camera_environment() -> auto& { return camera_environment; }
-  [[nodiscard]] auto get_camera_environment() const -> const auto&
-  {
-    return camera_environment;
-  }
-  [[nodiscard]] auto get_material_by_name(const std::string& name) const
-    -> Material*
-  {
-    switch (to_renderpass(name)) {
-      using enum RenderPass;
-      case Invalid:
-        return nullptr;
-      case MainGeometry:
-        return geometry_material.get();
-      case Shadow:
-        return shadow_material.get();
-      case Line:
-        return line_material.get();
-      case ZPrepass:
-        return z_prepass_material.get();
-      case ColourCorrection:
-        return colour_corrected_material.get();
-      case Skybox:
-        return skybox_material.get();
-      case ComputePrefixCullingFirst:
-        return cull_prefix_sum_material_first.get();
-      case ComputePrefixCullingSecond:
-        return cull_prefix_sum_material_second.get();
-      case ComputePrefixCullingDistribute:
-        return cull_prefix_sum_material_distribute.get();
-      case ComputeCullingScatter:
-        return cull_scatter_material.get();
-      case ComputeCullingVisibility:
-        return cull_visibility_material.get();
-      case ShadowGUI:
-        return techniques.at("shadow_gui")->get_material();
-      default:
-        assert(false && "Unknown render pass name");
-        return nullptr;
-    }
-  }
+  auto update_material_by_name(const std::string& name,
+                               const PipelineBlueprint&) -> bool;
+
   [[nodiscard]] auto get_renderer_descriptor_set_layout(
     Badge<AssetReloader>) const -> VkDescriptorSetLayout;
-  static auto get_white_texture() { return white_texture.get(); }
-  static auto get_black_texture() { return black_texture.get(); }
+  static auto is_default_texture(const Image* image) -> bool
+  {
+    return image == white_texture.get() || image == black_texture.get();
+  }
+  [[nodiscard]] auto get_point_light_system() const -> PointLightSystem&
+  {
+    return *point_light_system;
+  }
+
+  [[nodiscard]] auto get_frame_index() const -> std::uint32_t
+  {
+    return frame_index;
+  }
+
+  auto on_interface() -> void;
+
+  static auto initialise_textures(const Device& device) -> void;
+  static auto get_white_texture()
+  {
+    assert(white_texture);
+    return white_texture.get();
+  }
+  static auto get_black_texture()
+  {
+    assert(black_texture);
+    return black_texture.get();
+  }
 
 private:
   const Device* device{ nullptr };
+  const Swapchain* swapchain{ nullptr };
+  std::uint32_t frame_index{ 0 };
   BS::priority_thread_pool* thread_pool{ nullptr };
   std::unique_ptr<DescriptorSetManager> descriptor_set_manager;
 
-  frame_array<VkSemaphore> geometry_complete_semaphores{};
-  frame_array<VkSemaphore> bloom_complete_semaphores{};
+  SemaphoreArray geometry_complete_semaphores{};
+  SemaphoreArray bloom_complete_semaphores{};
 
   Frustum camera_frustum;
   Frustum light_frustum;
   LightEnvironment light_environment;
   CameraEnvironment camera_environment{};
+  std::unique_ptr<PointLightSystem> point_light_system;
 
   string_hash_map<Assets::Pointer<IFullscreenTechnique>> techniques;
 
@@ -224,39 +208,53 @@ private:
   std::uint32_t line_instance_count_this_frame{};
   auto upload_line_instance_data() -> void;
 
+  Assets::Pointer<Image> light_culling_debug_image;
+  Assets::Pointer<Material> light_culling_material;
+
+  std::unique_ptr<GPUBuffer> global_light_counter_buffer;
+  std::unique_ptr<GPUBuffer> light_grid_buffer;
+  std::unique_ptr<GPUBuffer> light_index_list_buffer;
+
   std::unique_ptr<GPUBuffer> identifier_buffer;
 
   std::unique_ptr<BloomPass> bloom_pass;
-  auto run_bloom_pass(uint32_t uint32) -> void;
+  auto run_bloom_pass() -> void;
 
   DrawCommandMap draw_commands{};
   IdentifierMap identifiers{};
   DrawCommandMap shadow_draw_commands{};
 
+  using ReloadCallback = std::function<void(const PipelineBlueprint&)>;
+  struct MaterialRecord
+  {
+    Material* material_ptr; // NOTE: Always check nullptr here.
+    ReloadCallback reload_callback;
+  };
+  string_hash_map<MaterialRecord> material_registry;
+
   std::unique_ptr<GPUBuffer> camera_uniform_buffer;
   std::unique_ptr<GPUBuffer> shadow_camera_buffer;
   std::unique_ptr<GPUBuffer> frustum_buffer;
-  auto update_uniform_buffers(std::uint32_t,
-                              const glm::mat4& view,
+  auto update_uniform_buffers(const glm::mat4& view,
                               const glm::mat4& proj,
                               const glm::mat4& inverse_proj,
                               const glm::vec3&) const -> void;
-  auto update_shadow_buffers(std::uint32_t) -> void;
+  auto update_shadow_buffers() -> void;
   void update_identifiers();
 
-  auto run_culling_compute_pass(std::uint32_t) -> void;
-  auto run_skybox_pass(std::uint32_t) -> void;
-  auto run_shadow_pass(std::uint32_t, const DrawList&) -> void;
-  auto run_z_prepass(std::uint32_t, const DrawList&) -> void;
-  auto run_geometry_pass(std::uint32_t, const DrawList&) -> void;
-  auto run_composite_pass(std::uint32_t) -> void;
-  auto run_colour_correction_pass(std::uint32_t) -> void;
-  auto run_postprocess_passes(const std::uint32_t frame_index) -> void
-  {
-    run_colour_correction_pass(frame_index);
-  }
-  auto run_identifier_pass(std::uint32_t, const DrawList&) -> void;
+  auto run_culling_compute_pass() -> void;
+  auto run_skybox_pass() -> void;
+  auto run_shadow_pass(DrawListView) -> void;
+  auto run_z_prepass(DrawListView) -> void;
+  auto run_point_light_pass(DrawListView) -> void;
+  auto run_geometry_pass(DrawListView) -> void;
+  auto run_composite_pass() -> void;
+  auto run_colour_correction_pass() -> void;
+  auto run_postprocess_passes() -> void { run_colour_correction_pass(); }
+  auto run_identifier_pass(DrawListView) -> void;
+  auto run_light_culling_pass() -> void;
 
+  auto initialise_techniques() -> void;
   auto destroy() -> void;
 
   static inline Assets::Pointer<Image> white_texture{ nullptr };

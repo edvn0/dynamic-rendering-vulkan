@@ -3,7 +3,7 @@
 
 layout(local_size_x = 64) in;
 
-layout(std430, set = 1, binding = 0) buffer WorkgroupSums {
+layout(std430, set = 1, binding = 0) buffer workgroup_sums {
   uint group_totals[];
 };
 

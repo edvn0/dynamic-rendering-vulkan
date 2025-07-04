@@ -50,3 +50,8 @@ log_trace(const std::format_string<Args...>& fmt, Args&&... args) -> void
 }
 
 }
+
+#define LOGGER_INCLUDE_FORMATTERS
+#ifdef LOGGER_INCLUDE_FORMATTERS
+#include "core/logger/formatters.inl"
+#endif

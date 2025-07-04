@@ -6,28 +6,28 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(DISABLE_EXCEPTIONS ON)
 
 function(dynamic_rendering_set_target_options target)
-    if (MSVC)
-        target_compile_options(${target} PRIVATE /W4 /WX)
+        if(MSVC)
+                target_compile_options(${target} PRIVATE /W4 /WX)
 
-        if (DISABLE_EXCEPTIONS)
-            target_compile_definitions(${target} PRIVATE _HAS_EXCEPTIONS=0)
-        endif ()
-    else ()
-        target_compile_options(${target} PRIVATE -Wall -Wextra -Werror -Wno-unused-command-line-argument)
+                if(DISABLE_EXCEPTIONS)
+                        target_compile_definitions(${target} PRIVATE _HAS_EXCEPTIONS=0)
+                endif()
+        else()
+                target_compile_options(${target} PRIVATE -Wall -Wextra -Werror -Wno-unused-command-line-argument)
 
-        if (DISABLE_EXCEPTIONS)
-            target_compile_options(${target} PRIVATE -fno-exceptions)
-        endif ()
-    endif ()
+                if(DISABLE_EXCEPTIONS)
+                        target_compile_options(${target} PRIVATE -fno-exceptions)
+                endif()
+        endif()
 
-    if (CMAKE_BUILD_TYPE STREQUAL "Debug" OR CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo")
-        target_compile_definitions(${target} PRIVATE IS_DEBUG)
-    endif ()
+        if(CMAKE_BUILD_TYPE STREQUAL "Debug" OR CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo")
+                target_compile_definitions(${target} PRIVATE IS_DEBUG)
+        endif()
 
-    target_compile_definitions(${target} PRIVATE
-            GLM_FORCE_LEFT_HANDED
-            GLM_FORCE_DEPTH_ZERO_TO_ONE
-    )
+        target_compile_definitions(${target} PRIVATE
+                GLM_FORCE_LEFT_HANDED
+                GLM_FORCE_DEPTH_ZERO_TO_ONE
+        )
 endfunction()
 
 find_package(Python COMPONENTS Interpreter REQUIRED)
@@ -56,6 +56,7 @@ add_library(DynamicRendering_Core STATIC
         src/core/command_buffer.cpp
         src/core/gpu_buffer.cpp
         src/core/image.cpp
+        src/core/image_array.cpp
         src/core/input.cpp
         src/core/event_system.cpp
         src/core/app.cpp
@@ -66,6 +67,7 @@ add_library(DynamicRendering_Core STATIC
         src/core/debug_utils.cpp
         src/core/logger.cpp
         src/core/vulkan_util.cpp
+        src/core/semaphore.cpp
         src/core/allocation_operations.cpp
 )
 
@@ -75,6 +77,7 @@ target_include_directories(DynamicRendering_Core PUBLIC
         $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/include/dynamic_rendering>
         ${CMAKE_SOURCE_DIR}/third_party/imgui/backends
         ${CMAKE_SOURCE_DIR}/third_party/imgui
+        ${CMAKE_SOURCE_DIR}/third_party/debug_break/include
         ${glfw3_INCLUDE_DIRS}
 )
 
@@ -130,14 +133,17 @@ add_library(DynamicRendering_Renderer STATIC
         src/renderer/mesh.cpp
         src/renderer/mesh_cache.cpp
         src/renderer/passes/bloom_pass.cpp
-        src/renderer/techniques/shadow_gui_technique.cpp
         src/renderer/techniques/fullscreen_technique.cpp
+        src/renderer/techniques/shadow_gui_technique.cpp
+        src/renderer/techniques/point_lights_technique.cpp
+        src/renderer/point_light_system.cpp
 )
 
 target_include_directories(DynamicRendering_Renderer PUBLIC
         $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/include>
         PRIVATE
         $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/include/dynamic_rendering>
+        ${CMAKE_SOURCE_DIR}/third_party/debug_break/include
 )
 
 target_link_libraries(DynamicRendering_Renderer PUBLIC
@@ -148,6 +154,7 @@ target_link_libraries(DynamicRendering_Renderer PUBLIC
         spirv-reflect-static
         assimp::assimp
         meshoptimizer::meshoptimizer
+        imgui
 )
 
 target_precompile_headers(DynamicRendering_Renderer REUSE_FROM DynamicRendering_Core)
@@ -235,58 +242,41 @@ dynamic_rendering_set_target_options(DynamicRendering_Scene)
 dynamic_rendering_set_target_options(DynamicRendering_Assets)
 
 function(generate_shaders target)
-    add_custom_command(
-            OUTPUT shaders_compiled
-            COMMAND ${CMAKE_COMMAND} -E echo "Compiling shaders using Python script..."
-            COMMAND ${Python_EXECUTABLE} ${CMAKE_SOURCE_DIR}/scripts/compile_shaders.py
-            --source ${CMAKE_SOURCE_DIR}/assets/shaders
-            --output ${CMAKE_BINARY_DIR}/assets/shaders
-            COMMAND ${CMAKE_COMMAND} -E touch shaders_compiled
-            DEPENDS ${CMAKE_SOURCE_DIR}/assets/shaders
-            COMMENT "Running shader compiler"
-            VERBATIM
-    )
+        add_custom_command(
+                OUTPUT shaders_compiled
+                COMMAND ${CMAKE_COMMAND} -E echo "Compiling shaders using Python script..."
+                COMMAND ${Python_EXECUTABLE} ${CMAKE_SOURCE_DIR}/scripts/compile_shaders.py
+                --source ${CMAKE_SOURCE_DIR}/assets/shaders
+                --output ${CMAKE_BINARY_DIR}/assets/shaders
+                COMMAND ${CMAKE_COMMAND} -E touch shaders_compiled
+                DEPENDS ${CMAKE_SOURCE_DIR}/assets/shaders
+                COMMENT "Running shader compiler"
+                VERBATIM
+        )
 
-    add_custom_target(compile_shaders_target ALL DEPENDS shaders_compiled)
-    add_dependencies(${target} compile_shaders_target)
+        add_custom_target(compile_shaders_target ALL DEPENDS shaders_compiled)
+        add_dependencies(${target} compile_shaders_target)
 endfunction()
 
-function(copy_blueprints target)
-    set(blueprint_source_dir ${CMAKE_SOURCE_DIR}/assets/blueprints)
-    set(blueprint_binary_dir ${CMAKE_BINARY_DIR}/assets/blueprints)
+function(copy_asset_directory target asset_name)
+        set(source_dir ${CMAKE_SOURCE_DIR}/assets/${asset_name})
+        set(binary_dir ${CMAKE_BINARY_DIR}/assets/${asset_name})
 
-    file(GLOB_RECURSE blueprint_files ${blueprint_source_dir}/*)
+        file(GLOB_RECURSE asset_files ${source_dir}/*)
 
-    add_custom_command(
-            OUTPUT ${blueprint_binary_dir}
-            COMMAND ${CMAKE_COMMAND} -E copy_directory ${blueprint_source_dir} ${blueprint_binary_dir}
-            DEPENDS ${blueprint_files}
-            COMMENT "Copying blueprint YAMLs to output directory"
-            VERBATIM
-    )
+        add_custom_command(
+                OUTPUT ${binary_dir}
+                COMMAND ${CMAKE_COMMAND} -E copy_directory ${source_dir} ${binary_dir}
+                DEPENDS ${asset_files}
+                COMMENT "Copying ${asset_name} to output directory"
+                VERBATIM
+        )
 
-    add_custom_target(copy_blueprints_target ALL DEPENDS ${blueprint_binary_dir})
-    add_dependencies(${target} copy_blueprints_target)
-endfunction()
-
-function(copy_techniques target)
-    set(techniques_source_dir ${CMAKE_SOURCE_DIR}/assets/techniques)
-    set(techniques_binary_dir ${CMAKE_BINARY_DIR}/assets/techniques)
-
-    file(GLOB_RECURSE techniques_files ${techniques_source_dir}/*)
-
-    add_custom_command(
-            OUTPUT ${techniques_binary_dir}
-            COMMAND ${CMAKE_COMMAND} -E copy_directory ${techniques_source_dir} ${techniques_binary_dir}
-            DEPENDS ${techniques_files}
-            COMMENT "Copying technique YAMLs to output directory"
-            VERBATIM
-    )
-
-    add_custom_target(copy_techniques_target ALL DEPENDS ${techniques_binary_dir})
-    add_dependencies(${target} copy_techniques_target)
+        add_custom_target(copy_${asset_name}_target ALL DEPENDS ${binary_dir})
+        add_dependencies(${target} copy_${asset_name}_target)
 endfunction()
 
 # === Shader / Blueprint Tools ===
-generate_shaders(DynamicRendering_Core)
-copy_blueprints(DynamicRendering_Core)
+copy_asset_directory(DynamicRendering_Core shaders)
+copy_asset_directory(DynamicRendering_Core blueprints)
+copy_asset_directory(DynamicRendering_Core techniques)
