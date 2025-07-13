@@ -108,13 +108,17 @@ public:
     material_data.set_has_emissive_map(val);
   }
 
-  auto get_pipeline() const -> const CompiledPipeline& { return *pipeline; }
-  auto get_descriptor_set(const std::uint32_t frame_index) const -> const auto&
+  [[nodiscard]] auto get_pipeline() const -> const CompiledPipeline&
+  {
+    return *pipeline;
+  }
+  [[nodiscard]] auto get_descriptor_set(const std::uint32_t frame_index) const
+    -> const auto&
   {
     return descriptor_sets[frame_index];
   }
 
-  auto get_descriptor_set_layout(const std::uint32_t set) const
+  [[nodiscard]] auto get_descriptor_set_layout(const std::uint32_t set) const
     -> VkDescriptorSetLayout
   {
     return set < descriptor_set_layouts.size() ? descriptor_set_layouts[set]

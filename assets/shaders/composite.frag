@@ -27,5 +27,5 @@ void main() {
   vec4 geometry_color = texture(geometry_input, uv);
   vec4 lit_color = mix(skybox_color, geometry_color, geometry_color.a);
 
-  out_color = lit_color + pc.bloom_strength * bloom_color;
+  out_color = vec4(lit_color.rgb, 1.0) + pc.bloom_strength * vec4(bloom_color.rgb, 1.0);
 }

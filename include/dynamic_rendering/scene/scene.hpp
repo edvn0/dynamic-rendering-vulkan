@@ -102,6 +102,14 @@ public:
   ~Scene() = default;
 
   auto create_entity(std::string_view) -> Entity;
+
+  template<typename... Args>
+  auto create_entity(const std::format_string<Args...>& fmt, Args&&... args)
+    -> Entity
+  {
+    return create_entity(std::format(fmt, std::forward<Args>(args)...));
+  }
+
   auto create_entt_entity() -> entt::entity;
   auto get_registry() -> auto& { return registry; }
 
@@ -131,11 +139,14 @@ public:
     return registry.view<Ts...>().each(std::forward<decltype(func)>(func));
   }
 
-  auto set_selected_entity(entt::entity entity = entt::null) -> void
+  auto set_selected_entity(const entt::entity entity = entt::null) -> void
   {
     selected_entity = entity;
   }
-  auto get_selected_entity() const -> entt::entity { return selected_entity; }
+  [[nodiscard]] auto get_selected_entity() const -> entt::entity
+  {
+    return selected_entity;
+  }
 
   auto update_viewport_bounds(const DynamicRendering::ViewportBounds& bounds)
     -> void;

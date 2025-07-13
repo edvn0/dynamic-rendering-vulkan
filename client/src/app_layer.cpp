@@ -392,9 +392,9 @@ AppLayer::on_interface() -> void
 
       auto& transform = active_scene->get_registry().get<Component::Transform>(
         active_scene->get_selected_entity());
-      auto model = transform.compute();
 
-      if (ImGuizmo::Manipulate(glm::value_ptr(view),
+      if (auto model = transform.compute();
+          ImGuizmo::Manipulate(glm::value_ptr(view),
                                glm::value_ptr(projection),
                                ImGuizmo::OPERATION::TRANSLATE,
                                ImGuizmo::LOCAL,
@@ -432,8 +432,7 @@ AppLayer::on_interface() -> void
       image && ImGui::Begin("Shadow Output", nullptr, flags)) {
     ZoneScopedN("Shadow Output");
     auto size = ImGui::GetWindowSize();
-    auto texture_id = image->get_texture_id<ImTextureID>();
-    if (texture_id) {
+    if (auto texture_id = image->get_texture_id<ImTextureID>()) {
       ImGui::Image(*texture_id, size);
     }
     ImGui::End();
@@ -443,8 +442,7 @@ AppLayer::on_interface() -> void
       image && ImGui::Begin("Point lights", nullptr, flags)) {
     ZoneScopedN("Point lights (GUI)");
     auto size = ImGui::GetWindowSize();
-    auto texture_id = image->get_texture_id<ImTextureID>();
-    if (texture_id) {
+    if (auto texture_id = image->get_texture_id<ImTextureID>()) {
       ImGui::Image(*texture_id, size);
     }
     ImGui::End();
@@ -658,25 +656,22 @@ AppLayer::generate_scene(PointLightSystem& pls) -> void
         auto& mat = entity.add_component<Component::Material>("main_geometry");
         auto& mat_data = mat.material.get()->get_material_data();
         mat_data.emissive_strength = 20.0F;
-        mat_data.emissive_color = Utils::Random::random_single_channel_colour();
+        mat_data.emissive_color = Util::Random::random_single_channel_colour();
       }
     }
   }
 
-  auto all_lights = active_scene->create_entity("AllLightsParent");
-  for (auto i : std::views::iota(0, 512)) {
-    auto point_light =
-      active_scene->create_entity(std::format("PointLight_{}", i));
+  const auto all_lights = active_scene->create_entity("AllLightsParent");
+  for (auto i : std::views::iota(0, 32)) {
+    auto point_light = active_scene->create_entity("PointLight_{}", i);
     auto& light = point_light.add_component<Component::PointLight>();
     auto& transform = point_light.get_component<Component::Transform>();
-    transform.position = glm::vec3(Utils::Random::random_float(-12.0f, 12.0f),
-                                   Utils::Random::random_float(-12.0f, 12.0f),
-                                   Utils::Random::random_float(-12.0f, 12.0f));
+    transform.position = Util::Random::random_vec3(-12, 12);
     transform.scale = 0.1F * glm::vec3(1.0f, 1.0f, 1.0f);
 
-    light.color = Utils::Random::random_single_channel_colour();
-    light.intensity = Utils::Random::random_float(0.5f, 7.0f);
-    light.radius = Utils::Random::random_float(1.0f, 10.0f);
+    light.color = Util::Random::random_single_channel_colour();
+    light.intensity = Util::Random::random_float(0.5f, 7.0f);
+    light.radius = Util::Random::random_float(1.0f, 10.0f);
     point_light.set_parent(all_lights);
     pls.add_light(entt::to_integral(point_light.raw()),
                   point_light.get_component<Component::Transform>().position,

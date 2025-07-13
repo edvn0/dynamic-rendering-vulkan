@@ -21,17 +21,7 @@ layout(location = 0) out vec4 frag_colour;
 void main()
 {
   // Bounds check for light index
-  if (v_instance_index >= point_light_buffer.light_count)
-    discard;
-
   PointLight light_data = point_light_buffer.lights[v_instance_index];
-
-  // Alpha test (if needed for light geometry)
-  float alpha = material.albedo.a;
-  if (has_albedo_texture())
-    alpha *= texture(albedo_map, v_uv).a;
-  if (is_alpha_testing() && alpha < material.alpha_cutoff)
-    discard;
 
   // Calculate emissive output from point light data
   vec3 emissive_color = light_data.color * light_data.intensity;
@@ -57,5 +47,5 @@ void main()
     emissive_color += material_emissive;
   }
 
-  frag_colour = vec4(emissive_color, alpha);
+  frag_colour = vec4(emissive_color, 1.0F);
 }

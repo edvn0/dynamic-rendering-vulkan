@@ -199,20 +199,6 @@ Manager::get(Handle<StaticMesh> handle) const -> const StaticMesh*
 
 template<>
 inline auto
-Manager::get(Handle<Material> handle) -> Material*
-{
-  return get_impl<Material>(handle);
-}
-
-template<>
-inline auto
-Manager::get(Handle<Material> handle) const -> const Material*
-{
-  return get_impl<Material>(handle);
-}
-
-template<>
-inline auto
 Manager::get(Handle<Image> handle) -> Image*
 {
   if (handle.id < builtin_max_id) {

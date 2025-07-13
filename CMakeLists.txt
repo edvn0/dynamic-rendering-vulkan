@@ -278,5 +278,8 @@ endfunction()
 
 # === Shader / Blueprint Tools ===
 copy_asset_directory(DynamicRendering_Core shaders)
+copy_asset_directory(DynamicRendering_Core environment)
 copy_asset_directory(DynamicRendering_Core blueprints)
+copy_asset_directory(DynamicRendering_Core meshes)
+copy_asset_directory(DynamicRendering_Core fonts)
 copy_asset_directory(DynamicRendering_Core techniques)

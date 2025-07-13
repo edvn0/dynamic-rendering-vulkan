@@ -41,7 +41,7 @@ private:
 class ReadonlyEntity
 {
 public:
-  ReadonlyEntity(entt::entity e, Scene* s)
+  ReadonlyEntity(const entt::entity e, Scene* s)
     : entity(e, s)
   {
   }

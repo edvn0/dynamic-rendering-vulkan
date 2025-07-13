@@ -5,7 +5,30 @@ namespace {
 thread_local std::mt19937 rng{};
 }
 
-namespace Utils::Random {
+namespace Util::Random {
+
+auto
+random_vec4(float min, float max) -> glm::vec4
+{
+  std::uniform_real_distribution<float> dist(min, max);
+  return {
+    dist(rng),
+    dist(rng),
+    dist(rng),
+    dist(rng),
+  };
+}
+
+auto
+random_vec3(float min, float max) -> glm::vec3
+{
+  std::uniform_real_distribution<float> dist(min, max);
+  return {
+    dist(rng),
+    dist(rng),
+    dist(rng),
+  };
+}
 
 auto
 random_float(float min, float max) -> float
@@ -21,6 +44,7 @@ random_colour() -> glm::vec4
     random_float(0.f, 1.f), random_float(0.f, 1.f), random_float(0.f, 1.f), 1.f
   };
 }
+
 auto
 random_single_channel_colour() -> glm::vec4
 {

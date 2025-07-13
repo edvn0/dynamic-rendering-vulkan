@@ -40,6 +40,24 @@ upload_to_device_buffer(const Device& device,
                         byte_span data,
                         std::size_t offset = 0ULL) -> void;
 
+enum class GPUBufferType : std::uint32_t
+{
+  TransferSrc = 0x1,
+  TransferDst = 0x2,
+  UniformTexel = 0x4,
+  StorageTexel = 0x8,
+  Uniform = 0x10,
+  Storage = 0x20,
+  Index = 0x40,
+  Vertex = 0x80,
+};
+constexpr auto
+operator|(GPUBufferType l, GPUBufferType r) -> GPUBufferType
+{
+  return static_cast<GPUBufferType>(std::to_underlying(l) |
+                                    std::to_underlying(r));
+}
+
 class GPUBuffer
 {
 public:
@@ -58,12 +76,24 @@ public:
   }
   ~GPUBuffer();
 
+  static auto zero_initialise(const Device&,
+                              std::size_t,
+                              VkBufferUsageFlags,
+                              bool = false,
+                              std::string_view = {})
+    -> std::unique_ptr<GPUBuffer>;
+  template<GPUBufferType Type, std::size_t Bytes>
   static auto zero_initialise(const Device& device,
-                              std::size_t bytes,
-                              VkBufferUsageFlags usage,
                               bool mapped_on_create = false,
                               std::string_view name = {})
-    -> std::unique_ptr<GPUBuffer>;
+    -> std::unique_ptr<GPUBuffer>
+  {
+    return zero_initialise(device,
+                           Bytes,
+                           static_cast<VkBufferUsageFlags>(Type),
+                           mapped_on_create,
+                           name);
+  }
 
   [[nodiscard]] auto get_usage_flags() const -> VkBufferUsageFlags
   {

@@ -10,7 +10,7 @@ struct ImGuiDescriptorPool
   const Device* device{ nullptr };
 
   std::array<VkDescriptorPoolSize, 1> pool_sizes = {
-    { { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 10 } }
+    { { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1000 } }
   };
 
   struct PoolData
@@ -78,6 +78,7 @@ struct ImGuiDescriptorPool
 
     if (result == VK_ERROR_FRAGMENTED_POOL ||
         result == VK_ERROR_OUT_OF_POOL_MEMORY) {
+      Logger::log_debug("Allocating a new pool for GUI.");
       allocate_new_pool();
       alloc_info.descriptorPool = current->pool;
       if (vkAllocateDescriptorSets(device->get_device(), &alloc_info, &set) !=

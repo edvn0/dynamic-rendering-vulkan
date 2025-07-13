@@ -819,6 +819,7 @@ Scene::on_interface() -> void
 auto
 Scene::on_render(Renderer& renderer) -> void
 {
+  auto* sphere = Assets::builtin_sphere().get();
   auto& point_light_system = renderer.get_point_light_system();
   for (const auto view =
          registry.view<Component::PointLight, const Component::Transform>();
@@ -829,6 +830,17 @@ Scene::on_render(Renderer& renderer) -> void
       point_light_system.update_light_component(entt::to_integral(entity),
                                                 light);
       light.dirty = false;
+    }
+
+    if constexpr (is_debug) {
+      renderer.submit(
+        {
+          .mesh = sphere,
+          .override_material = point_light_system.get_material(),
+          .casts_shadows = false,
+          .identifier = entt::to_integral(entity),
+        },
+        transform.compute());
     }
   }
 

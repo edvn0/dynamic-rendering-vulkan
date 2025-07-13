@@ -441,70 +441,48 @@ Renderer::Renderer(const Device& dev,
     }
 
     identifier_buffer =
-      GPUBuffer::zero_initialise(*device,
-                                 1'000'000 * sizeof(std::uint32_t),
-                                 VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
-                                 true,
-                                 "identifier_buffer");
+      GPUBuffer::zero_initialise<GPUBufferType::Storage,
+                                 1'000'000 * sizeof(std::uint32_t)>(
+        *device, true, "identifier_buffer");
     identifier_material->upload("identifiers", identifier_buffer);
   }
 
   {
+    using Type = GPUBufferType;
 
-    culled_instance_count_buffer = GPUBuffer::zero_initialise(
-      *device,
-      sizeof(std::uint32_t),
-      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT |
-        VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-      true,
-      "culled_instance_count_buffer");
+    culled_instance_count_buffer = GPUBuffer::zero_initialise<
+      Type::Storage | Type::TransferDst | Type::TransferSrc,
+      sizeof(std::uint32_t)>(*device, true, "culled_instance_count_buffer");
     static constexpr std::uint32_t zero = 0;
     culled_instance_count_buffer->upload(std::span{ &zero, 1 });
 
-    culled_instance_vertex_buffer = GPUBuffer::zero_initialise(
-      *device,
-      sizeof(InstanceData) * 1'000'000,
-      VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
-      true,
-      "culled_instance_vertex_buffer");
+    culled_instance_vertex_buffer =
+      GPUBuffer::zero_initialise<Type::Vertex | Type::Storage,
+                                 sizeof(InstanceData) * 1'000'000>(
+        *device, true, "culled_instance_vertex_buffer");
 
     {
-      auto&& [bytes, instance_size_bytes] =
-        make_bytes<InstanceData, 1'000'000>();
-      culled_instance_vertex_buffer->upload(
-        std::span{ bytes.get(), instance_size_bytes });
-    }
-    {
-
       visibility_buffer =
-        GPUBuffer::zero_initialise(*device,
-                                   sizeof(std::uint32_t) * 1'000'000,
-                                   VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
-                                   true,
-                                   "visibility_buffer");
+        GPUBuffer::zero_initialise<GPUBufferType::Storage,
+                                   sizeof(std::uint32_t) * 1'000'000>(
+          *device, true, "visibility_buffer");
 
       prefix_sum_buffer =
-        GPUBuffer::zero_initialise(*device,
-                                   sizeof(std::uint32_t) * 1'000'000,
-                                   VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
-                                   true,
-                                   "prefix_sum_buffer");
+        GPUBuffer::zero_initialise<GPUBufferType::Storage,
+                                   sizeof(std::uint32_t) * 1'000'000>(
+          *device, true, "prefix_sum_buffer");
 
       static constexpr std::size_t max_workgroups = 16384;
 
       workgroup_sum_buffer =
-        GPUBuffer::zero_initialise(*device,
-                                   sizeof(std::uint32_t) * max_workgroups,
-                                   VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
-                                   true,
-                                   "workgroup_sum_buffer");
+        GPUBuffer::zero_initialise<GPUBufferType::Storage,
+                                   sizeof(std::uint32_t) * max_workgroups>(
+          *device, true, "workgroup_sum_buffer");
 
       workgroup_sum_prefix_buffer =
-        GPUBuffer::zero_initialise(*device,
-                                   sizeof(std::uint32_t) * max_workgroups,
-                                   VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
-                                   true,
-                                   "workgroup_sum_prefix_buffer");
+        GPUBuffer::zero_initialise<GPUBufferType::Storage,
+                                   sizeof(std::uint32_t) * max_workgroups>(
+          *device, true, "workgroup_sum_prefix_buffer");
     }
 
     auto result = Material::create(*device, "cull_visibility");
@@ -564,7 +542,8 @@ Renderer::Renderer(const Device& dev,
       {
         .extent = geometry_image->size(),
         .format = VK_FORMAT_R8G8B8A8_UINT,
-        .usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+        .usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
+                 VK_IMAGE_USAGE_TRANSFER_DST_BIT,
         .initial_layout = VK_IMAGE_LAYOUT_GENERAL,
         .debug_name = "light_culling_debug_image",
       });
@@ -599,6 +578,7 @@ Renderer::Renderer(const Device& dev,
     light_culling_material->upload("light_index_allocator",
                                    global_light_counter_buffer);
     light_culling_material->upload("debug_image", light_culling_debug_image);
+    light_culling_material->upload("scene_depth", geometry_depth_image.get());
 
     geometry_material->upload("light_index_list", light_index_list_buffer);
     geometry_material->upload("light_grid_buffer", light_grid_buffer);
@@ -1133,7 +1113,7 @@ Renderer::end_frame() -> void
       draw_commands.begin(),
       draw_commands.end(),
       0ULL,
-      std::plus<>{},
+      std::plus{},
       [](const auto& pair) { return pair.second.size(); });
   }
 
@@ -1150,7 +1130,7 @@ Renderer::end_frame() -> void
                                                      culling_threshold);
     });
 
-  if (should_geom_cull) {
+  if (should_geom_cull) [[unlikely]] {
     thread_pool->detach_task([this, &flat_draw_commands, &uploads_remaining] {
       ZoneScopedN("Instance Upload");
       flat_draw_commands =
@@ -1170,7 +1150,7 @@ Renderer::end_frame() -> void
     });
   }
 
-  if (should_shadow_cull) {
+  if (should_shadow_cull) [[unlikely]] {
     thread_pool->detach_task(
       [this, &flat_shadow_draw_commands, &shadow_count, &uploads_remaining] {
         ZoneScopedN("Shadow Upload");
@@ -1218,11 +1198,32 @@ Renderer::end_frame() -> void
   run_shadow_pass(flat_shadow_draw_commands);
   run_z_prepass(flat_draw_commands);
 
-  run_geometry_pass(flat_draw_commands);
-
   static constexpr bool run_point_lights_pass = true;
   if constexpr (run_point_lights_pass) {
-    run_point_light_pass(flat_draw_commands);
+    auto* sphere = Assets::builtin_sphere().get();
+
+    std::vector<std::remove_cvref_t<decltype(flat_draw_commands[0])>>
+      sphere_commands;
+    std::vector<std::remove_cvref_t<decltype(flat_draw_commands[0])>>
+      non_sphere_commands;
+
+    // Reserve space to avoid reallocations
+    sphere_commands.reserve(flat_draw_commands.size() / 4); // Estimate
+    non_sphere_commands.reserve(flat_draw_commands.size());
+
+    // Single pass categorization
+    for (const auto& cmd : flat_draw_commands) {
+      if (cmd.command.mesh == sphere) {
+        sphere_commands.push_back(cmd);
+      } else {
+        non_sphere_commands.push_back(cmd);
+      }
+    }
+
+    run_geometry_pass(non_sphere_commands);
+    run_point_light_pass(sphere_commands);
+  } else {
+    run_geometry_pass(flat_draw_commands);
   }
 
   if constexpr (is_debug) {
@@ -1302,6 +1303,11 @@ Renderer::on_resize(const std::uint32_t width, const std::uint32_t height)
   colour_corrected_image->resize(width, height);
   identifier_image->resize(width, height);
   light_culling_debug_image->resize(width, height);
+  {
+    std::array<const Image*, 2> images{ light_culling_debug_image.get(),
+                                        geometry_depth_image.get() };
+    light_culling_material->invalidate(images);
+  }
 
   bloom_pass->resize(width, height);
 
@@ -1509,7 +1515,7 @@ Renderer::run_z_prepass(const DrawListView draw_list) -> void
     .pNext = nullptr,
     .flags = 0,
     .renderArea = { .offset = { 0, 0 },
-                    .extent = { geometry_image->width(), geometry_image->height() }, },
+                    .extent = { geometry_image->width(), geometry_image->height(), }, },
     .layerCount = 1,
     .viewMask = 0,
     .colorAttachmentCount = 0,
@@ -1596,7 +1602,7 @@ Renderer::run_point_light_pass(const DrawListView draw_list) -> void
     .imageView = geometry_depth_msaa_image->get_view(),
     .imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
     .resolveMode = VK_RESOLVE_MODE_NONE,
-    .resolveImageView = VK_NULL_HANDLE,
+    .resolveImageView = nullptr,
     .resolveImageLayout = VK_IMAGE_LAYOUT_UNDEFINED,
     .loadOp = VK_ATTACHMENT_LOAD_OP_LOAD,
     .storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
@@ -1758,7 +1764,9 @@ Renderer::run_geometry_pass(const DrawListView draw_list) -> void
   vkCmdSetScissor(cmd, 0, 1, &render_info.renderArea);
 
   auto& pipeline = geometry_material->get_pipeline();
-  vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.pipeline);
+
+  VkPipeline current = pipeline.pipeline;
+  vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, current);
 
   for (auto&& [cmd_info, offset, instance_count] : draw_list) {
     const auto* submesh = cmd_info.mesh->get_submesh(cmd_info.submesh_index);
@@ -1772,6 +1780,11 @@ Renderer::run_geometry_pass(const DrawListView draw_list) -> void
       cmd_info.override_material.is_valid()
         ? *Assets::Manager::the().get(cmd_info.override_material)
         : *submesh_material;
+
+    if (material.get_pipeline().pipeline != current) {
+      current = material.get_pipeline().pipeline;
+      vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, current);
+    }
 
     material.upload("light_index_list", light_index_list_buffer);
     material.upload("light_grid_buffer", light_grid_buffer);
@@ -1975,6 +1988,24 @@ Renderer::run_light_culling_pass() -> void
 {
   ZoneScopedN("Light culling pass");
   const auto cmd = compute_command_buffer->get(frame_index);
+
+  VkImageSubresourceRange range{};
+  range.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  range.baseArrayLayer = 0;
+  range.baseMipLevel = 0;
+  range.layerCount = 1;
+  range.levelCount = 1;
+
+  static constexpr auto clear_value =
+    VkClearColorValue{ .uint32 = { 1, 1, 1, 1 } };
+
+  vkCmdClearColorImage(cmd,
+                       light_culling_debug_image->get_image(),
+                       VK_IMAGE_LAYOUT_GENERAL,
+                       &clear_value,
+                       1,
+                       &range);
+
   Util::Vulkan::cmd_begin_debug_label(
     cmd, "Light culling pass", { 1.0, 0.0, 0.0, 1.0 });
 
