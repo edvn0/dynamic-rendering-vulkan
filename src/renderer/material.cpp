@@ -491,7 +491,7 @@ Material::reload(const PipelineBlueprint& blueprint) -> void
 {
   const auto new_hash = blueprint.hash();
   if (new_hash != 0 && new_hash == pipeline_hash) {
-    std::cout << "Pipeline already up to date\n";
+    Logger::log_info("Pipeline already up to date");
     return;
   }
 

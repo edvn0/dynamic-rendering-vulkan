@@ -98,7 +98,7 @@ BloomPass::BloomPass(const Device& d, const Image* fb, int mips)
         .usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
         .initial_layout = VK_IMAGE_LAYOUT_GENERAL,
         .sampler_config = clamp_to_edge_sampler_config,
-        .debug_name = "bloom_mip_" + std::to_string(i),
+        .debug_name = std::format("bloom_mip_{}", i),
       });
 
     BloomMip mip = {
@@ -118,7 +118,7 @@ BloomPass::BloomPass(const Device& d, const Image* fb, int mips)
         .usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
         .initial_layout = VK_IMAGE_LAYOUT_GENERAL,
         .sampler_config = clamp_to_edge_sampler_config,
-        .debug_name = "blur_temp_" + std::to_string(i),
+        .debug_name = std::format("blur_temp_{}", i),
       });
 
     blur_temp_chain.push_back(std::move(blur_temp));
@@ -273,7 +273,7 @@ BloomPass::downsample_and_blur(const VkCommandBuffer cmd,
     auto& mip = mip_chain[i];
     auto& blur_temp = blur_temp_chain[i];
 
-    const std::string mip_label = "Mip Level " + std::to_string(i);
+    const std::string mip_label = std::format("Mip Level {}", i);
     Util::Vulkan::cmd_begin_debug_label(
       cmd,
       { VK_STRUCTURE_TYPE_DEBUG_UTILS_LABEL_EXT,

@@ -1973,68 +1973,66 @@ Renderer::run_identifier_pass(const DrawListView draw_list) -> void
 auto
 Renderer::run_light_culling_pass() -> void
 {
-  return; /*
+  ZoneScopedN("Light culling pass");
+  const auto cmd = compute_command_buffer->get(frame_index);
+  Util::Vulkan::cmd_begin_debug_label(
+    cmd, "Light culling pass", { 1.0, 0.0, 0.0, 1.0 });
 
-   ZoneScopedN("Light culling pass");
-   const auto cmd = compute_command_buffer->get(frame_index);
-   Util::Vulkan::cmd_begin_debug_label(
-     cmd, "Light culling pass", { 1.0, 0.0, 0.0, 1.0 });
+  {
+    ZoneScopedN("Upload via one time buffer");
+    static constexpr std::uint32_t zero = 0;
+    global_light_counter_buffer->upload(
+      std::span{ &zero, 1 }); // Reset atomic counter to 0
+  }
 
-   {
-     ZoneScopedN("Upload via one time buffer");
-     static constexpr std::uint32_t zero = 0;
-     global_light_counter_buffer->upload(
-       std::span{ &zero, 1 }); // Reset atomic counter to 0
-   }
+  const std::uint32_t tiles_x =
+    (geometry_image->width() + tile_size - 1) / tile_size;
+  const std::uint32_t tiles_y =
+    (geometry_image->height() + tile_size - 1) / tile_size;
+  constexpr std::uint32_t tiles_z = num_z_slices;
 
-   const std::uint32_t tiles_x =
-     (geometry_image->width() + tile_size - 1) / tile_size;
-   const std::uint32_t tiles_y =
-     (geometry_image->height() + tile_size - 1) / tile_size;
-   constexpr std::uint32_t tiles_z = num_z_slices;
+  compute_command_buffer->begin_timer(frame_index, "light_culling");
 
-   compute_command_buffer->begin_timer(frame_index, "light_culling");
+  const auto& pipeline = light_culling_material->get_pipeline();
+  const std::array sets = {
+    descriptor_set_manager->get_set(frame_index),
+    light_culling_material->prepare_for_rendering(frame_index),
+  };
 
-   const auto& pipeline = light_culling_material->get_pipeline();
-   const std::array sets = {
-     descriptor_set_manager->get_set(frame_index),
-     light_culling_material->prepare_for_rendering(frame_index),
-   };
+  vkCmdBindPipeline(cmd, pipeline.bind_point, pipeline.pipeline);
+  vkCmdBindDescriptorSets(cmd,
+                          pipeline.bind_point,
+                          pipeline.layout,
+                          0,
+                          static_cast<std::uint32_t>(sets.size()),
+                          sets.data(),
+                          0,
+                          nullptr);
 
-   vkCmdBindPipeline(cmd, pipeline.bind_point, pipeline.pipeline);
-   vkCmdBindDescriptorSets(cmd,
-                           pipeline.bind_point,
-                           pipeline.layout,
-                           0,
-                           static_cast<std::uint32_t>(sets.size()),
-                           sets.data(),
-                           0,
-                           nullptr);
+  const std::uint32_t dispatch_x = (tiles_x + 7) / 8;
+  const std::uint32_t dispatch_y = (tiles_y + 7) / 8;
+  constexpr std::uint32_t dispatch_z = (tiles_z + 3) / 4;
 
-   const std::uint32_t dispatch_x = (tiles_x + 7) / 8;
-   const std::uint32_t dispatch_y = (tiles_y + 7) / 8;
-   constexpr std::uint32_t dispatch_z = (tiles_z + 3) / 4;
+  vkCmdDispatch(cmd, dispatch_x, dispatch_y, dispatch_z);
 
-   vkCmdDispatch(cmd, dispatch_x, dispatch_y, dispatch_z);
+  VkMemoryBarrier memory_barrier = {};
+  memory_barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+  memory_barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+  memory_barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
 
-   VkMemoryBarrier memory_barrier = {};
-   memory_barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
-   memory_barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-   memory_barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+  vkCmdPipelineBarrier(cmd,
+                       VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                       VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                       0,
+                       1,
+                       &memory_barrier,
+                       0,
+                       nullptr,
+                       0,
+                       nullptr);
 
-   vkCmdPipelineBarrier(cmd,
-                        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-                        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-                        0,
-                        1,
-                        &memory_barrier,
-                        0,
-                        nullptr,
-                        0,
-                        nullptr);
-
-   compute_command_buffer->end_timer(frame_index, "light_culling");
-   Util::Vulkan::cmd_end_debug_label(cmd);*/
+  compute_command_buffer->end_timer(frame_index, "light_culling");
+  Util::Vulkan::cmd_end_debug_label(cmd);
 }
 
 auto

@@ -2,7 +2,7 @@ shaders:
   - stage: vertex
     path: geometry.vert
   - stage: fragment
-    path: geometry_debug.frag
+    path: geometry.frag
 
 rasterization:
   cull_mode: front

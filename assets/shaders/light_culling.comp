@@ -2,6 +2,7 @@
 
 #include "set0.glsl"
 #include "tiling_constants.glsl"
+#include "z_slicing.glsl"
 
 #extension GL_EXT_debug_printf : enable
 
@@ -158,10 +159,8 @@ main()
   // Calculate proper depth bounds for this Z-slice
   float far_plane = camera_ubo.screen_size_near_far.w;
   float near_plane = camera_ubo.screen_size_near_far.z;
-  float near_depth =
-    linear_depth(tile_coord.z, NUM_Z_SLICES, near_plane, far_plane);
-  float far_depth =
-    linear_depth(tile_coord.z + 1, NUM_Z_SLICES, near_plane, far_plane);
+float near_depth = compute_slice_depth(tile_coord.z, NUM_Z_SLICES, near_plane, far_plane);
+float far_depth  = compute_slice_depth(tile_coord.z + 1, NUM_Z_SLICES, near_plane, far_plane);
 
   // Convert to NDC depth [0,1]
   vec4 near_clip = camera_ubo.projection * vec4(0, 0, -near_depth, 1.0);

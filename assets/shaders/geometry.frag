@@ -4,6 +4,7 @@
 #include "matrix_math.glsl"
 #include "set0.glsl"
 #include "tiling_constants.glsl"
+#include "z_slicing.glsl"
 
 layout(set = 1, binding = 0) uniform sampler2D albedo_map;
 layout(set = 1, binding = 1) uniform sampler2D normal_map;
@@ -33,7 +34,8 @@ layout(location = 0) in vec3 v_normal;
 layout(location = 1) in vec3 v_world_pos;
 layout(location = 2) in vec4 v_light_space_pos;
 layout(location = 3) in vec2 v_uv;
-layout(location = 4) in mat3 v_tbn;
+layout(location = 4) in vec4 v_view_position;
+layout(location = 5) in mat3 v_tbn;
 
 layout(location = 0) out vec4 frag_colour;
 
@@ -104,24 +106,6 @@ vec3 calculate_normal_from_map(vec2 uv, mat3 tbn)
   return normalize(tbn * tangent_normal);
 }
 
-float linear_depth(uint slice, uint num_slices, float near_z, float far_z)
-{
-  float slice_z = float(slice) / float(num_slices);
-  return near_z * pow(far_z / near_z, slice_z);
-}
-
-// Get the Z-slice index for current fragment
-uint get_z_slice(float view_space_z, float near_plane, float far_plane)
-{
-  float normalized_z = (view_space_z - near_plane) / (far_plane - near_plane);
-  normalized_z = clamp(normalized_z, 0.0, 1.0);
-
-  float slice_float = log(normalized_z * (far_plane / near_plane - 1.0) + 1.0) /
-                      log(far_plane / near_plane) * float(NUM_Z_SLICES);
-
-  return min(uint(slice_float), NUM_Z_SLICES - 1u);
-}
-
 // Get 3D tile index (matching compute shader logic)
 uint get_tile_index_3d(uvec3 tile_coord, uvec3 tile_grid_size)
 {
@@ -189,12 +173,12 @@ void main()
 
   // Get view space Z for this fragment
   vec4 view_pos = camera_ubo.view * vec4(v_world_pos, 1.0);
-  float view_z = -view_pos.z; // Negative in right-handed view space
+  float view_z = view_pos.z; // Negative in right-handed view space
 
   // Calculate Z-slice
   float near_plane = camera_ubo.screen_size_near_far.z;
   float far_plane = camera_ubo.screen_size_near_far.w;
-  uint tile_z = get_z_slice(view_z, near_plane, far_plane);
+  uint tile_z = compute_slice_index(view_z, NUM_Z_SLICES, near_plane, far_plane);
 
   // Calculate tile grid dimensions (same as compute shader)
   uvec2 tile_count_xy =
@@ -279,4 +263,13 @@ void main()
 
   vec3 color = ambient + shadow * lighting + emission;
   frag_colour = vec4(color, albedo_tex.a);
+
+  /* if (tile_z == NUM_Z_SLICES - 2)
+   {
+     frag_colour = vec4(0.0, 1.0, 0.0, 1.0);
+   }
+   else
+   {
+     frag_colour = vec4(float(tile_z) / float(NUM_Z_SLICES), 0.0, 0.0, 1.0);
+   }*/
 }
