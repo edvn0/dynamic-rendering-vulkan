@@ -18,8 +18,7 @@ layout(location = 4) in flat uint v_instance_index;
 // Outputs
 layout(location = 0) out vec4 frag_colour;
 
-void main()
-{
+void main() {
   // Bounds check for light index
   PointLight light_data = point_light_buffer.lights[v_instance_index];
 
@@ -31,15 +30,13 @@ void main()
   // float distance_factor = 1.0; // Implement based on your needs
 
   // Optional: Modulate with emissive texture if available
-  if (has_emissive_map())
-  {
+  if (has_emissive_map()) {
     vec3 emissive_tex = texture(emissive_map, v_uv).rgb;
     emissive_color *= emissive_tex;
   }
 
   // Optional: Add material emissive if you want to combine both
-  if (is_emissive())
-  {
+  if (is_emissive()) {
     vec3 material_emissive =
         material.emissive_color * material.emissive_strength;
     if (has_emissive_map())

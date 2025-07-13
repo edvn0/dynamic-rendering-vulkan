@@ -817,10 +817,34 @@ Renderer::submit(const RendererSubmit& cmd, const glm::mat4& transform) -> void
     };
     draw_commands[command].emplace_back(transform);
     if (has_optional_identifier) {
-      identifiers[command].emplace_back(cmd.identifier);
+      identifier_draw_commands[command].emplace_back(cmd.identifier);
     }
     if (cmd.casts_shadows) {
       shadow_draw_commands[command].emplace_back(transform);
+    }
+  }
+}
+
+auto
+Renderer::submit_light(const LightSubmitDto& cmd, const glm::mat4& transform)
+  -> void
+{
+  auto* sphere = Assets::builtin_sphere().get();
+  if (nullptr == sphere) {
+    return;
+  }
+
+  const bool has_optional_identifier = cmd.identifier != 0;
+
+  for (auto& submesh : sphere->get_submeshes()) {
+    auto command = DrawCommand{
+      .mesh = sphere,
+      .override_material = point_light_system->get_material(),
+      .submesh_index = sphere->get_submesh_index(submesh),
+    };
+    point_light_draw_commands[command].emplace_back(transform);
+    if (has_optional_identifier) {
+      identifier_draw_commands[command].emplace_back(cmd.identifier);
     }
   }
 }
@@ -1022,7 +1046,7 @@ Renderer::update_identifiers()
   static std::uint64_t ids_count = 5;
   ids.reserve(ids_count);
 
-  for (auto& v : identifiers | std::views::values) {
+  for (auto& v : identifier_draw_commands | std::views::values) {
     ids.append_range(v);
   }
 
@@ -1070,7 +1094,7 @@ Renderer::begin_frame(const VP& matrices) -> void
 
   draw_commands.clear();
   shadow_draw_commands.clear();
-  identifiers.clear();
+  identifier_draw_commands.clear();
 }
 
 static constexpr auto run_technique_passes =
@@ -1101,6 +1125,7 @@ Renderer::end_frame() -> void
 
   DrawList flat_shadow_draw_commands;
   DrawList flat_draw_commands;
+  DrawList flat_point_light_commands;
   std::size_t shadow_count{ 0 };
 
   std::latch uploads_remaining(3);
@@ -1200,28 +1225,8 @@ Renderer::end_frame() -> void
 
   static constexpr bool run_point_lights_pass = true;
   if constexpr (run_point_lights_pass) {
-    auto* sphere = Assets::builtin_sphere().get();
-
-    std::vector<std::remove_cvref_t<decltype(flat_draw_commands[0])>>
-      sphere_commands;
-    std::vector<std::remove_cvref_t<decltype(flat_draw_commands[0])>>
-      non_sphere_commands;
-
-    // Reserve space to avoid reallocations
-    sphere_commands.reserve(flat_draw_commands.size() / 4); // Estimate
-    non_sphere_commands.reserve(flat_draw_commands.size());
-
-    // Single pass categorization
-    for (const auto& cmd : flat_draw_commands) {
-      if (cmd.command.mesh == sphere) {
-        sphere_commands.push_back(cmd);
-      } else {
-        non_sphere_commands.push_back(cmd);
-      }
-    }
-
-    run_geometry_pass(non_sphere_commands);
-    run_point_light_pass(sphere_commands);
+    run_geometry_pass(flat_draw_commands);
+    run_point_light_pass(flat_draw_commands);
   } else {
     run_geometry_pass(flat_draw_commands);
   }
@@ -1262,7 +1267,7 @@ Renderer::end_frame() -> void
     frame_index, VK_NULL_HANDLE, geometry_complete_semaphores.at(frame_index));
 
   // Begin compute work
-  compute_command_buffer->begin_frame(frame_index);
+  compute_command_buffer->begin_frame_persist_query_pools(frame_index);
 
   run_bloom_pass();
 

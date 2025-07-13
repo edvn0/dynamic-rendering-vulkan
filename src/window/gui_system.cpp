@@ -16,6 +16,7 @@
 
 #include <ImGuizmo.h>
 #include <core/fs.hpp>
+#include <debug_break.h>
 #include <implot.h>
 
 struct ImGui_ImplVulkan_FrameRenderBuffers
@@ -150,19 +151,8 @@ GUISystem::allocate_image_descriptor_set(const VkSampler sampler,
   const VkDescriptorImageInfo desc_image{ .sampler = sampler,
                                           .imageView = view,
                                           .imageLayout = layout };
+  descriptor_pool->update_set(set, desc_image);
 
-  const VkWriteDescriptorSet write{ .sType =
-                                      VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-                                    .dstSet = set,
-                                    .dstBinding = 0,
-                                    .dstArrayElement = 0,
-                                    .descriptorCount = 1,
-                                    .descriptorType =
-                                      VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-                                    .pImageInfo = &desc_image };
-
-  vkUpdateDescriptorSets(
-    descriptor_pool->device->get_device(), 1, &write, 0, nullptr);
   return set;
 }
 
@@ -315,4 +305,140 @@ GUISystem::shutdown() -> void
   descriptor_pool.reset();
 
   destroyed = true;
+}
+
+auto
+ImGuiDescriptorPool::allocate_new_pool_unlocked() -> void
+{
+  const VkDescriptorPoolCreateInfo pool_info{
+    .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+    .flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT,
+    .maxSets = 10,
+    .poolSizeCount = static_cast<uint32_t>(pool_sizes.size()),
+    .pPoolSizes = pool_sizes.data(),
+  };
+  VkDescriptorPool new_pool;
+  if (vkCreateDescriptorPool(
+        device->get_device(), &pool_info, nullptr, &new_pool) != VK_SUCCESS) {
+    Logger::log_error("Failed to create descriptor pool!");
+    debug_break();
+  }
+
+  // Assumes lock is already held by caller
+  pools.push_back({ new_pool, {} });
+  current = &pools.back();
+}
+
+auto
+ImGuiDescriptorPool::allocate_new_pool() -> void
+{
+  std::lock_guard lock(pool_mutex);
+  allocate_new_pool_unlocked();
+}
+
+auto
+ImGuiDescriptorPool::allocate(VkDescriptorSetLayout layout) -> VkDescriptorSet
+{
+  VkDescriptorSetAllocateInfo alloc_info{
+    .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+    .descriptorPool = VK_NULL_HANDLE, // Will be set below
+    .descriptorSetCount = 1,
+    .pSetLayouts = &layout
+  };
+  VkDescriptorSet set{};
+
+  std::lock_guard lock(pool_mutex);
+
+  // Try allocation with current pool
+  alloc_info.descriptorPool = current->pool;
+  const auto result =
+    vkAllocateDescriptorSets(device->get_device(), &alloc_info, &set);
+
+  if (result == VK_SUCCESS) {
+    current->sets.insert(set);
+    return set;
+  }
+
+  if (result == VK_ERROR_FRAGMENTED_POOL ||
+      result == VK_ERROR_OUT_OF_POOL_MEMORY) {
+    Logger::log_debug("Allocating a new pool for GUI.");
+
+    // Call the unlocked version since we already hold the lock
+    allocate_new_pool_unlocked();
+
+    // Retry allocation with new pool
+    alloc_info.descriptorPool = current->pool;
+    if (vkAllocateDescriptorSets(device->get_device(), &alloc_info, &set) !=
+        VK_SUCCESS) {
+      debug_break();
+    }
+    current->sets.insert(set);
+    return set;
+  }
+
+  debug_break();
+  return VK_NULL_HANDLE; // Should never reach here
+}
+
+auto
+ImGuiDescriptorPool::free(const VkDescriptorSet set) -> void
+{
+  std::lock_guard lock(pool_mutex);
+
+  for (auto& [pool, sets] : pools) {
+    if (sets.erase(set)) {
+      vkFreeDescriptorSets(device->get_device(), pool, 1, &set);
+      return;
+    }
+  }
+  Logger::log_error("Attempted to free unknown descriptor set.");
+  debug_break();
+}
+
+auto
+ImGuiDescriptorPool::reset_all() -> void
+{
+  std::lock_guard lock(pool_mutex);
+
+  for (auto& [pool, sets] : pools) {
+    vkResetDescriptorPool(device->get_device(), pool, 0);
+    sets.clear();
+  }
+}
+
+auto
+ImGuiDescriptorPool::update_set(const VkDescriptorSet set,
+                                const VkDescriptorImageInfo& info) -> void
+{
+  const VkWriteDescriptorSet write{
+    .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+    .dstSet = set,
+    .dstBinding = 0,
+    .dstArrayElement = 0,
+    .descriptorCount = 1,
+    .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+    .pImageInfo = &info,
+  };
+
+  std::lock_guard guard{ pool_mutex };
+
+  vkUpdateDescriptorSets(device->get_device(), 1, &write, 0, nullptr);
+}
+
+auto
+ImGuiDescriptorPool::update_set(const VkDescriptorSet set,
+                                const VkDescriptorBufferInfo& info) -> void
+{
+  const VkWriteDescriptorSet write{
+    .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+    .dstSet = set,
+    .dstBinding = 0,
+    .dstArrayElement = 0,
+    .descriptorCount = 1,
+    .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+    .pBufferInfo = &info,
+  };
+  std::lock_guard guard{ pool_mutex };
+
+  vkUpdateDescriptorSets(device->get_device(), 1, &write, 0, nullptr);
 }

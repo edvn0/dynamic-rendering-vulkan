@@ -662,7 +662,7 @@ AppLayer::generate_scene(PointLightSystem& pls) -> void
   }
 
   const auto all_lights = active_scene->create_entity("AllLightsParent");
-  for (auto i : std::views::iota(0, 32)) {
+  for (auto i : std::views::iota(0, 2048)) {
     auto point_light = active_scene->create_entity("PointLight_{}", i);
     auto& light = point_light.add_component<Component::PointLight>();
     auto& transform = point_light.get_component<Component::Transform>();

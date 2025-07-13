@@ -56,6 +56,17 @@ struct LineInstanceData
 static_assert(sizeof(LineInstanceData) == 32,
               "LineInstanceData must be 32 bytes.");
 
+struct LightSubmitDto
+{
+  glm::vec3 color{ 1.0f, 1.0f, 1.0f };
+  float intensity{ 1.0f };
+  float radius{ 10.0f };
+  bool cast_shadows{ false };
+  std::uint32_t identifier{ 0 };
+
+  auto operator<=>(const LightSubmitDto&) const = default;
+};
+
 class Renderer
 {
 public:
@@ -67,6 +78,8 @@ public:
 
   auto submit(const RendererSubmit& cmd,
               const glm::mat4& transform = glm::mat4{ 1.0F }) -> void;
+  auto submit_light(const LightSubmitDto&,
+                    const glm::mat4& transform = glm::mat4{ 1.0F }) -> void;
   auto submit_lines(const glm::vec3&, const glm::vec3&, float, const glm::vec4&)
     -> void;
   auto submit_aabb(const glm::vec3& min,
@@ -221,8 +234,9 @@ private:
   auto run_bloom_pass() -> void;
 
   DrawCommandMap draw_commands{};
-  IdentifierMap identifiers{};
+  IdentifierMap identifier_draw_commands{};
   DrawCommandMap shadow_draw_commands{};
+  DrawCommandMap point_light_draw_commands{};
 
   using ReloadCallback = std::function<void(const PipelineBlueprint&)>;
   struct MaterialRecord

@@ -171,6 +171,7 @@ target_include_directories(DynamicRendering_Window PUBLIC
         $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/include>
         PRIVATE
         $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/include/dynamic_rendering>
+        ${CMAKE_SOURCE_DIR}/third_party/debug_break/include
 )
 
 target_link_libraries(DynamicRendering_Window PUBLIC
