@@ -9,15 +9,13 @@ layout(location = 0) out vec4 out_color;
 layout(push_constant) uniform BloomStrength { float bloom_strength; }
 pc;
 
-void main() {
+void main()
+{
   ivec2 framebuffer_size = textureSize(skybox_input, 0);
   ivec2 bloom_size = imageSize(bloom_input);
 
-  // Compute normalized UV in [0,1] relative to framebuffer
   vec2 uv = gl_FragCoord.xy / vec2(framebuffer_size);
 
-  // Convert uv to bloom texture coords using normalized coordinates
-  // Using floor to avoid rounding issues and clamp to valid range
   ivec2 bloom_pixel =
       clamp(ivec2(floor(uv * vec2(bloom_size))), ivec2(0), bloom_size - 1);
 

@@ -127,7 +127,7 @@ public:
     Badge<AssetReloader>) const -> VkDescriptorSetLayout;
   static auto is_default_texture(const Image* image) -> bool
   {
-    return image == white_texture.get() || image == black_texture.get();
+    return any(image, white_texture.get(), black_texture.get());
   }
   [[nodiscard]] auto get_point_light_system() const -> PointLightSystem&
   {

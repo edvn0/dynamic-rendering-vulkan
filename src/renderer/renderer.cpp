@@ -548,30 +548,25 @@ Renderer::Renderer(const Device& dev,
         .debug_name = "light_culling_debug_image",
       });
 
-    global_light_counter_buffer = GPUBuffer::zero_initialise(
-      *device,
-      sizeof(std::uint32_t),
-      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT |
-        VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-      true,
-      "global_light_counter_buffer");
+    global_light_counter_buffer =
+      GPUBuffer::zero_initialise<GPUBufferType::Storage, sizeof(std::uint32_t)>(
+        *device, true, "global_light_counter_buffer");
 
     std::size_t num_tiles =
       (geometry_image->width() * geometry_image->height()) / tile_size;
-    light_grid_buffer = GPUBuffer::zero_initialise(
+    light_grid_buffer = GPUBuffer::zero_initialise<GPUBufferType::Storage>(
       *device,
       num_tiles * sizeof(uint32_t) * 4, // offset, count, pad0, pad1
-      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-      false,
+      true,
       "light_grid_buffer");
 
     std::size_t max_total_indices = num_tiles * max_lights_per_tile;
-    light_index_list_buffer = GPUBuffer::zero_initialise(
-      *device,
-      max_total_indices * sizeof(std::uint32_t),
-      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-      false,
-      "light_index_list_buffer");
+    light_index_list_buffer =
+      GPUBuffer::zero_initialise<GPUBufferType::Storage>(
+        *device,
+        max_total_indices * sizeof(std::uint32_t),
+        true,
+        "light_index_list_buffer");
 
     light_culling_material->upload("light_index_list", light_index_list_buffer);
     light_culling_material->upload("light_grid_buffer", light_grid_buffer);
@@ -1224,14 +1219,7 @@ Renderer::end_frame() -> void
 
   run_shadow_pass(flat_shadow_draw_commands);
   run_z_prepass(flat_draw_commands);
-
-  static constexpr bool run_point_lights_pass = true;
-  if constexpr (run_point_lights_pass) {
-    run_geometry_pass(flat_draw_commands);
-    run_point_light_pass(flat_draw_commands);
-  } else {
-    run_geometry_pass(flat_draw_commands);
-  }
+  run_geometry_pass(flat_draw_commands);
 
   if constexpr (is_debug) {
     run_identifier_pass(flat_draw_commands);

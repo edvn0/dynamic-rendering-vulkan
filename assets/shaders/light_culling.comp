@@ -4,8 +4,6 @@
 #include "tiling_constants.glsl"
 #include "z_slicing.glsl"
 
-#extension GL_EXT_debug_printf : enable
-
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 4) in;
 
 layout(std430, set = 1, binding = 1) restrict buffer writeonly light_index_list
@@ -33,9 +31,9 @@ layout(std430,
 };
 layout(rgba8ui, set = 1, binding = 4) uniform writeonly uimage2D debug_image;
 
-// Shared memory for light culling per workgroup
-shared uint shared_light_indices[MAX_LIGHTS_PER_TILE];
-shared uint shared_count;
+// Per-thread light storage (no shared memory needed)
+uint thread_light_indices[MAX_LIGHTS_PER_TILE];
+uint thread_light_count;
 
 ivec2
 flatten_tile_coord(uvec3 tile_coord, uvec3 tile_grid_size)
@@ -62,7 +60,6 @@ linear_depth(uint slice, uint num_slices, float near_z, float far_z)
 vec3
 ndc_to_view(vec2 ndc, float z_clip)
 {
-  // No Y-axis flip for OpenGL
   vec4 clip = vec4(ndc * 2.0 - 1.0, z_clip * 2.0 - 1.0, 1.0);
   vec4 view = camera_ubo.inverse_projection * clip;
   return view.xyz / view.w;
@@ -159,8 +156,10 @@ main()
   // Calculate proper depth bounds for this Z-slice
   float far_plane = camera_ubo.screen_size_near_far.w;
   float near_plane = camera_ubo.screen_size_near_far.z;
-float near_depth = compute_slice_depth(tile_coord.z, NUM_Z_SLICES, near_plane, far_plane);
-float far_depth  = compute_slice_depth(tile_coord.z + 1, NUM_Z_SLICES, near_plane, far_plane);
+  float near_depth =
+    compute_slice_depth(tile_coord.z, NUM_Z_SLICES, near_plane, far_plane);
+  float far_depth =
+    compute_slice_depth(tile_coord.z + 1, NUM_Z_SLICES, near_plane, far_plane);
 
   // Convert to NDC depth [0,1]
   vec4 near_clip = camera_ubo.projection * vec4(0, 0, -near_depth, 1.0);
@@ -172,68 +171,54 @@ float far_depth  = compute_slice_depth(tile_coord.z + 1, NUM_Z_SLICES, near_plan
   Frustum tile_frustum =
     create_tile_frustum(tile_min, tile_max, near_ndc, far_ndc);
 
-  // Initialize shared memory - only thread 0 does this
-  if (gl_LocalInvocationIndex == 0) {
-    shared_count = 0;
-  }
+  // Initialize per-thread light count
+  thread_light_count = 0;
 
-  // Wait for shared memory initialization to complete
-  barrier();
-
-  // Light culling - test each light against the tile frustum
-  uint step_size = gl_WorkGroupSize.x * gl_WorkGroupSize.y * gl_WorkGroupSize.z;
-  for (uint i = gl_LocalInvocationIndex; i < point_light_buffer.light_count;
-       i += step_size) {
+  // Light culling - each thread tests all lights for its tile
+  for (uint i = 0; i < point_light_buffer.light_count; ++i) {
     vec3 light_pos = point_light_buffer.lights[i].position;
     float light_radius = point_light_buffer.lights[i].radius;
 
     // Sphere-frustum intersection test using bounding sphere
     float dist = distance(light_pos, tile_frustum.center);
     if (dist < light_radius + tile_frustum.radius) {
-      // Atomically get index and ensure it's within bounds
-      uint index = atomicAdd(shared_count, 1);
-      if (index < MAX_LIGHTS_PER_TILE) {
-        shared_light_indices[index] = i;
+      // Store light index if we have space
+      if (thread_light_count < MAX_LIGHTS_PER_TILE) {
+        thread_light_indices[thread_light_count] = i;
+        thread_light_count++;
       }
     }
   }
 
-  // Ensure all light culling operations complete before proceeding
-  barrier();
+  // Clamp count to maximum to handle overflow case
+  uint count = min(thread_light_count, MAX_LIGHTS_PER_TILE);
+  uint offset = atomicAdd(global_light_list_counter, count);
 
-  // Only thread 0 writes the final results
-  if (gl_LocalInvocationIndex == 0) {
-    // Clamp count to maximum to handle overflow case
-    uint count = min(shared_count, MAX_LIGHTS_PER_TILE);
-    uint offset = atomicAdd(global_light_list_counter, count);
+  // Write tile grid data
+  tile_light_grids[tile_index].offset = offset;
+  tile_light_grids[tile_index].count = count;
 
-    // Write tile grid data
-    tile_light_grids[tile_index].offset = offset;
-    tile_light_grids[tile_index].count = count;
+  // Copy light indices to global buffer
+  for (uint j = 0; j < count; ++j) {
+    light_indices[offset + j] = thread_light_indices[j];
+  }
 
-    // Copy light indices to global buffer
-    for (uint j = 0; j < count; ++j) {
-      light_indices[offset + j] = shared_light_indices[j];
-    }
+  // Generate debug visualization using heatmap
+  vec4 heatmap_color = get_heatmap_color(count, MAX_LIGHTS_PER_TILE);
 
-    // Generate debug visualization
-    vec4 heatmap_color = get_heatmap_color(count, MAX_LIGHTS_PER_TILE);
+  // Convert to uint color (0-255 range) for rgba8ui format
+  uvec4 debug_color = uvec4(uint(heatmap_color.r * 255.0),
+                            uint(heatmap_color.g * 255.0),
+                            uint(heatmap_color.b * 255.0),
+                            255u);
 
-    // Convert to uint color (0-255 range) for rgba8ui format
-    uvec4 debug_color = uvec4(uint(heatmap_color.r * 255.0),
-                              uint(heatmap_color.g * 255.0),
-                              uint(heatmap_color.b * 255.0),
-                              255u);
+  // Fill the entire tile with the debug color
+  ivec2 tile_pixel_min = ivec2(tile_coord.xy * TILE_SIZE);
+  ivec2 tile_pixel_max = ivec2((tile_coord.xy + 1u) * TILE_SIZE);
 
-    // Write to entire tile area in debug image (pixel-by-pixel coverage)
-    ivec2 tile_pixel_min = ivec2(tile_coord.xy * TILE_SIZE);
-    ivec2 tile_pixel_max = ivec2((tile_coord.xy + 1u) * TILE_SIZE);
-
-    // Fill the entire tile with the heatmap color
-    for (int y = tile_pixel_min.y; y < tile_pixel_max.y; ++y) {
-      for (int x = tile_pixel_min.x; x < tile_pixel_max.x; ++x) {
-        imageStore(debug_image, ivec2(x, y), debug_color);
-      }
+  for (int y = tile_pixel_min.y; y < tile_pixel_max.y; ++y) {
+    for (int x = tile_pixel_min.x; x < tile_pixel_max.x; ++x) {
+      imageStore(debug_image, ivec2(x, y), debug_color);
     }
   }
 }

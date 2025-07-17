@@ -34,7 +34,7 @@ layout(location = 0) in vec3 v_normal;
 layout(location = 1) in vec3 v_world_pos;
 layout(location = 2) in vec4 v_light_space_pos;
 layout(location = 3) in vec2 v_uv;
-layout(location = 4) in vec4 v_view_position;
+layout(location = 4) in vec3 v_view_position;
 layout(location = 5) in mat3 v_tbn;
 
 layout(location = 0) out vec4 frag_colour;
@@ -138,7 +138,7 @@ void main()
     n = calculate_normal_from_map(v_uv, v_tbn);
   }
 
-  vec3 v = -normalize(v_world_pos - vec3(camera_ubo.camera_position));
+  vec3 v = normalize(v_world_pos - vec3(camera_ubo.camera_position));
   vec3 l = normalize(v_world_pos - vec3(shadow_ubo.light_position));
   vec3 h = normalize(v + l);
 
@@ -164,7 +164,7 @@ void main()
 
   float shadow = 1.0F - calculate_shadow(v_light_space_pos);
   vec3 ambient =
-      vec3(shadow_ubo.ambient_color.rgb) * AMBIENT_LIGHT * albedo * ao;
+      vec3(shadow_ubo.ambient_color.rgb) * shadow_ubo.ambient_color.a * AMBIENT_LIGHT * albedo * ao;
 
   // --- Forward+ tiled lights integration ---
 
@@ -178,7 +178,8 @@ void main()
   // Calculate Z-slice
   float near_plane = camera_ubo.screen_size_near_far.z;
   float far_plane = camera_ubo.screen_size_near_far.w;
-  uint tile_z = compute_slice_index(view_z, NUM_Z_SLICES, near_plane, far_plane);
+  uint tile_z =
+      compute_slice_index(view_z, NUM_Z_SLICES, near_plane, far_plane);
 
   // Calculate tile grid dimensions (same as compute shader)
   uvec2 tile_count_xy =
@@ -188,14 +189,6 @@ void main()
   // Get 3D tile index
   uvec3 tile_coord = uvec3(tile_x, tile_y, tile_z);
   uint tile_index = get_tile_index_3d(tile_coord, tile_grid_size);
-
-  // Bounds check
-  if (tile_coord.x >= tile_grid_size.x || tile_coord.y >= tile_grid_size.y ||
-      tile_coord.z >= tile_grid_size.z)
-  {
-    // Fragment outside valid tile range - use fallback lighting or discard
-    return;
-  }
 
   // Get light list for this tile
   LightGridEntry tile_entry = tile_light_grids[tile_index];

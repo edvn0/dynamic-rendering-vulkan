@@ -84,12 +84,25 @@ public:
     -> std::unique_ptr<GPUBuffer>;
   template<GPUBufferType Type, std::size_t Bytes>
   static auto zero_initialise(const Device& device,
-                              bool mapped_on_create = false,
-                              std::string_view name = {})
+                              bool mapped_on_create,
+                              std::string_view name)
     -> std::unique_ptr<GPUBuffer>
   {
     return zero_initialise(device,
                            Bytes,
+                           static_cast<VkBufferUsageFlags>(Type),
+                           mapped_on_create,
+                           name);
+  }
+  template<GPUBufferType Type>
+  static auto zero_initialise(const Device& device,
+                              std::size_t bytes,
+                              bool mapped_on_create,
+                              std::string_view name)
+    -> std::unique_ptr<GPUBuffer>
+  {
+    return zero_initialise(device,
+                           bytes,
                            static_cast<VkBufferUsageFlags>(Type),
                            mapped_on_create,
                            name);

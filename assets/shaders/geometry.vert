@@ -24,14 +24,15 @@ const mat4 shadow_bias_matrix = mat4(0.5, 0.0, 0.0, 0.0, 0.0, -0.5, 0.0, 0.0,
 
 precise invariant gl_Position;
 
-void main()
-{
+void main() {
   mat4 model_matrix = RECONSTRUCT();
   vec4 world_position = model_matrix * vec4(a_position, 1.0);
   gl_Position = camera_ubo.vp * world_position;
 
   vec3 world_normal = normalize((model_matrix * vec4(a_normal, 0.0)).xyz);
   vec3 world_tangent = normalize((model_matrix * vec4(a_tangent.xyz, 0.0)).xyz);
+  world_tangent = normalize(world_tangent -
+                            dot(world_tangent, world_normal) * world_normal);
   vec3 world_bitangent = normalize(cross(world_normal, world_tangent));
 
   v_normal = world_normal;

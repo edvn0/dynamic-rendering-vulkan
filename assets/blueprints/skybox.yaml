@@ -5,7 +5,17 @@ shaders:
     path: skybox.frag
 attachments:
   - format: r32g32b32a32_sfloat
-    blend_enable: true
+
+blend_states:
+  - src_color: src_alpha
+    dst_color: one_minus_src_alpha
+    color_op: add
+    src_alpha: src_alpha
+    dst_alpha: one_minus_src_alpha
+    alpha_op: subtract
+    color_mask: rgba
+    enabled: true
+
 depth_stencil:
   depth_test: false
   depth_write: false
