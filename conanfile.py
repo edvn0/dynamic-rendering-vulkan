@@ -1,7 +1,7 @@
 import os
 
 from conan import ConanFile
-from conan.tools.cmake import cmake_layout, CMake
+from conan.tools.cmake import cmake_layout, CMake, CMakeToolchain
 from conan.tools.files import copy
 
 
@@ -9,14 +9,23 @@ class VulkanAppConan(ConanFile):
     name = "vulkan_app"
     version = "0.1.0"
     settings = "os", "compiler", "build_type", "arch"
-    generators = "CMakeToolchain", "CMakeDeps"
-    requires = []
+    generators = "CMakeDeps"
     tool_requires = []
+    
+    options = {
+        "ENABLE_TESTING": [True, False],
+        "ENABLE_LIGHT_CLUSTERING": [True, False]
+    }
+    default_options = {
+        "ENABLE_TESTING": True,  # By default, testing is disabled,
+        "ENABLE_LIGHT_CLUSTERING": True,
+    }
 
     def layout(self):
         cmake_layout(self)
 
     def requirements(self):
+        self.requires("doctest/2.4.11")
         self.requires(
             "spdlog/1.15.1", options={"use_std_fmt": True, "no_exceptions": True, "shared": False})
         self.requires("glfw/3.4")
@@ -98,7 +107,22 @@ class VulkanAppConan(ConanFile):
                                                "with_assjson_exporter": False,
                                                "with_collada_exporter": False,
                                                "with_opengex_exporter": False, })
-
+   
+    def generate(self):
+        def set_cache_variable(os:dict[str, list[bool]], name: str):
+            tc.cache_variables[name] = "ON" if os.get(name) in ('true', 'True', '1', 'on', 'ON', 'On') else "OFF"
+        
+        tc = CMakeToolchain(self)
+        
+        
+        opts = dict(self.options.items())
+        
+        # Define the ENABLE_TESTING option based on Conan's option
+        set_cache_variable(opts, 'ENABLE_TESTING')
+        set_cache_variable(opts, 'ENABLE_LIGHT_CLUSTERING')
+        # Generate the CMake toolchain file
+        tc.generate()
+    
     def build(self):
         cmake = CMake(self)
         cmake.configure()

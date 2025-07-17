@@ -5,6 +5,14 @@ set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(DISABLE_EXCEPTIONS ON)
 
+option(ENABLE_TESTING "Enable testing" OFF)
+option(RENDERER_CLUSTER_LIGHTS "Allow clustering of lights" ON)
+
+if(ENABLE_TESTING)
+        find_package(doctest REQUIRED CONFIG)
+        enable_testing()
+endif()
+
 function(dynamic_rendering_set_target_options target)
         if(MSVC)
                 target_compile_options(${target} PRIVATE /W4 /WX)
@@ -48,6 +56,7 @@ find_package(EnTT REQUIRED CONFIG)
 
 add_subdirectory(third_party)
 add_subdirectory(client)
+add_subdirectory(libraries)
 
 # === Core Library ===
 add_library(DynamicRendering_Core STATIC
@@ -96,6 +105,8 @@ target_link_libraries(DynamicRendering_Core
         bfg::lyra
         stb::stb
         EnTT::EnTT
+        VkCVar::VkCVar
+        VkUtil::VkUtil
 )
 
 target_precompile_headers(DynamicRendering_Core PUBLIC include/dynamic_rendering/dynamic_rendering_pch.hpp)
@@ -156,6 +167,15 @@ target_link_libraries(DynamicRendering_Renderer PUBLIC
         meshoptimizer::meshoptimizer
         imgui
 )
+
+message(CHECK_START "Light culling (GPU)")
+
+if(ENABLE_LIGHT_CLUSTERING)
+        message(CHECK_PASS "Enabled")
+        target_compile_definitions(DynamicRendering_Renderer PRIVATE ENABLE_LIGHT_CLUSTERING)
+else()
+        message(CHECK_FAIL "Disabled")
+endif()
 
 target_precompile_headers(DynamicRendering_Renderer REUSE_FROM DynamicRendering_Core)
 

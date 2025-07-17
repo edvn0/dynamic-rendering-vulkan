@@ -37,7 +37,7 @@
 #include <utility>
 
 static constexpr auto tile_size = 16;
-static constexpr std::uint32_t num_z_slices = 24;
+static constexpr std::uint32_t num_z_slices = 4;
 static constexpr std::size_t max_lights_per_tile = 64;
 
 struct CameraBuffer
@@ -1119,7 +1119,9 @@ Renderer::end_frame() -> void
   {
     ZoneScopedN("Submit compute buffer (waiting on geometry)");
     compute_command_buffer->begin_frame(frame_index);
+#ifdef ENABLE_LIGHT_CLUSTERING
     run_light_culling_pass();
+#endif
     compute_command_buffer->submit_and_end(frame_index);
   }
 
