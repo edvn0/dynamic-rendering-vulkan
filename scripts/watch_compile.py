@@ -6,7 +6,7 @@ import signal
 from typing import Final
 from watchdog.observers import Observer
 from colorama import Fore, Style, init as init_colorama
-from watchdog.events import FileSystemEventHandler, FileModifiedEvent
+from watchdog.events import FileSystemEventHandler, FileModifiedEvent, DirModifiedEvent
 
 from compile_shaders import compile_all_shaders, compile_shader
 
@@ -75,9 +75,9 @@ class ShaderEventHandler(FileSystemEventHandler):
     def __init__(self, compiler: DebouncedCompiler):
         self._compiler = compiler
 
-    def on_modified(self, event: FileModifiedEvent) -> None:
+    def on_modified(self, event: DirModifiedEvent | FileModifiedEvent) -> None:
         if not event.is_directory:
-            path = pathlib.Path(event.src_path)
+            path = pathlib.Path(str(event.src_path))
             if should_compile(path):
                 self._compiler.schedule(path.resolve())
 

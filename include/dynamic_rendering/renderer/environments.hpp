@@ -28,7 +28,8 @@ struct ColourCorrectionConfig
 
 struct LightEnvironment
 {
-  glm::vec3 light_position{ 400.f, -400.f, 400.f };
+  float azimuth_rad{ 0.0f };
+  float elevation_rad{ 0.0f };
   glm::vec4 light_color{ 1.f, 1.f, 1.f, 1.f };
   glm::vec4 ambient_color{ 0.1F, 0.1F, 0.1F, 1.0F };
 

@@ -2,6 +2,7 @@
 
 #include "core/allocator.hpp"
 #include "core/instance.hpp"
+#include "core/logger.hpp"
 #include "pipeline/blueprint_registry.hpp"
 
 #include <VkBootstrap.h>
@@ -37,31 +38,94 @@ auto
 Device::create(const Core::Instance& instance, const VkSurfaceKHR& surface)
   -> Device
 {
-
   vkb::PhysicalDeviceSelector selector{ instance.vkb() };
-  VkPhysicalDeviceFeatures features{
-    .depthClamp = VK_TRUE,
-    .depthBiasClamp = VK_TRUE,
-    .fragmentStoresAndAtomics = VK_TRUE,
-  };
 
-  auto phys_result = selector.set_surface(surface)
-                       .set_minimum_version(1, 3)
-                       .set_required_features(features)
-                       .require_dedicated_transfer_queue()
-                       .select();
+  VkPhysicalDeviceFeatures deviceFeatures10 = {
+    .geometryShader = true,     // enable if supported
+    .tessellationShader = true, // enable if supported
+    .sampleRateShading = VK_TRUE,
+    .multiDrawIndirect = VK_TRUE,
+    .drawIndirectFirstInstance = VK_TRUE,
+    .depthBiasClamp = VK_TRUE,
+    .fillModeNonSolid = true, // enable if supported
+    .samplerAnisotropy = VK_TRUE,
+    .textureCompressionBC = true,           // enable if supported
+    .vertexPipelineStoresAndAtomics = true, // enable if supported
+    .fragmentStoresAndAtomics = VK_TRUE,
+    .shaderImageGatherExtended = VK_TRUE,
+    .shaderInt64 = true, // enable if supported
+    .shaderInt16 = true, // enable if supported
+  };
+  VkPhysicalDeviceVulkan11Features deviceFeatures11 = {
+    .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES,
+    .storageBuffer16BitAccess = VK_TRUE,
+    .multiview = true,              // enable if supported
+    .samplerYcbcrConversion = true, // enable if supported
+    .shaderDrawParameters = VK_TRUE,
+  };
+  VkPhysicalDeviceVulkan12Features deviceFeatures12 = {
+    .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES,
+    .drawIndirectCount = true,                 // enable if supported
+    .storageBuffer8BitAccess = true,           // enable if supported
+    .uniformAndStorageBuffer8BitAccess = true, // enable if supported
+    .shaderFloat16 = true,                     // enable if supported
+    .shaderInt8 = true,                        // enable if supported
+    .descriptorIndexing = VK_TRUE,
+    .shaderSampledImageArrayNonUniformIndexing = VK_TRUE,
+    .descriptorBindingSampledImageUpdateAfterBind = VK_TRUE,
+    .descriptorBindingStorageImageUpdateAfterBind = VK_TRUE,
+    .descriptorBindingUpdateUnusedWhilePending = VK_TRUE,
+    .descriptorBindingPartiallyBound = VK_TRUE,
+    .descriptorBindingVariableDescriptorCount = VK_TRUE,
+    .runtimeDescriptorArray = VK_TRUE,
+    .scalarBlockLayout = VK_TRUE,
+    .uniformBufferStandardLayout = VK_TRUE,
+    .hostQueryReset = true, // enable if supported
+    .timelineSemaphore = VK_TRUE,
+    .bufferDeviceAddress = VK_TRUE,
+    .vulkanMemoryModel = true,            // enable if supported
+    .vulkanMemoryModelDeviceScope = true, // enable if supported
+  };
+  VkPhysicalDeviceVulkan13Features deviceFeatures13 = {
+    .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES,
+    .shaderDemoteToHelperInvocation = true, // enable if supported
+    .subgroupSizeControl = VK_TRUE,
+    .synchronization2 = VK_TRUE,
+    .dynamicRendering = VK_TRUE,
+    .maintenance4 = VK_TRUE,
+  };
+#if defined(VK_API_VERSION_1_4)
+  VkPhysicalDeviceVulkan14Features deviceFeatures14 = {
+    .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_4_FEATURES,
+    .indexTypeUint8 = true,
+    .dynamicRenderingLocalRead = true,
+  };
+#endif // VK_API_VERSION_1_4
+
+  auto phys_result =
+    selector.set_surface(surface)
+      .set_minimum_version(1, 3)
+      .set_required_features(deviceFeatures10)
+      .add_required_extension(VK_EXT_CALIBRATED_TIMESTAMPS_EXTENSION_NAME)
+      .require_dedicated_transfer_queue()
+      .select();
+
   if (!phys_result) {
+    auto error = phys_result.error();
+    Logger::log_error("Failed to select physical device: {}", error.message());
     assert(false && "Failed to select physical device");
   }
 
   vkb::DeviceBuilder builder{ phys_result.value() };
-  VkPhysicalDeviceDynamicRenderingFeaturesKHR dynamic_rendering{
-    .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_FEATURES_KHR,
-    .pNext = nullptr,
-    .dynamicRendering = VK_TRUE,
-  };
 
-  builder.add_pNext(&dynamic_rendering);
+  // Add the feature chain to the device builder
+  builder.add_pNext(&deviceFeatures13);
+  builder.add_pNext(&deviceFeatures12);
+  builder.add_pNext(&deviceFeatures11);
+#if defined(VK_API_VERSION_1_4)
+  builder.add_pNext(&deviceFeatures14);
+#endif // VK_API_VERSION_1_4
+
   auto dev_result = builder.build();
   if (!dev_result) {
     assert(false && "Failed to create device");

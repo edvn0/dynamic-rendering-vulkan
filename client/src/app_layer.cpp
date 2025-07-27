@@ -1,5 +1,6 @@
 #include "app_layer.hpp"
 
+#include "core/random.hpp"
 #include "dynamic_rendering/assets/manager.hpp"
 #include <dynamic_rendering/core/fs.hpp>
 
@@ -255,7 +256,6 @@ AppLayer::AppLayer(const Device&, Renderer& r, BS::priority_thread_pool* pool)
   auto cerberus = active_scene->create_entity("Cerberus");
 
   Assets::Manager::the().load<Image>("sf.ktx2");
-  cerberus.add_component<Component::Material>("main_geometry");
   cerberus.add_component<Component::Mesh>("cerberus/cerberus.gltf");
   cerberus.get_component<Component::Transform>().scale = { 0.05, 0.05, 0.05 };
 
@@ -582,7 +582,7 @@ AppLayer::on_initialise(const InitialisationParameters& params) -> void
 {
   auto&& [w, h] = params.window.framebuffer_size();
   camera = std::make_unique<EditorCamera>(
-    90.0F, static_cast<float>(w) / static_cast<float>(h), 0.1F, 1000.0F);
+    60.0F, static_cast<float>(w) / static_cast<float>(h), 0.1F, 150.0F);
   renderer->update_camera(*camera);
 
   active_scene->on_resize(*camera);
@@ -618,6 +618,7 @@ AppLayer::get_camera_matrices(CameraMatrices& out) const -> bool
 auto
 AppLayer::generate_scene(PointLightSystem& pls) -> void
 {
+  VkMaths::AABB sponza_aabb;
   {
     auto sponza = active_scene->create_entity("Sponza");
     auto& mesh = sponza.add_component<Component::Mesh>(
@@ -627,6 +628,9 @@ AppLayer::generate_scene(PointLightSystem& pls) -> void
     auto& transform = sponza.get_component<Component::Transform>();
     transform.scale = glm::vec3(0.01f, 0.01f, 0.01f);
     transform.position.y -= 2.0F;
+
+    sponza_aabb = mesh.mesh.get()->get_aabb();
+    sponza_aabb = sponza_aabb.uniform_scale({ 0.01f, 0.01f, 0.01f });
   }
 
   auto cube_parent = active_scene->create_entity("CubesParent");
@@ -652,11 +656,11 @@ AppLayer::generate_scene(PointLightSystem& pls) -> void
   }
 
   const auto all_lights = active_scene->create_entity("AllLightsParent");
-  for (auto i : std::views::iota(0, 1024)) {
+  for (auto i : std::views::iota(0, 4096)) {
     auto point_light = active_scene->create_entity("PointLight_{}", i);
     auto& light = point_light.add_component<Component::PointLight>();
     auto& transform = point_light.get_component<Component::Transform>();
-    transform.position = Util::Random::random_vec3(-30, 30);
+    transform.position = Util::Random::random_vec3(sponza_aabb);
     transform.scale = 0.1F * glm::vec3(1.0f, 1.0f, 1.0f);
 
     light.color = Util::Random::random_single_channel_colour();

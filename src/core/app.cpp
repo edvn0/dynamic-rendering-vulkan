@@ -95,8 +95,8 @@ App::App(const ApplicationArguments& args)
 
   {
     ZoneScopedN("Create renderer");
-    renderer =
-      std::make_unique<Renderer>(*device, *swapchain, *window, thread_pool);
+    renderer = std::make_unique<Renderer>(
+      *device, *instance, *swapchain, *window, thread_pool);
   }
 
   {

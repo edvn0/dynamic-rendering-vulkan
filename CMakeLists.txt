@@ -108,6 +108,7 @@ target_link_libraries(DynamicRendering_Core
         EnTT::EnTT
         VkCVar::VkCVar
         VkUtil::VkUtil
+        VkMaths::VkMaths
 )
 
 target_precompile_headers(DynamicRendering_Core PUBLIC include/dynamic_rendering/dynamic_rendering_pch.hpp)
@@ -167,6 +168,7 @@ target_link_libraries(DynamicRendering_Renderer PUBLIC
         assimp::assimp
         meshoptimizer::meshoptimizer
         imgui
+        VkMaths::VkMaths
 )
 
 message(CHECK_START "Light culling (GPU)")

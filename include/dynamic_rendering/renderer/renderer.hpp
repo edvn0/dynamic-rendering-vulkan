@@ -1,5 +1,6 @@
 #pragma once
 
+#include "core/instance.hpp"
 #include "environments.hpp"
 #include "mesh.hpp"
 #include "point_light_system.hpp"
@@ -23,6 +24,8 @@
 #include "renderer/draw_command.hpp"
 #include "renderer/frustum.hpp"
 #include "renderer/material.hpp"
+
+#include "vk-maths/aabb.hpp"
 
 #include <BS_thread_pool.hpp>
 
@@ -71,6 +74,7 @@ class Renderer
 {
 public:
   Renderer(const Device&,
+           const Core::Instance&,
            const Swapchain&,
            const Window&,
            BS::priority_thread_pool&);
@@ -86,7 +90,7 @@ public:
                    const glm::vec3& max,
                    const glm::vec4& color = { 1.f, 1.f, 0.f, 1.f },
                    float width = 1.f) -> void;
-  auto submit_aabb(const AABB& aabb,
+  auto submit_aabb(const VkMaths::AABB& aabb,
                    const glm::vec4& color = { 1.f, 1.f, 0.f, 1.f },
                    const float width = 1.f)
   {
@@ -155,6 +159,7 @@ public:
 
 private:
   const Device* device{ nullptr };
+  const Core::Instance* instance{ nullptr };
   const Swapchain* swapchain{ nullptr };
   std::uint32_t frame_index{ 0 };
   BS::priority_thread_pool* thread_pool{ nullptr };
@@ -224,6 +229,9 @@ private:
   Assets::Pointer<Image> light_culling_debug_image;
   Assets::Pointer<Material> light_culling_material;
 
+  Assets::Pointer<Material> light_reduction_material;
+  std::unique_ptr<GPUBuffer> light_reduction_buffer;
+
   std::unique_ptr<GPUBuffer> global_light_counter_buffer;
   std::unique_ptr<GPUBuffer> light_grid_buffer;
   std::unique_ptr<GPUBuffer> light_index_list_buffer;
@@ -260,17 +268,23 @@ private:
   auto run_skybox_pass() -> void;
   auto run_shadow_pass(DrawListView) -> void;
   auto run_z_prepass(DrawListView) -> void;
-  auto run_point_light_pass(DrawListView) -> void;
   auto run_geometry_pass(DrawListView) -> void;
   auto run_composite_pass() -> void;
   auto run_colour_correction_pass() -> void;
   auto run_postprocess_passes() -> void { run_colour_correction_pass(); }
   auto run_identifier_pass(DrawListView) -> void;
   auto run_light_culling_pass() -> void;
+  auto run_light_reduction_pass() -> void;
 
   auto initialise_techniques() -> void;
   auto destroy() -> void;
 
   static inline Assets::Pointer<Image> white_texture{ nullptr };
   static inline Assets::Pointer<Image> black_texture{ nullptr };
+
+#ifdef IS_DEBUG
+  struct ProfilerPimpl;
+  std::unique_ptr<ProfilerPimpl> profiler_pimpl;
+  auto initialise_profiling_context() -> void;
+#endif
 };

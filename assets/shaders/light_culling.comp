@@ -31,7 +31,12 @@ layout(std430,
 };
 layout(rgba8ui, set = 1, binding = 4) uniform writeonly uimage2D debug_image;
 
-// Per-thread light storage (no shared memory needed)
+layout(std430, set = 1, binding = 5) readonly buffer TileDepths
+{
+  vec2 tile_min_max_depths[]; // x = minDepth, y = maxDepth
+};
+
+// Per-thread light storage for light culling
 uint thread_light_indices[MAX_LIGHTS_PER_TILE];
 uint thread_light_count;
 
@@ -153,26 +158,47 @@ main()
   vec2 tile_max = (vec2(tile_coord.xy) + 1.0) * TILE_SIZE /
                   camera_ubo.screen_size_near_far.xy;
 
-  // Calculate proper depth bounds for this Z-slice
-  float far_plane = camera_ubo.screen_size_near_far.w;
+  // tile_coord.x/y/z = tile coordinates in x,y, and z(slice)
+  // tile_grid_size = (num_tiles_x, num_tiles_y, NUM_Z_SLICES)
+
+  // Index to tile_min_max_depths is (tile_index_2d * NUM_Z_SLICES + slice)
+  uint tile_2d_index = tile_coord.y * tile_grid_size.x + tile_coord.x;
+  uint depth_index = tile_2d_index * NUM_Z_SLICES + tile_coord.z;
+
+  vec2 slice_min_max = tile_min_max_depths[depth_index];
+  float minDepth = slice_min_max.x;
+  float maxDepth = slice_min_max.y;
+
+  // Clamp min/max to slice depth bounds
   float near_plane = camera_ubo.screen_size_near_far.z;
-  float near_depth =
+  float far_plane = camera_ubo.screen_size_near_far.w;
+
+  // Compute slice depth bounds in linear space
+  float slice_near_depth =
     compute_slice_depth(tile_coord.z, NUM_Z_SLICES, near_plane, far_plane);
-  float far_depth =
+  float slice_far_depth =
     compute_slice_depth(tile_coord.z + 1, NUM_Z_SLICES, near_plane, far_plane);
 
-  // Convert to NDC depth [0,1]
-  vec4 near_clip = camera_ubo.projection * vec4(0, 0, -near_depth, 1.0);
-  vec4 far_clip = camera_ubo.projection * vec4(0, 0, -far_depth, 1.0);
+  // Clamp the min/max depth from reduction to slice bounds (optional but safer)
+  minDepth = clamp(minDepth, slice_near_depth, slice_far_depth);
+  maxDepth = clamp(maxDepth, slice_near_depth, slice_far_depth);
+
+  // Convert min/max linear depths to NDC depth (accounting reverse Z and
+  // projection)
+  vec4 near_clip = camera_ubo.projection * vec4(0, 0, -minDepth, 1.0);
+  vec4 far_clip = camera_ubo.projection * vec4(0, 0, -maxDepth, 1.0);
+
   float near_ndc = (near_clip.z / near_clip.w) * 0.5 + 0.5;
   float far_ndc = (far_clip.z / far_clip.w) * 0.5 + 0.5;
 
-  // Create frustum for this tile
+  // Use near_ndc and far_ndc to create the tile frustum
   Frustum tile_frustum =
     create_tile_frustum(tile_min, tile_max, near_ndc, far_ndc);
 
-  // Initialize per-thread light count
   thread_light_count = 0;
+
+  // Phase 1: Each thread tests ALL lights for THIS specific tile
+  // (We're back to per-tile processing, not per-workgroup)
 
   // Light culling - each thread tests all lights for its tile
   for (uint i = 0; i < point_light_buffer.light_count; ++i) {
@@ -190,21 +216,25 @@ main()
     }
   }
 
-  // Clamp count to maximum to handle overflow case
-  uint count = min(thread_light_count, MAX_LIGHTS_PER_TILE);
-  uint offset = atomicAdd(global_light_list_counter, count);
+  // Phase 2: Each thread writes its own tile data
+  // Since each thread represents one tile, no shared memory needed for this
+  // part
+  uint final_count = min(thread_light_count, MAX_LIGHTS_PER_TILE);
+  uint global_offset = atomicAdd(global_light_list_counter, final_count);
 
   // Write tile grid data
-  tile_light_grids[tile_index].offset = offset;
-  tile_light_grids[tile_index].count = count;
+  tile_light_grids[tile_index].offset = global_offset;
+  tile_light_grids[tile_index].count = final_count;
 
   // Copy light indices to global buffer
-  for (uint j = 0; j < count; ++j) {
-    light_indices[offset + j] = thread_light_indices[j];
+  for (uint j = 0; j < final_count; ++j) {
+    light_indices[global_offset + j] = thread_light_indices[j];
   }
 
+  // Phase 3: Each thread handles its own debug visualization
+
   // Generate debug visualization using heatmap
-  vec4 heatmap_color = get_heatmap_color(count, MAX_LIGHTS_PER_TILE);
+  vec4 heatmap_color = get_heatmap_color(final_count, MAX_LIGHTS_PER_TILE);
 
   // Convert to uint color (0-255 range) for rgba8ui format
   uvec4 debug_color = uvec4(uint(heatmap_color.r * 255.0),

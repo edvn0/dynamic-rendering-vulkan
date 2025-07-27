@@ -1,6 +1,7 @@
 #include "renderer/renderer.hpp"
 
 #include "core/image_transition.hpp"
+#include "core/instance.hpp"
 #include "renderer/draw_list_manager.hpp"
 #include "renderer/mesh_cache.hpp"
 
@@ -8,12 +9,16 @@
 #include <functional>
 #include <future>
 #include <glm/ext/matrix_clip_space.hpp>
+#include <glm/ext/scalar_constants.hpp>
 #include <glm/glm.hpp>
+#include <glm/gtc/constants.hpp>
 #include <latch>
 #include <memory>
 #include <vulkan/vulkan.h>
 
 #include <tracy/Tracy.hpp>
+#include <tracy/TracyVulkan.hpp>
+#include <vulkan/vulkan_core.h>
 
 #define GLM_ENABLE_EXPERIMENTAL
 #include "renderer/descriptor_manager.hpp"
@@ -30,6 +35,8 @@
 #include "window/swapchain.hpp"
 #include "window/window.hpp"
 
+#include <vk-maths/vector.hpp>
+
 #include <debug_break.h>
 #include <glm/gtx/quaternion.hpp>
 #include <glm/gtx/string_cast.hpp>
@@ -37,7 +44,7 @@
 #include <utility>
 
 static constexpr auto tile_size = 16;
-static constexpr std::uint32_t num_z_slices = 4;
+static constexpr std::uint32_t num_z_slices = 24;
 static constexpr std::size_t max_lights_per_tile = 64;
 
 struct CameraBuffer
@@ -63,10 +70,11 @@ ASSERT_VULKAN_UBO_COMPATIBLE(FrustumBuffer);
 struct ShadowBuffer
 {
   alignas(16) glm::mat4 light_vp;
-  alignas(16) glm::vec4 light_position;
   alignas(16) glm::vec4 light_color;
   alignas(16) glm::vec4 ambient_color{ 0.1F, 0.1F, 0.1F, 1.0F };
-  alignas(16) std::array<glm::vec4, 1> padding{};
+  alignas(16) glm::vec4
+    light_direction; // Directional light direction (vec3, w = 0)
+  alignas(16) std::array<glm::vec4, 1> _padding_{};
 };
 ASSERT_VULKAN_UBO_COMPATIBLE(ShadowBuffer);
 
@@ -190,16 +198,127 @@ Renderer::initialise_textures(const Device& device) -> void
   called = true;
 }
 
+#ifdef IS_DEBUG
+
+#define GPU_ZONE(cmd, name, color)                                             \
+  TracyVkZoneC(profiler_pimpl->context, cmd, name, color)
+#define GPU_ZONE_COLLECT(cmd) TracyVkCollect(profiler_pimpl->context, cmd)
+
+struct Renderer::ProfilerPimpl
+{
+  TracyVkCtx context{};
+  VkCommandPool pool{ VK_NULL_HANDLE };
+  VkCommandBuffer cmd{ VK_NULL_HANDLE };
+};
+
+auto
+Renderer::initialise_profiling_context() -> void
+{
+  profiler_pimpl = std::make_unique<ProfilerPimpl>();
+
+  static PFN_vkGetPhysicalDeviceCalibrateableTimeDomainsKHR
+    get_calibrateable_time_domains = nullptr;
+  static PFN_vkGetCalibratedTimestampsEXT get_calibrated_timestamps = nullptr;
+
+  if (!get_calibrateable_time_domains && !get_calibrated_timestamps) {
+    get_calibrateable_time_domains =
+      reinterpret_cast<PFN_vkGetPhysicalDeviceCalibrateableTimeDomainsKHR>(
+        vkGetInstanceProcAddr(
+          instance->raw(), "vkGetPhysicalDeviceCalibrateableTimeDomainsKHR"));
+    get_calibrated_timestamps =
+      reinterpret_cast<PFN_vkGetCalibratedTimestampsEXT>(
+        vkGetInstanceProcAddr(instance->raw(), "vkGetCalibratedTimestampsEXT"));
+  }
+
+  std::vector<VkTimeDomainEXT> time_domains;
+  constexpr auto has_calibrated_timestamps = true;
+  if (has_calibrated_timestamps) {
+    std::uint32_t domain_count = 0;
+    get_calibrateable_time_domains(
+      device->get_physical_device(), &domain_count, nullptr);
+    time_domains.resize(domain_count);
+    get_calibrateable_time_domains(
+      device->get_physical_device(), &domain_count, time_domains.data());
+  }
+  const bool has_host_query = [&domains = time_domains]() {
+    for (const auto& domain : domains) {
+      if (domain == VK_TIME_DOMAIN_CLOCK_MONOTONIC_RAW_KHR ||
+          domain == VK_TIME_DOMAIN_QUERY_PERFORMANCE_COUNTER_EXT) {
+        return true;
+      }
+    }
+    return false;
+  }();
+
+  if (has_host_query) {
+    profiler_pimpl->context =
+      TracyVkContextHostCalibrated(device->get_physical_device(),
+                                   device->get_device(),
+                                   vkResetQueryPool,
+                                   get_calibrateable_time_domains,
+                                   get_calibrated_timestamps);
+  } else {
+    const VkCommandPoolCreateInfo pool_info{
+      .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+      .pNext = nullptr,
+      .flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT |
+               VK_COMMAND_POOL_CREATE_TRANSIENT_BIT,
+      .queueFamilyIndex = device->graphics_queue_family_index(),
+    };
+    vkCreateCommandPool(
+      device->get_device(), &pool_info, nullptr, &profiler_pimpl->pool);
+
+    set_debug_name(*device,
+                   reinterpret_cast<uint64_t>(profiler_pimpl->pool),
+                   VK_OBJECT_TYPE_COMMAND_POOL,
+                   "Profiler Command Pool");
+    const VkCommandBufferAllocateInfo alloc_info{
+      .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+      .pNext = nullptr,
+      .commandPool = profiler_pimpl->pool,
+      .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+      .commandBufferCount = 1,
+    };
+    vkAllocateCommandBuffers(
+      device->get_device(), &alloc_info, &profiler_pimpl->cmd);
+
+    if (has_calibrated_timestamps) {
+      profiler_pimpl->context =
+        TracyVkContextCalibrated(device->get_physical_device(),
+                                 device->get_device(),
+                                 device->graphics_queue(),
+                                 profiler_pimpl->cmd,
+                                 get_calibrateable_time_domains,
+                                 get_calibrated_timestamps);
+    } else {
+      profiler_pimpl->context = TracyVkContext(device->get_physical_device(),
+                                               device->get_device(),
+                                               device->graphics_queue(),
+                                               profiler_pimpl->cmd);
+    }
+  }
+}
+#else
+#define GPU_ZONE(cmd, name, color)
+#define GPU_ZONE_COLLECT(cmd)
+#endif
+
 Renderer::Renderer(const Device& dev,
+                   const Core::Instance& ins,
                    const Swapchain& sc,
                    const Window& win,
                    BS::priority_thread_pool& p)
   : device(&dev)
+  , instance(&ins)
   , swapchain(&sc)
   , thread_pool(&p)
   , geometry_complete_semaphores(dev)
   , bloom_complete_semaphores(dev)
 {
+#ifdef IS_DEBUG
+  initialise_profiling_context();
+#endif
+
   point_light_system = std::make_unique<PointLightSystem>(*device);
 
   DescriptorLayoutBuilder builder(renderer_bindings_metadata);
@@ -534,6 +653,22 @@ Renderer::Renderer(const Device& dev,
       "WorkgroupPrefix", workgroup_sum_prefix_buffer.get());
   }
 
+  int tiles_x = (geometry_image->width() + tile_size - 1) / tile_size;
+  int tiles_y = (geometry_image->height() + tile_size - 1) / tile_size;
+  std::size_t num_tiles = tiles_x * tiles_y * num_z_slices;
+  {
+    auto aligned_size =
+      get_aligned_buffer_size(*device,
+                              sizeof(glm::vec2) * num_tiles,
+                              VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    light_reduction_buffer = GPUBuffer::zero_initialise<GPUBufferType::Storage>(
+      *device, aligned_size, true, "light_reduction_buffer");
+    light_reduction_material =
+      Material::create(*device, "light_reduction").value();
+    light_reduction_material->upload("TileDepths",
+                                     light_reduction_buffer.get());
+    light_reduction_material->upload("scene_depth", geometry_depth_image.get());
+  }
   {
     light_culling_material = Material::create(*device, "light_culling").value();
 
@@ -552,8 +687,6 @@ Renderer::Renderer(const Device& dev,
       GPUBuffer::zero_initialise<GPUBufferType::Storage, sizeof(std::uint32_t)>(
         *device, true, "global_light_counter_buffer");
 
-    std::size_t num_tiles =
-      (geometry_image->width() * geometry_image->height()) / tile_size;
     light_grid_buffer = GPUBuffer::zero_initialise<GPUBufferType::Storage>(
       *device,
       num_tiles * sizeof(uint32_t) * 4, // offset, count, pad0, pad1
@@ -574,6 +707,7 @@ Renderer::Renderer(const Device& dev,
                                    global_light_counter_buffer);
     light_culling_material->upload("debug_image", light_culling_debug_image);
     light_culling_material->upload("scene_depth", geometry_depth_image.get());
+    light_culling_material->upload("TileDepths", light_reduction_buffer.get());
 
     geometry_material->upload("light_index_list", light_index_list_buffer);
     geometry_material->upload("light_grid_buffer", light_grid_buffer);
@@ -645,6 +779,7 @@ Renderer::Renderer(const Device& dev,
   REGISTER_MATERIAL("identifier", identifier_material.get());
   REGISTER_MATERIAL("line", line_material.get());
   REGISTER_MATERIAL("light_culling", light_culling_material.get());
+  REGISTER_MATERIAL("light_reduction", light_reduction_material.get());
 
   for (const auto& name : techniques | std::views::keys) {
     REGISTER_TECHNIQUE_MATERIAL(name);
@@ -701,15 +836,23 @@ Renderer::on_interface() -> void
   if (ImGui::Begin("Renderer settings")) {
     static bool automatic_far_plane = true;
     ImGui::Checkbox("Auto light far plane", &automatic_far_plane);
-    bool position_changed = ImGui::DragFloat3(
-      "Light Position", &light_environment.light_position[0], 0.5f);
 
-    if (position_changed && automatic_far_plane) {
-      light_environment.far_plane =
-        glm::length(light_environment.light_position);
+    // Replace position/target controls with spherical angle controls
+    bool direction_changed = false;
+    direction_changed |= ImGui::SliderFloat("Light Azimuth (radians)",
+                                            &light_environment.azimuth_rad,
+                                            0.0f,
+                                            glm::tau<float>());
+    direction_changed |= ImGui::SliderFloat("Light Elevation (degrees)",
+                                            &light_environment.elevation_rad,
+                                            -glm::pi<float>() / 2,
+                                            glm::pi<float>() / 2);
+
+    // Convert to radians for internal use if needed
+    if (direction_changed) {
+      // You can add any additional logic here when direction changes
     }
 
-    ImGui::DragFloat3("Light Target", &light_environment.target[0], 0.5f);
     ImGui::ColorEdit4("Light Color", &light_environment.light_color[0]);
     ImGui::ColorEdit4("Ambient Color", &light_environment.ambient_color[0]);
 
@@ -731,6 +874,18 @@ Renderer::on_interface() -> void
         "Far Plane", &light_environment.far_plane, 0.1f, 1.f, 500.f);
     }
 
+    // Optional: Show the calculated direction vector for debugging
+    if (ImGui::TreeNodeEx("Debug Info", ImGuiTreeNodeFlags_OpenOnDoubleClick)) {
+      const glm::vec3 direction = VkMaths::spherical_to_direction(
+        light_environment.azimuth_rad,
+        glm::degrees(light_environment.elevation_rad));
+      ImGui::Text("Light Direction: (%.3f, %.3f, %.3f)",
+                  direction.x,
+                  direction.y,
+                  direction.z);
+      ImGui::TreePop();
+    }
+
     static constexpr std::array<const char*, 3> view_mode_names = {
       "LookAtRH",
       "LookAtLH",
@@ -739,6 +894,7 @@ Renderer::on_interface() -> void
     static constexpr std::array<const char*, 5> projection_names = {
       "OrthoRH_ZO", "OrthoRH_NO", "OrthoLH_ZO", "OrthoLH_NO", "Default",
     };
+
     auto proj_index =
       static_cast<int>(std::to_underlying(light_environment.projection_mode));
     assert(proj_index >= 0 && proj_index < 5);
@@ -783,6 +939,13 @@ Renderer::get_renderer_descriptor_set_layout(Badge<AssetReloader>) const
 auto
 Renderer::destroy() -> void
 {
+#if IS_DEBUG
+  TracyVkDestroy(profiler_pimpl->context);
+  if (profiler_pimpl->cmd != VK_NULL_HANDLE) {
+    vkDestroyCommandPool(device->get_device(), profiler_pimpl->pool, nullptr);
+  }
+#endif
+
   white_texture.reset();
   black_texture.reset();
 
@@ -977,29 +1140,40 @@ Renderer::upload_line_instance_data() -> void
 }
 
 auto
+create_directional_light_view(const glm::vec3& light_direction)
+{
+  const glm::vec3 forward =
+    glm::normalize(-light_direction); // Light rays go opposite to direction
+
+  // Find a reasonable up vector that's not parallel to forward
+  glm::vec3 up = glm::vec3(0.0f, 1.0f, 0.0f);
+  if (abs(glm::dot(forward, up)) > 0.9f) {
+    up = glm::vec3(
+      1.0f, 0.0f, 0.0f); // Use right vector if forward is too close to up
+  }
+
+  const glm::vec3 right = glm::normalize(glm::cross(forward, up));
+  up = glm::normalize(glm::cross(right, forward));
+
+  // Create view matrix from basis vectors
+  return glm::mat4{ glm::vec4(right, 0.0f),
+                    glm::vec4(up, 0.0f),
+                    glm::vec4(forward, 0.0f),
+                    glm::vec4(0.0f, 0.0f, 0.0f, 1.0f) };
+}
+
+auto
 Renderer::update_shadow_buffers() -> void
 {
   constexpr glm::vec3 up{ camera_constants::WORLD_UP };
-
-  glm::mat4 view;
-  switch (light_environment.view_mode) {
-    case ShadowViewMode::LookAtRH:
-      view = glm::lookAtRH(
-        light_environment.light_position, light_environment.target, up);
-      break;
-    case ShadowViewMode::LookAtLH:
-      view = glm::lookAtLH(
-        light_environment.light_position, light_environment.target, up);
-      break;
-    case ShadowViewMode::Default:
-      view = glm::lookAt(
-        light_environment.light_position, light_environment.target, up);
-      break;
-  }
+  const glm::vec3 light_direction = VkMaths::spherical_to_direction(
+    light_environment.azimuth_rad,
+    glm::degrees(light_environment.elevation_rad));
 
   const float s = light_environment.ortho_size;
   const float n = light_environment.near_plane;
   const float f = light_environment.far_plane;
+  const glm::mat4 view = create_directional_light_view(light_direction);
 
   glm::mat4 proj;
   switch (light_environment.projection_mode) {
@@ -1024,9 +1198,9 @@ Renderer::update_shadow_buffers() -> void
 
   ShadowBuffer shadow_data{
     .light_vp = vp,
-    .light_position = glm::vec4{ light_environment.light_position, 1.0F },
     .light_color = light_environment.light_color,
     .ambient_color = light_environment.ambient_color,
+    .light_direction = glm::vec4(light_direction, 0.0f),
   };
 
   shadow_camera_buffer->upload_with_offset(std::span{ &shadow_data, 1 },
@@ -1115,6 +1289,7 @@ Renderer::end_frame() -> void
     ZoneScopedN("Submit compute buffer (waiting on geometry)");
     compute_command_buffer->begin_frame(frame_index);
 #ifdef ENABLE_LIGHT_CLUSTERING
+    run_light_reduction_pass();
     run_light_culling_pass();
 #endif
     compute_command_buffer->submit_and_end(frame_index);
@@ -1253,6 +1428,7 @@ Renderer::end_frame() -> void
   }
 
   // Submit graphics work and signal semaphore
+  GPU_ZONE_COLLECT(command_buffer->get(frame_index));
   command_buffer->submit_and_end(
     frame_index, VK_NULL_HANDLE, geometry_complete_semaphores.at(frame_index));
 
@@ -1385,6 +1561,8 @@ Renderer::run_skybox_pass() -> void
   command_buffer->begin_timer(frame_index, "skybox_pass");
 
   const VkCommandBuffer& cmd = command_buffer->get(frame_index);
+  GPU_ZONE(cmd, "Skybox pass", 0xFF0000FF);
+
   Util::Vulkan::cmd_begin_debug_label(
     cmd, "Skybox", { 0.9F, 0.1F, 0.1F, 1.0F });
 
@@ -1548,6 +1726,7 @@ Renderer::run_z_prepass(const DrawListView draw_list) -> void
     Util::Renderer::bind_mesh_buffers<PositionOnlyVertex>(
       cmd, cmd_info, submesh, *instance_vertex_buffer);
 
+    GPU_ZONE(cmd, "Z Prepass Draw", 0x00FF00FF);
     vkCmdDrawIndexed(cmd,
                      submesh->index_count,
                      instance_count,
@@ -1560,130 +1739,6 @@ Renderer::run_z_prepass(const DrawListView draw_list) -> void
   CoreUtils::cmd_transition_depth_to_shader_read(
     cmd, geometry_depth_image->get_image());
   command_buffer->end_timer(frame_index, "z_prepass");
-
-  Util::Vulkan::cmd_end_debug_label(cmd);
-}
-
-auto
-Renderer::run_point_light_pass(const DrawListView draw_list) -> void
-{
-  ZoneScopedN("Point light pass");
-
-  command_buffer->begin_timer(frame_index, "point_light_pass");
-
-  const VkCommandBuffer& cmd = command_buffer->get(frame_index);
-  Util::Vulkan::cmd_begin_debug_label(
-    cmd, "Point light pass", { 0.5F, 0.5F, 0.9F, 1.0F });
-  CoreUtils::cmd_transition_to_color_attachment(cmd,
-                                                geometry_image->get_image());
-
-  constexpr VkClearValue clear_value = { .color = { { 0.f, 0.f, 0.f, 0.f } } };
-  const VkRenderingAttachmentInfo color_attachment = {
-    .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
-    .pNext = nullptr,
-    .imageView = geometry_msaa_image->get_view(),
-    .imageLayout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
-    .resolveMode = VK_RESOLVE_MODE_AVERAGE_BIT_KHR,
-    .resolveImageView = geometry_image->get_view(),
-    .resolveImageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-    .loadOp = VK_ATTACHMENT_LOAD_OP_LOAD,
-    .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
-    .clearValue = clear_value
-  };
-
-  VkRenderingAttachmentInfo depth_attachment = {
-    .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
-    .pNext = nullptr,
-    .imageView = geometry_depth_msaa_image->get_view(),
-    .imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
-    .resolveMode = VK_RESOLVE_MODE_NONE,
-    .resolveImageView = nullptr,
-    .resolveImageLayout = VK_IMAGE_LAYOUT_UNDEFINED,
-    .loadOp = VK_ATTACHMENT_LOAD_OP_LOAD,
-    .storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
-    .clearValue = {},
-  };
-
-  const std::array colour_attachments = { color_attachment };
-  const VkRenderingInfo render_info = {
-    .sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
-    .pNext = nullptr,
-    .flags = 0,
-    .renderArea = { .offset = { 0, 0 },
-                    .extent = { geometry_image->width(),
-                                geometry_image->height() } },
-    .layerCount = 1,
-    .viewMask = 0,
-    .colorAttachmentCount =
-      static_cast<std::uint32_t>(colour_attachments.size()),
-    .pColorAttachments = colour_attachments.data(),
-    .pDepthAttachment = &depth_attachment,
-    .pStencilAttachment = nullptr,
-  };
-
-  vkCmdBeginRendering(cmd, &render_info);
-
-  const VkViewport viewport = {
-    .x = 0.f,
-    .y = static_cast<float>(geometry_image->height()),
-    .width = static_cast<float>(geometry_image->width()),
-    .height = -static_cast<float>(geometry_image->height()),
-    .minDepth = 1.f,
-    .maxDepth = 0.f,
-  };
-  vkCmdSetViewport(cmd, 0, 1, &viewport);
-  vkCmdSetScissor(cmd, 0, 1, &render_info.renderArea);
-
-  // The pipeline should still come from the geometry main material.
-
-  auto& material = *point_light_system->get_material().get();
-  auto& pipeline = material.get_pipeline();
-
-  material.upload("light_index_list", light_index_list_buffer);
-  material.upload("light_grid_buffer", light_grid_buffer);
-
-  vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.pipeline);
-
-  for (auto&& [cmd_info, offset, instance_count] : draw_list) {
-    const auto* submesh = cmd_info.mesh->get_submesh(cmd_info.submesh_index);
-    if (!submesh)
-      continue;
-
-    const auto& material_set = material.prepare_for_rendering(frame_index);
-
-    std::array descriptor_sets{
-      descriptor_set_manager->get_set(frame_index),
-      material_set,
-    };
-    vkCmdBindDescriptorSets(cmd,
-                            VK_PIPELINE_BIND_POINT_GRAPHICS,
-                            pipeline.layout,
-                            0,
-                            static_cast<std::uint32_t>(descriptor_sets.size()),
-                            descriptor_sets.data(),
-                            0,
-                            nullptr);
-
-    Util::Renderer::bind_mesh_buffers<Vertex>(
-      cmd, cmd_info, submesh, *instance_vertex_buffer);
-
-    auto&& [pc_stage, pc_offset, pc_size, pc_pointer] =
-      material.generate_push_constant_data();
-
-    vkCmdPushConstants(
-      cmd, pipeline.layout, pc_stage, pc_offset, pc_size, pc_pointer);
-
-    vkCmdDrawIndexed(cmd,
-                     submesh->index_count,
-                     instance_count,
-                     submesh->index_offset,
-                     0,
-                     offset);
-  }
-
-  vkCmdEndRendering(cmd);
-
-  command_buffer->end_timer(frame_index, "point_light_pass");
 
   Util::Vulkan::cmd_end_debug_label(cmd);
 }
@@ -1806,6 +1861,7 @@ Renderer::run_geometry_pass(const DrawListView draw_list) -> void
     vkCmdPushConstants(
       cmd, pipeline.layout, pc_stage, pc_offset, pc_size, pc_pointer);
 
+    GPU_ZONE(cmd, "Geometry Draw", 0x0000FFFF);
     vkCmdDrawIndexed(cmd,
                      submesh->index_count,
                      instance_count,
@@ -1873,7 +1929,7 @@ Renderer::run_identifier_pass(const DrawListView draw_list) -> void
   CoreUtils::cmd_transition_to_color_attachment(cmd,
                                                 identifier_image->get_image());
 
-  constexpr VkClearValue identifier_colour = { .color = { 0.f } };
+  constexpr VkClearValue identifier_colour = { .color = { { 0.f } } };
 
   VkRenderingAttachmentInfo colour_attachment = {
     .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
@@ -1962,6 +2018,7 @@ Renderer::run_identifier_pass(const DrawListView draw_list) -> void
                             0,
                             nullptr);
 
+    GPU_ZONE(cmd, "Identifier Draw", 0x0000FFFF);
     vkCmdDrawIndexed(cmd,
                      submesh->index_count,
                      instance_count,
@@ -1975,6 +2032,86 @@ Renderer::run_identifier_pass(const DrawListView draw_list) -> void
 
   command_buffer->end_timer(frame_index, "identifier_pass");
 
+  Util::Vulkan::cmd_end_debug_label(cmd);
+}
+
+auto
+Renderer::run_light_reduction_pass() -> void
+{
+  ZoneScopedN("Light reduction pass");
+  const auto cmd = compute_command_buffer->get(frame_index);
+
+  Util::Vulkan::cmd_begin_debug_label(
+    cmd, "Light reduction pass", { 1.0, 0.0, 0.0, 1.0 });
+
+  // tile_size = {16, 16}
+  // tile_grid_size = (screen_size + tile_size - 1) / tile_size
+  constexpr auto local_tile_size = glm::vec2{ tile_size, tile_size };
+  const auto tile_grid_size = glm::ivec2{
+    (geometry_image->width() + local_tile_size.x - 1) / local_tile_size.x,
+    (geometry_image->height() + local_tile_size.y - 1) / local_tile_size.y
+  };
+
+  compute_command_buffer->begin_timer(frame_index, "light_reduction");
+
+  const auto& pipeline = light_reduction_material->get_pipeline();
+  const std::array sets = {
+    descriptor_set_manager->get_set(frame_index),
+    light_reduction_material->prepare_for_rendering(frame_index),
+  };
+
+  vkCmdBindPipeline(cmd, pipeline.bind_point, pipeline.pipeline);
+  vkCmdBindDescriptorSets(cmd,
+                          pipeline.bind_point,
+                          pipeline.layout,
+                          0,
+                          static_cast<std::uint32_t>(sets.size()),
+                          sets.data(),
+                          0,
+                          nullptr);
+
+  struct PC
+  {
+    glm::ivec2 screen_size;
+    glm::ivec2 tile_size;
+    glm::ivec2 tile_grid_size;
+    float near_plane;
+    float far_plane;
+  };
+  PC push_constants = {
+    .screen_size = { geometry_image->width(), geometry_image->height() },
+    .tile_size = { static_cast<int>(local_tile_size.x),
+                   static_cast<int>(local_tile_size.y) },
+    .tile_grid_size = { tile_grid_size.x, tile_grid_size.y },
+    .near_plane = camera_environment.z_near,
+    .far_plane = camera_environment.z_far,
+  };
+  vkCmdPushConstants(cmd,
+                     pipeline.layout,
+                     VK_SHADER_STAGE_COMPUTE_BIT,
+                     0,
+                     sizeof(PC),
+                     &push_constants);
+
+  vkCmdDispatch(cmd, tile_grid_size.x, tile_grid_size.y, 1);
+
+  VkMemoryBarrier memory_barrier = {};
+  memory_barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+  memory_barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+  memory_barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+
+  vkCmdPipelineBarrier(cmd,
+                       VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                       VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                       0,
+                       1,
+                       &memory_barrier,
+                       0,
+                       nullptr,
+                       0,
+                       nullptr);
+
+  compute_command_buffer->end_timer(frame_index, "light_reduction");
   Util::Vulkan::cmd_end_debug_label(cmd);
 }
 
@@ -2240,6 +2377,7 @@ Renderer::run_shadow_pass(const DrawListView draw_list) -> void
                             0,
                             nullptr);
 
+    GPU_ZONE(cmd, "Shadow Draw", 0x0000FFFF);
     vkCmdDrawIndexed(cmd,
                      submesh->index_count,
                      instance_count,

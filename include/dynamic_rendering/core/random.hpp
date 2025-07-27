@@ -2,6 +2,10 @@
 
 #include <glm/glm.hpp>
 
+namespace VkMaths {
+class AABB;
+}
+
 namespace Util::Random {
 
 auto
@@ -17,5 +21,7 @@ auto
 random_vec4(float, float) -> glm::vec4;
 auto
 random_vec3(float, float) -> glm::vec3;
+auto
+random_vec3(const VkMaths::AABB&) -> glm::vec3;
 
 }

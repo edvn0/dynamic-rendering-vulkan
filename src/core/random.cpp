@@ -1,4 +1,5 @@
 #include "core/random.hpp"
+#include "renderer/mesh.hpp"
 #include <random>
 
 namespace {
@@ -27,6 +28,19 @@ random_vec3(float min, float max) -> glm::vec3
     dist(rng),
     dist(rng),
     dist(rng),
+  };
+}
+
+auto
+random_vec3(const VkMaths::AABB& aabb) -> glm::vec3
+{
+  std::uniform_real_distribution<float> x_dist(aabb.min().x, aabb.max().x);
+  std::uniform_real_distribution<float> y_dist(aabb.min().y, aabb.max().y);
+  std::uniform_real_distribution<float> z_dist(aabb.min().z, aabb.max().z);
+  return {
+    x_dist(rng),
+    y_dist(rng),
+    z_dist(rng),
   };
 }
 
@@ -61,5 +75,4 @@ random_single_channel_colour() -> glm::vec4
       return { 0.f, 0.f, 0.f, 1.f };
   }
 }
-
 }

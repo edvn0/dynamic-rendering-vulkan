@@ -13,20 +13,17 @@ layout(set = 1, binding = 3) uniform sampler2D metallic_map;
 layout(set = 1, binding = 4) uniform sampler2D ao_map;
 layout(set = 1, binding = 5) uniform sampler2D emissive_map;
 
-layout(std430, set = 1, binding = 6) restrict buffer light_index_list
-{
+layout(std430, set = 1, binding = 6) restrict buffer light_index_list {
   uint light_indices[];
 };
 
-struct LightGridEntry
-{
+struct LightGridEntry {
   uint offset;
   uint count;
   uint pad0;
   uint pad1;
 };
-layout(std430, set = 1, binding = 7) restrict buffer light_grid_buffer
-{
+layout(std430, set = 1, binding = 7) restrict buffer light_grid_buffer {
   LightGridEntry tile_light_grids[];
 };
 
@@ -46,13 +43,11 @@ const int PCF_SAMPLES = 1;
 const int PCF_TOTAL = (PCF_SAMPLES * 2 + 1) * (PCF_SAMPLES * 2 + 1);
 const float INVERSE_SHADOW_MAP_SIZE = 1.0 / 2048.0;
 
-vec3 fresnel_schlick(float cos_theta, vec3 f0)
-{
+vec3 fresnel_schlick(float cos_theta, vec3 f0) {
   return f0 + (1.0 - f0) * pow(clamp(1.0 - cos_theta, 0.0, 1.0), 5.0);
 }
 
-float distribution_ggx(vec3 n, vec3 h, float roughness)
-{
+float distribution_ggx(vec3 n, vec3 h, float roughness) {
   float a = roughness * roughness;
   float a2 = a * a;
   float ndoth = max(dot(n, h), 0.0);
@@ -62,15 +57,13 @@ float distribution_ggx(vec3 n, vec3 h, float roughness)
   return a2 / (PI * denom * denom);
 }
 
-float geometry_schlick_ggx(float ndotv, float roughness)
-{
+float geometry_schlick_ggx(float ndotv, float roughness) {
   float r = (roughness + 1.0);
   float k = (r * r) / 8.0;
   return ndotv / (ndotv * (1.0 - k) + k);
 }
 
-float geometry_smith(vec3 n, vec3 v, vec3 l, float roughness)
-{
+float geometry_smith(vec3 n, vec3 v, vec3 l, float roughness) {
   float ndotv = max(dot(n, v), 0.0);
   float ndotl = max(dot(n, l), 0.0);
   float ggx1 = geometry_schlick_ggx(ndotl, roughness);
@@ -78,20 +71,16 @@ float geometry_smith(vec3 n, vec3 v, vec3 l, float roughness)
   return ggx1 * ggx2;
 }
 
-float calculate_shadow(vec4 light_space_pos)
-{
+float calculate_shadow(vec4 light_space_pos) {
   vec3 proj_coords = light_space_pos.xyz / light_space_pos.w;
   if (proj_coords.x < 0.0 || proj_coords.x > 1.0 || proj_coords.y < 0.0 ||
-      proj_coords.y > 1.0 || proj_coords.z < 0.0 || proj_coords.z > 1.0)
-  {
+      proj_coords.y > 1.0 || proj_coords.z < 0.0 || proj_coords.z > 1.0) {
     return AMBIENT_LIGHT;
   }
 
   float shadow = 0.0;
-  for (int x = -PCF_SAMPLES; x <= PCF_SAMPLES; ++x)
-  {
-    for (int y = -PCF_SAMPLES; y <= PCF_SAMPLES; ++y)
-    {
+  for (int x = -PCF_SAMPLES; x <= PCF_SAMPLES; ++x) {
+    for (int y = -PCF_SAMPLES; y <= PCF_SAMPLES; ++y) {
       vec2 offset = vec2(x, y) * INVERSE_SHADOW_MAP_SIZE;
       shadow +=
           texture(shadow_image, vec3(proj_coords.xy + offset, proj_coords.z));
@@ -100,21 +89,18 @@ float calculate_shadow(vec4 light_space_pos)
   return shadow / float(PCF_TOTAL);
 }
 
-vec3 calculate_normal_from_map(vec2 uv, mat3 tbn)
-{
+vec3 calculate_normal_from_map(vec2 uv, mat3 tbn) {
   vec3 tangent_normal = texture(normal_map, uv).xyz * 2.0 - 1.0;
   return normalize(tbn * tangent_normal);
 }
 
 // Get 3D tile index (matching compute shader logic)
-uint get_tile_index_3d(uvec3 tile_coord, uvec3 tile_grid_size)
-{
+uint get_tile_index_3d(uvec3 tile_coord, uvec3 tile_grid_size) {
   return tile_coord.z * tile_grid_size.x * tile_grid_size.y +
          tile_coord.y * tile_grid_size.x + tile_coord.x;
 }
 
-void main()
-{
+void main() {
   vec4 albedo_tex = texture(albedo_map, v_uv);
   vec3 albedo = has_albedo_texture() ? material.albedo.rgb * albedo_tex.rgb
                                      : material.albedo.rgb;
@@ -133,19 +119,18 @@ void main()
   float ao = has_ao_map() ? material.ao * texture(ao_map, v_uv).r : material.ao;
 
   vec3 n = normalize(v_normal);
-  if (has_normal_map())
-  {
+  if (has_normal_map()) {
     n = calculate_normal_from_map(v_uv, v_tbn);
   }
 
-  vec3 v = normalize(v_world_pos - vec3(camera_ubo.camera_position));
-  vec3 l = normalize(v_world_pos - vec3(shadow_ubo.light_position));
+  vec3 v = normalize(camera_ubo.camera_position.xyz - v_world_pos);
+  vec3 l = normalize(-shadow_ubo.light_direction.xyz);
   vec3 h = normalize(v + l);
+  float attenuation = 1.0;
 
-  float distance = length(vec3(shadow_ubo.light_position) - v_world_pos);
-  float attenuation = 1.0 / (distance + 1.0);
   vec3 light_color = vec3(shadow_ubo.light_color);
-  vec3 radiance = light_color * attenuation;
+  vec3 radiance =
+      light_color * attenuation; // Simply light_color since attenuation = 1.0
 
   vec3 f0 = mix(vec3(0.04), albedo, metallic);
   vec3 f = fresnel_schlick(max(dot(h, v), 0.0), f0);
@@ -163,8 +148,8 @@ void main()
   vec3 lighting = (diffuse + specular) * radiance * ndotl;
 
   float shadow = 1.0F - calculate_shadow(v_light_space_pos);
-  vec3 ambient =
-      vec3(shadow_ubo.ambient_color.rgb) * shadow_ubo.ambient_color.a * AMBIENT_LIGHT * albedo * ao;
+  vec3 ambient = vec3(shadow_ubo.ambient_color.rgb) *
+                 shadow_ubo.ambient_color.a * AMBIENT_LIGHT * albedo * ao;
 
   // --- Forward+ tiled lights integration ---
 
@@ -199,23 +184,22 @@ void main()
   count = min(count, MAX_LIGHTS_PER_TILE);
 
   // Process all lights in this tile
-  for (uint i = 0u; i < count; ++i)
-  {
+  for (uint i = 0u; i < count; ++i) {
     uint light_index = light_indices[offset + i];
 
     // Safety check
-    if (light_index >= point_light_buffer.light_count)
-    {
+    if (light_index >= point_light_buffer.light_count) {
       continue;
     }
 
     PointLight light = point_light_buffer.lights[light_index];
 
     // Calculate lighting contribution
-    vec3 light_to_frag = v_world_pos - light.position;
+    vec3 light_to_frag = light.position - v_world_pos;
     float dist = length(light_to_frag);
 
-    vec3 light_dir = light_to_frag / dist; // Normalize and flip direction
+    vec3 light_dir =
+        normalize(light_to_frag / dist); // Normalize and flip direction
 
     // Attenuation calculation
     float att =
@@ -233,8 +217,7 @@ void main()
     vec3 half_vec = normalize(-v + light_dir);
     float ndotl = max(dot(n, light_dir), 0.0);
 
-    if (ndotl > 0.0)
-    {
+    if (ndotl > 0.0) {
       vec3 fresnel = fresnel_schlick(max(dot(half_vec, v), 0.0), f0);
       float ndf = distribution_ggx(n, half_vec, roughness);
       float geometry = geometry_smith(n, v, light_dir, roughness);
@@ -256,13 +239,4 @@ void main()
 
   vec3 color = ambient + shadow * lighting + emission;
   frag_colour = vec4(color, albedo_tex.a);
-
-  /* if (tile_z == NUM_Z_SLICES - 2)
-   {
-     frag_colour = vec4(0.0, 1.0, 0.0, 1.0);
-   }
-   else
-   {
-     frag_colour = vec4(float(tile_z) / float(NUM_Z_SLICES), 0.0, 0.0, 1.0);
-   }*/
 }

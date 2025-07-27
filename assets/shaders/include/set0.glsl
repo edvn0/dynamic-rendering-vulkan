@@ -17,10 +17,10 @@ camera_ubo;
 layout(set = 0, binding = 1, std140) uniform ShadowUBO
 {
   mat4 light_vp;
-  vec4 light_position;
   vec4 light_color;
   vec4 ambient_color;
-  vec4 _padding_[1];
+  vec4 light_direction; // Directional light direction (vec3, w = 0)
+  vec4 _padding[1];
 }
 shadow_ubo;
 

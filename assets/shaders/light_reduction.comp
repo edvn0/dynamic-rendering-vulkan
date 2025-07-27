@@ -1,0 +1,131 @@
+#version 450
+
+#include "set0.glsl"
+#include "tiling_constants.glsl"
+#include "z_slicing.glsl"
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+layout(set = 1, binding = 0) uniform sampler2D scene_depth;
+
+layout(std430, set = 1, binding = 1) buffer TileDepths
+{
+  vec2 tile_depths[]; // length = tile_grid_size.x * tile_grid_size.y *
+                      // NUM_Z_SLICES
+};
+
+layout(push_constant) uniform PC
+{
+  ivec2 screen_size;
+  ivec2 tile_size;
+  ivec2 tile_grid_size;
+  float near_plane;
+  float far_plane;
+}
+pcs;
+
+const int NUM_SLICES = NUM_Z_SLICES;
+
+// Reverse-Z linearization assuming depth in [0,1], 1=near, 0=far
+float
+linearize_depth(float depth, float nearZ, float farZ)
+{
+  // Reverse-Z: depth is flipped (so depth=1 means near, 0 means far)
+  // Convert depth to NDC space [-1,1]
+  float z = depth * 2.0 - 1.0;
+  // Standard perspective linearize (for reverse-Z)
+  // Note: if reverse-Z uses floating-point depth = far/(far - z*(far - near)),
+  // this formula fits
+  return (nearZ * farZ) / (farZ + z * (nearZ - farZ));
+}
+
+// Compute slice index from linear depth in view space
+int
+compute_slice_index(float linear_depth)
+{
+  float slice_pos =
+    (linear_depth - pcs.near_plane) / (pcs.far_plane - pcs.near_plane);
+  // Clamp and convert to slice index
+  return clamp(int(slice_pos * float(NUM_SLICES)), 0, NUM_SLICES - 1);
+}
+
+// Shared memory for min/max per slice per thread (64 threads * NUM_SLICES
+// slices)
+shared float shared_min[NUM_SLICES][64];
+shared float shared_max[NUM_SLICES][64];
+
+void
+main()
+{
+  uvec2 local_id = gl_LocalInvocationID.xy;
+  uvec2 group_id = gl_WorkGroupID.xy;
+  uint local_index = local_id.y * 8 + local_id.x;
+
+  if (any(greaterThanEqual(group_id, pcs.tile_grid_size)))
+    return;
+
+  // Tile origin and bounds
+  ivec2 tile_origin = ivec2(group_id * pcs.tile_size);
+  ivec2 tile_end = min(tile_origin + pcs.tile_size, pcs.screen_size);
+
+  // Each thread covers a 2x2 pixel block
+  ivec2 base_pixel = tile_origin + ivec2(local_id * 2);
+
+  // Initialize per-slice min/max
+  for (int slice = 0; slice < NUM_SLICES; ++slice) {
+    shared_min[slice][local_index] = 1.0e20;
+    shared_max[slice][local_index] = -1.0;
+  }
+
+  // Sample pixels and assign depth to slices
+  for (int dy = 0; dy < 2; ++dy) {
+    for (int dx = 0; dx < 2; ++dx) {
+      ivec2 pixel = base_pixel + ivec2(dx, dy);
+      if (any(greaterThanEqual(pixel, pcs.screen_size)))
+        continue;
+
+      float depth = texelFetch(scene_depth, pixel, 0).r;
+
+      // Ignore invalid depths
+      if (depth == 0.0 || depth == 1.0)
+        continue;
+
+      float linear = linearize_depth(depth, pcs.near_plane, pcs.far_plane);
+      int slice_idx = compute_slice_index(linear);
+
+      // Update shared min/max for the slice
+      shared_min[slice_idx][local_index] =
+        min(shared_min[slice_idx][local_index], linear);
+      shared_max[slice_idx][local_index] =
+        max(shared_max[slice_idx][local_index], linear);
+    }
+  }
+
+  memoryBarrierShared();
+  barrier();
+
+  // Parallel reduction for each slice independently
+  for (int slice = 0; slice < NUM_SLICES; ++slice) {
+    for (uint offset = 32; offset > 0; offset >>= 1) {
+      if (local_index < offset) {
+        shared_min[slice][local_index] =
+          min(shared_min[slice][local_index],
+              shared_min[slice][local_index + offset]);
+        shared_max[slice][local_index] =
+          max(shared_max[slice][local_index],
+              shared_max[slice][local_index + offset]);
+      }
+      memoryBarrierShared();
+      barrier();
+    }
+  }
+
+  // Thread 0 writes the results for all slices for this tile
+  if (local_index == 0) {
+    uint tile_2d_index = group_id.y * pcs.tile_grid_size.x + group_id.x;
+    for (int slice = 0; slice < NUM_SLICES; ++slice) {
+      uint index = tile_2d_index * NUM_SLICES + uint(slice);
+      tile_depths[index] = vec2(shared_min[slice][0], shared_max[slice][0]);
+    }
+  }
+}

@@ -23,8 +23,8 @@ public:
   auto get_camera_matrices(CameraMatrices&) const -> bool override;
 
 private:
-  Renderer* renderer{ nullptr };
   BS::priority_thread_pool* thread_pool{ nullptr };
+  Renderer* renderer{ nullptr };
 
   void generate_scene(PointLightSystem&);
   DynamicRendering::ViewportBounds viewport_bounds;

@@ -1,9 +1,9 @@
 #pragma once
 
 #include "assets/pointer.hpp"
+#include "core/debug_utils.hpp"
 #include "core/device.hpp"
 #include "core/util.hpp"
-#include "debug_utils.hpp"
 
 #include <cstring>
 #include <span>

@@ -1,6 +1,7 @@
 #include "renderer/mesh.hpp"
 
 #include "core/fs.hpp"
+#include "core/vulkan_info.hpp"
 #include "pipeline/blueprint_registry.hpp"
 
 #include "renderer/renderer.hpp"
@@ -14,6 +15,7 @@
 
 #include <assimp/DefaultLogger.hpp>
 #include <assimp/Logger.hpp>
+#include <vulkan/vulkan_core.h>
 
 namespace {
 
@@ -195,7 +197,7 @@ struct LoadedSubmesh
 {
   std::vector<Vertex> vertices;
   std::vector<std::uint32_t> indices;
-  AABB aabb;
+  VkMaths::AABB aabb;
   std::uint32_t material_index;
   glm::mat4 transform;
   std::int32_t parent_index;
@@ -220,13 +222,12 @@ process_mesh_impl(const aiMesh* mesh,
     raw_vertices[i].position = { mesh->mVertices[i].x,
                                  mesh->mVertices[i].y,
                                  mesh->mVertices[i].z };
-    raw_vertices[i].normal = mesh->HasNormals()
-                               ? glm::vec3{ mesh->mNormals[i].x,
-                                            mesh->mNormals[i].y,
-                                            mesh->mNormals[i].z }
-                               : glm::vec3{ 0.0f };
+    raw_vertices[i].normal =
+      mesh->HasNormals()
+        ? glm::vec3{ normals_span[i].x, normals_span[i].y, normals_span[i].z,}
+        : glm::vec3{ 0.0f };
 
-    if (mesh->HasTextureCoords(0)) {
+    if (!tex_span.empty()) {
       if (i < tex_span.size()) {
         raw_vertices[i].texcoord = glm::vec2{ tex_span[i].x, tex_span[i].y };
       }
@@ -302,7 +303,7 @@ process_mesh_impl(const aiMesh* mesh,
                               unique_vertex_count,
                               sizeof(Vertex));
 
-  AABB aabb;
+  VkMaths::AABB aabb;
   for (const auto& v : optimized_vertices)
     aabb.grow(v.position);
 
@@ -374,7 +375,6 @@ upload_materials_impl_secondary(
 
           const std::string full_path = directory + "/" + tex_path.C_Str();
           Image* image = nullptr;
-          bool needs_staging = false;
 
           {
             std::scoped_lock lock(cache_mutex);
@@ -397,7 +397,6 @@ upload_materials_impl_secondary(
 
               // Cache the loaded image
               loaded_textures[full_path] = std::move(image_result.image);
-              needs_staging = true;
             }
           }
 
@@ -570,18 +569,17 @@ upload_materials_impl_secondary(
 
     constexpr VkFenceCreateInfo fence_info{
       .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
+      .pNext = nullptr,
+      .flags = 0,
     };
 
     VkFence fence;
     vkCreateFence(vk_device, &fence_info, nullptr, &fence);
 
-    const VkSubmitInfo submit_info{
-      .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
-      .commandBufferCount = 1,
-      .pCommandBuffers = &primary_cmd,
-    };
+    info<VkSubmitInfo> submit_info{};
+    submit_info.with_command_buffers(std::span{ &primary_cmd, 1 });
 
-    vkQueueSubmit(queue, 1, &submit_info, fence);
+    vkQueueSubmit(queue, 1, &submit_info.get(), fence);
     vkWaitForFences(vk_device, 1, &fence, VK_TRUE, UINT64_MAX);
 
     // Clean up synchronization objects
@@ -704,6 +702,8 @@ StaticMesh::load_from_file(const Device& device, const std::string& path)
 
       std::vector<Vertex> raw_vertices;
       std::vector<uint32_t> raw_indices;
+      raw_vertices.reserve(mesh->mNumVertices);
+      raw_indices.reserve(mesh->mNumFaces * 3);
 
       auto positions = std::span(mesh->mVertices, mesh->mNumVertices);
       auto normals = mesh->HasNormals()
@@ -781,7 +781,7 @@ StaticMesh::load_from_file(const Device& device, const std::string& path)
                                   optimized_vertices.data(),
                                   unique_vertex_count,
                                   sizeof(Vertex));
-      AABB aabb;
+      VkMaths::AABB aabb;
       for (const auto& v : optimized_vertices)
         aabb.grow(v.position);
 
@@ -794,15 +794,16 @@ StaticMesh::load_from_file(const Device& device, const std::string& path)
         indices.end(), optimized_indices.begin(), optimized_indices.end());
 
       const auto submesh_index = static_cast<std::int32_t>(submeshes.size());
-      submeshes.push_back(
-        { .vertex_offset = vertex_offset,
-          .vertex_count = static_cast<uint32_t>(optimized_vertices.size()),
-          .index_offset = index_offset,
-          .index_count = static_cast<uint32_t>(optimized_indices.size()),
-          .material_index = mesh->mMaterialIndex,
-          .child_transform = node_transform,
-          .parent_index = parent_index,
-          .local_aabb = aabb });
+      submeshes.push_back({
+        .vertex_offset = vertex_offset,
+        .vertex_count = static_cast<uint32_t>(optimized_vertices.size()),
+        .index_offset = index_offset,
+        .index_count = static_cast<uint32_t>(optimized_indices.size()),
+        .material_index = mesh->mMaterialIndex,
+        .child_transform = node_transform,
+        .parent_index = parent_index,
+        .local_aabb = aabb,
+      });
 
       if (parent_index >= 0)
         submeshes[parent_index].children.insert(submesh_index);
@@ -835,8 +836,12 @@ StaticMesh::load_from_file(const Device& device, const std::string& path)
   vertex_buffer->upload_vertices(std::span(vertices.data(), vertices.size()));
   index_buffer->upload_indices(std::span(indices.data(), indices.size()));
 
-  for (auto i = 0; i < submeshes.size(); ++i) {
+  for (auto i = 0U; i < submeshes.size(); ++i) {
     submesh_back_pointers[&submeshes.at(i)] = i;
+  }
+
+  for (auto& submesh : submeshes) {
+    global_aabb.grow(submesh.local_aabb);
   }
 
   return true;
@@ -998,8 +1003,12 @@ StaticMesh::load_from_file(const Device& device,
 
   perf_stats.log_summary();
 
-  for (auto i = 0; i < submeshes.size(); ++i) {
+  for (auto i = 0U; i < submeshes.size(); ++i) {
     submesh_back_pointers[&submeshes.at(i)] = i;
+  }
+
+  for (auto& submesh : submeshes) {
+    global_aabb.grow(submesh.local_aabb);
   }
 
   return true;
