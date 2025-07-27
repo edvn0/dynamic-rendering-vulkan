@@ -83,16 +83,12 @@ AssetReloader::reload_blueprint_and_material(
   }
 
   const auto& blueprint = device->get_blueprint(it->second);
-  auto* mat = renderer->get_material_by_name(blueprint.name);
-
-  if (!mat) {
+  if (!renderer->update_material_by_name(it->second, blueprint)) {
     Logger::log_error(
       "Failed to find material for blueprint: {}. Material not found.",
       blueprint.name);
     return;
   }
-
-  mat->reload(blueprint);
   Logger::log_info("Reloaded material: {}", blueprint.name);
 }
 

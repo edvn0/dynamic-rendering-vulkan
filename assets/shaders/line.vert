@@ -9,7 +9,10 @@ layout(location = 3) in uint instance_packed_color;
 
 layout(location = 0) out vec3 frag_color;
 
-void main() {
+precise invariant gl_Position;
+
+void main()
+{
   vec3 cam_right =
       vec3(camera_ubo.vp[0][0], camera_ubo.vp[1][0], camera_ubo.vp[2][0]);
   vec3 cam_up =
@@ -21,9 +24,12 @@ void main() {
 
   vec3 line_dir = normalize(instance_end - instance_start);
   vec3 side = cross(line_dir, cam_up);
-  if (length(side) < 0.001) {
+  if (length(side) < 0.001)
+  {
     side = cam_right;
-  } else {
+  }
+  else
+  {
     side = normalize(side);
   }
   vec3 offset = side * instance_width * 0.5 * sign;

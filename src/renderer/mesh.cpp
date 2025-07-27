@@ -1,7 +1,10 @@
 #include "renderer/mesh.hpp"
 
 #include "core/fs.hpp"
+#include "core/vulkan_info.hpp"
 #include "pipeline/blueprint_registry.hpp"
+
+#include "renderer/renderer.hpp"
 
 #include <assimp/Importer.hpp>
 #include <assimp/postprocess.h>
@@ -10,7 +13,68 @@
 #include <meshoptimizer.h>
 #include <tracy/Tracy.hpp>
 
+#include <assimp/DefaultLogger.hpp>
+#include <assimp/Logger.hpp>
+#include <vulkan/vulkan_core.h>
+
 namespace {
+
+class SpdlogAssimpLogger final : public Assimp::Logger
+{
+public:
+  SpdlogAssimpLogger() = default;
+  ~SpdlogAssimpLogger() override = default;
+
+protected:
+  void OnDebug(const char* message) override
+  {
+    ::Logger::log_debug("[Assimp] {}", message);
+  }
+
+  void OnInfo(const char* message) override
+  {
+    ::Logger::log_info("[Assimp] {}", message);
+  }
+
+  void OnWarn(const char* message) override
+  {
+    ::Logger::log_warning("[Assimp] {}", message);
+  }
+
+  void OnError(const char* message) override
+  {
+    ::Logger::log_error("[Assimp] {}", message);
+  }
+
+  void OnVerboseDebug(const char* message) override
+  {
+    ::Logger::log_trace("[Assimp] {}", message);
+  }
+
+  bool attachStream(Assimp::LogStream*, unsigned int) override { return false; }
+  bool detachStream(Assimp::LogStream*, unsigned int) override { return false; }
+};
+
+auto
+setup_assimp_logger()
+{
+  using namespace Assimp;
+
+  // Avoid duplicate logger setup
+  if (DefaultLogger::isNullLogger()) {
+    auto* myLogger = new SpdlogAssimpLogger();
+
+    DefaultLogger::set(myLogger);
+    DefaultLogger::get()->info("Custom logger attached");
+  }
+}
+
+static constexpr auto assimp_flags =
+  aiProcess_ConvertToLeftHanded | aiProcess_Triangulate |
+  aiProcess_JoinIdenticalVertices | aiProcess_OptimizeMeshes |
+  aiProcess_ImproveCacheLocality | aiProcess_RemoveRedundantMaterials |
+  aiProcess_GenSmoothNormals | aiProcess_FixInfacingNormals |
+  aiProcess_SortByPType;
 
 struct SubmeshPerformanceStats
 {
@@ -123,14 +187,17 @@ try_upload_texture(TextureContext ctx,
   }
 
   ctx.mat.upload(slot, image);
-  setter(ctx.mat);
+
+  if (!Renderer::is_default_texture(image)) {
+    setter(ctx.mat);
+  }
 }
 
 struct LoadedSubmesh
 {
   std::vector<Vertex> vertices;
   std::vector<std::uint32_t> indices;
-  AABB aabb;
+  VkMaths::AABB aabb;
   std::uint32_t material_index;
   glm::mat4 transform;
   std::int32_t parent_index;
@@ -143,19 +210,28 @@ process_mesh_impl(const aiMesh* mesh,
                   SubmeshPerformanceStats& stats)
 {
   std::vector<Vertex> raw_vertices(mesh->mNumVertices);
+  auto tex_span = mesh->HasTextureCoords(0)
+                    ? std::span(mesh->mTextureCoords[0], mesh->mNumVertices)
+                    : std::span<aiVector3D>{};
+  auto positions_span = std::span(mesh->mVertices, mesh->mNumVertices);
+  auto normals_span = mesh->HasNormals()
+                        ? std::span(mesh->mNormals, mesh->mNumVertices)
+                        : std::span<aiVector3D>{};
+
   for (uint32_t i = 0; i < mesh->mNumVertices; ++i) {
     raw_vertices[i].position = { mesh->mVertices[i].x,
                                  mesh->mVertices[i].y,
                                  mesh->mVertices[i].z };
-    raw_vertices[i].normal = mesh->HasNormals()
-                               ? glm::vec3{ mesh->mNormals[i].x,
-                                            mesh->mNormals[i].y,
-                                            mesh->mNormals[i].z }
-                               : glm::vec3{ 0.0f };
-    raw_vertices[i].texcoord = mesh->HasTextureCoords(0)
-                                 ? glm::vec2{ mesh->mTextureCoords[0][i].x,
-                                              mesh->mTextureCoords[0][i].y }
-                                 : glm::vec2{ 0.0f };
+    raw_vertices[i].normal =
+      mesh->HasNormals()
+        ? glm::vec3{ normals_span[i].x, normals_span[i].y, normals_span[i].z,}
+        : glm::vec3{ 0.0f };
+
+    if (!tex_span.empty()) {
+      if (i < tex_span.size()) {
+        raw_vertices[i].texcoord = glm::vec2{ tex_span[i].x, tex_span[i].y };
+      }
+    }
     if (mesh->HasTangentsAndBitangents()) {
       const glm::vec3 tangent = glm::normalize(glm::vec3{
         mesh->mTangents[i].x, mesh->mTangents[i].y, mesh->mTangents[i].z });
@@ -227,7 +303,7 @@ process_mesh_impl(const aiMesh* mesh,
                               unique_vertex_count,
                               sizeof(Vertex));
 
-  AABB aabb;
+  VkMaths::AABB aabb;
   for (const auto& v : optimized_vertices)
     aabb.grow(v.position);
 
@@ -290,14 +366,15 @@ upload_materials_impl_secondary(
 
         auto thread_safe_try_upload = [&](const aiTextureType type,
                                           const std::string& slot,
-                                          auto&& setter) {
+                                          auto&& setter,
+                                          VkFormat image_format =
+                                            VK_FORMAT_R8G8B8A8_SRGB) {
           aiString tex_path;
           if (ai_mat->GetTexture(type, 0, &tex_path) != AI_SUCCESS)
             return;
 
           const std::string full_path = directory + "/" + tex_path.C_Str();
           Image* image = nullptr;
-          bool needs_staging = false;
 
           {
             std::scoped_lock lock(cache_mutex);
@@ -307,7 +384,7 @@ upload_materials_impl_secondary(
             } else {
               // Load image with staging buffer
               auto image_result = Image::load_from_file_with_staging(
-                device, full_path, false, true, result.cmd);
+                device, full_path, false, true, result.cmd, image_format);
               if (!image_result.image)
                 return;
 
@@ -320,35 +397,137 @@ upload_materials_impl_secondary(
 
               // Cache the loaded image
               loaded_textures[full_path] = std::move(image_result.image);
-              needs_staging = true;
             }
           }
 
           // Upload to material
           if (image != nullptr) {
             result.mat->upload(slot, image);
-            setter(*result.mat);
+
+            if (!Renderer::is_default_texture(image)) {
+              setter(*result.mat);
+            }
           }
         };
 
         thread_safe_try_upload(aiTextureType_DIFFUSE,
                                "albedo_map",
                                [](Material& m) { m.use_albedo_map(); });
-        thread_safe_try_upload(aiTextureType_NORMALS,
-                               "normal_map",
-                               [](Material& m) { m.use_normal_map(); });
-        thread_safe_try_upload(aiTextureType_METALNESS,
-                               "metallic_map",
-                               [](Material& m) { m.use_metallic_map(); });
-        thread_safe_try_upload(aiTextureType_DIFFUSE_ROUGHNESS,
-                               "roughness_map",
-                               [](Material& m) { m.use_roughness_map(); });
+        thread_safe_try_upload(
+          aiTextureType_NORMALS,
+          "normal_map",
+          [](Material& m) { m.use_normal_map(); },
+          VK_FORMAT_R8G8B8A8_UNORM);
+        thread_safe_try_upload(
+          aiTextureType_METALNESS,
+          "metallic_map",
+          [](Material& m) { m.use_metallic_map(); },
+          VK_FORMAT_R8G8B8A8_UNORM);
+        thread_safe_try_upload(
+          aiTextureType_DIFFUSE_ROUGHNESS,
+          "roughness_map",
+          [](Material& m) { m.use_roughness_map(); },
+          VK_FORMAT_R8G8B8A8_UNORM);
         thread_safe_try_upload(aiTextureType_AMBIENT_OCCLUSION,
                                "ao_map",
                                [](Material& m) { m.use_ao_map(); });
         thread_safe_try_upload(aiTextureType_EMISSIVE,
                                "emissive_map",
                                [](Material& m) { m.use_emissive_map(); });
+
+        auto& material_data = result.mat->get_material_data();
+
+        // Read scalar material properties using assimp standards
+        aiColor3D albedo_color(1.0f, 1.0f, 1.0f);
+        if (ai_mat->Get(AI_MATKEY_COLOR_DIFFUSE, albedo_color) == AI_SUCCESS) {
+          material_data.albedo = glm::vec4(albedo_color.r,
+                                           albedo_color.g,
+                                           albedo_color.b,
+                                           material_data.albedo.w);
+        }
+
+        float metallic_value = 0.0f;
+        if (ai_mat->Get(AI_MATKEY_METALLIC_FACTOR, metallic_value) ==
+            AI_SUCCESS) {
+          material_data.metallic = metallic_value;
+        }
+
+        float roughness_value = 0.5f;
+        if (ai_mat->Get(AI_MATKEY_ROUGHNESS_FACTOR, roughness_value) ==
+            AI_SUCCESS) {
+          material_data.roughness = roughness_value;
+        } else {
+          // Alternative roughness from shininess (for older formats)
+          float shininess = 0.0f;
+          if (ai_mat->Get(AI_MATKEY_SHININESS, shininess) == AI_SUCCESS &&
+              shininess > 0.0f) {
+            // Convert shininess to roughness (approximate formula)
+            material_data.roughness = std::sqrt(2.0f / (shininess + 2.0f));
+          }
+        }
+
+        aiColor3D emissive_color(0.0f, 0.0f, 0.0f);
+        if (ai_mat->Get(AI_MATKEY_COLOR_EMISSIVE, emissive_color) ==
+            AI_SUCCESS) {
+          material_data.emissive_color =
+            glm::vec3(emissive_color.r, emissive_color.g, emissive_color.b);
+          // Set emissive flag if any component is non-zero
+          if (emissive_color.r > 0.0f || emissive_color.g > 0.0f ||
+              emissive_color.b > 0.0f) {
+            material_data.set_emissive(true);
+          }
+        }
+
+        float emissive_strength = 1.0f;
+        if (ai_mat->Get(AI_MATKEY_EMISSIVE_INTENSITY, emissive_strength) ==
+            AI_SUCCESS) {
+          material_data.emissive_strength = emissive_strength;
+          // Set emissive flag if strength is significant
+          if (emissive_strength > 0.0f) {
+            material_data.set_emissive(true);
+          }
+        }
+
+        float ao_value = 1.0f;
+        if (ai_mat->Get(AI_MATKEY_COLOR_AMBIENT, ao_value) == AI_SUCCESS) {
+          material_data.ao = ao_value;
+        }
+
+        float opacity = 1.0f;
+        if (ai_mat->Get(AI_MATKEY_OPACITY, opacity) == AI_SUCCESS) {
+          material_data.albedo.w = opacity;
+          // Enable alpha testing if opacity is less than 1.0
+          if (opacity < 1.0f) {
+            material_data.set_alpha_testing(true);
+          }
+        }
+
+        // Alpha cutoff for alpha testing
+        float alpha_cutoff = 0.5f;
+        if (ai_mat->Get(AI_MATKEY_TRANSPARENCYFACTOR, alpha_cutoff) ==
+            AI_SUCCESS) {
+          material_data.alpha_cutoff = alpha_cutoff;
+        }
+
+        // Check for clearcoat properties (if supported by format)
+        float clearcoat_value = 0.0f;
+        if (ai_mat->Get(AI_MATKEY_CLEARCOAT_FACTOR, clearcoat_value) ==
+            AI_SUCCESS) {
+          material_data.clearcoat = clearcoat_value;
+        }
+
+        float clearcoat_roughness_value = 0.0f;
+        if (ai_mat->Get(AI_MATKEY_CLEARCOAT_ROUGHNESS_FACTOR,
+                        clearcoat_roughness_value) == AI_SUCCESS) {
+          material_data.clearcoat_roughness = clearcoat_roughness_value;
+        }
+
+        // Check for double-sided materials
+        int two_sided = 0;
+        if (ai_mat->Get(AI_MATKEY_TWOSIDED, two_sided) == AI_SUCCESS &&
+            two_sided) {
+          material_data.set_double_sided(true);
+        }
 
         if (vkEndCommandBuffer(result.cmd) != VK_SUCCESS)
           return {};
@@ -390,18 +569,17 @@ upload_materials_impl_secondary(
 
     constexpr VkFenceCreateInfo fence_info{
       .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
+      .pNext = nullptr,
+      .flags = 0,
     };
 
     VkFence fence;
     vkCreateFence(vk_device, &fence_info, nullptr, &fence);
 
-    const VkSubmitInfo submit_info{
-      .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
-      .commandBufferCount = 1,
-      .pCommandBuffers = &primary_cmd,
-    };
+    info<VkSubmitInfo> submit_info{};
+    submit_info.with_command_buffers(std::span{ &primary_cmd, 1 });
 
-    vkQueueSubmit(queue, 1, &submit_info, fence);
+    vkQueueSubmit(queue, 1, &submit_info.get(), fence);
     vkWaitForFences(vk_device, 1, &fence, VK_TRUE, UINT64_MAX);
 
     // Clean up synchronization objects
@@ -438,6 +616,12 @@ StaticMesh::load_from_file(const Device& device, const std::string& path)
   std::vector search_paths = {
     fs::path{ assets_path() / fs::path{ "meshes" } / path }.make_preferred(),
     fs::path{ assets_path() / fs::path{ "models" } / path }.make_preferred(),
+    fs::path{ assets_path() / fs::path{ "models" } / path }
+      .make_preferred()
+      .replace_extension(".glb"),
+    fs::path{ assets_path() / fs::path{ "meshes" } / path }
+      .make_preferred()
+      .replace_extension(".glb"),
   };
 
   Assimp::Importer importer;
@@ -452,12 +636,7 @@ StaticMesh::load_from_file(const Device& device, const std::string& path)
       continue;
     }
     resolved_path = candidate;
-    scene = importer.ReadFile(
-      candidate.string(),
-      aiProcess_Triangulate | aiProcess_GenSmoothNormals |
-        aiProcess_CalcTangentSpace | aiProcess_JoinIdenticalVertices |
-        aiProcess_ImproveCacheLocality | aiProcess_RemoveRedundantMaterials |
-        aiProcess_SortByPType | aiProcess_FlipUVs);
+    scene = importer.ReadFile(candidate.string(), assimp_flags);
     if (!scene || !scene->HasMeshes()) {
       auto err = importer.GetErrorString();
       Logger::log_error("Failed to load model: {}. Error: {}",
@@ -523,6 +702,8 @@ StaticMesh::load_from_file(const Device& device, const std::string& path)
 
       std::vector<Vertex> raw_vertices;
       std::vector<uint32_t> raw_indices;
+      raw_vertices.reserve(mesh->mNumVertices);
+      raw_indices.reserve(mesh->mNumFaces * 3);
 
       auto positions = std::span(mesh->mVertices, mesh->mNumVertices);
       auto normals = mesh->HasNormals()
@@ -600,7 +781,7 @@ StaticMesh::load_from_file(const Device& device, const std::string& path)
                                   optimized_vertices.data(),
                                   unique_vertex_count,
                                   sizeof(Vertex));
-      AABB aabb;
+      VkMaths::AABB aabb;
       for (const auto& v : optimized_vertices)
         aabb.grow(v.position);
 
@@ -613,15 +794,16 @@ StaticMesh::load_from_file(const Device& device, const std::string& path)
         indices.end(), optimized_indices.begin(), optimized_indices.end());
 
       const auto submesh_index = static_cast<std::int32_t>(submeshes.size());
-      submeshes.push_back(
-        { .vertex_offset = vertex_offset,
-          .vertex_count = static_cast<uint32_t>(optimized_vertices.size()),
-          .index_offset = index_offset,
-          .index_count = static_cast<uint32_t>(optimized_indices.size()),
-          .material_index = mesh->mMaterialIndex,
-          .child_transform = node_transform,
-          .parent_index = parent_index,
-          .local_aabb = aabb });
+      submeshes.push_back({
+        .vertex_offset = vertex_offset,
+        .vertex_count = static_cast<uint32_t>(optimized_vertices.size()),
+        .index_offset = index_offset,
+        .index_count = static_cast<uint32_t>(optimized_indices.size()),
+        .material_index = mesh->mMaterialIndex,
+        .child_transform = node_transform,
+        .parent_index = parent_index,
+        .local_aabb = aabb,
+      });
 
       if (parent_index >= 0)
         submeshes[parent_index].children.insert(submesh_index);
@@ -643,12 +825,23 @@ StaticMesh::load_from_file(const Device& device, const std::string& path)
     std::make_unique<VertexBuffer>(device, false, name + "_vertex_buffer");
   index_buffer = std::make_unique<IndexBuffer>(
     device, VK_INDEX_TYPE_UINT32, name + "_index_buffer");
+  position_only_vertex_buffer = std::make_unique<VertexBuffer>(
+    device, false, name + "_position_only_vertex_buffer");
+
+  auto only_positions = vertices | std::views::transform([](const Vertex& v) {
+                          return v.position;
+                        });
+  position_only_vertex_buffer->upload_vertices(only_positions);
 
   vertex_buffer->upload_vertices(std::span(vertices.data(), vertices.size()));
   index_buffer->upload_indices(std::span(indices.data(), indices.size()));
 
-  for (auto i = 0; i < submeshes.size(); ++i) {
+  for (auto i = 0U; i < submeshes.size(); ++i) {
     submesh_back_pointers[&submeshes.at(i)] = i;
+  }
+
+  for (auto& submesh : submeshes) {
+    global_aabb.grow(submesh.local_aabb);
   }
 
   return true;
@@ -682,12 +875,7 @@ StaticMesh::load_from_file(const Device& device,
     if (!fs::is_regular_file(candidate))
       continue;
     resolved_path = candidate;
-    scene = importer.ReadFile(
-      candidate.string(),
-      aiProcess_Triangulate | aiProcess_GenSmoothNormals |
-        aiProcess_CalcTangentSpace | aiProcess_JoinIdenticalVertices |
-        aiProcess_ImproveCacheLocality | aiProcess_RemoveRedundantMaterials |
-        aiProcess_SortByPType | aiProcess_FlipUVs);
+    scene = importer.ReadFile(candidate.string(), assimp_flags);
     if (scene && scene->HasMeshes())
       break;
     Logger::log_error("Failed to load model: {}. Error: {}",
@@ -802,13 +990,25 @@ StaticMesh::load_from_file(const Device& device,
     std::make_unique<VertexBuffer>(device, false, name + "_vertex_buffer");
   index_buffer = std::make_unique<IndexBuffer>(
     device, VK_INDEX_TYPE_UINT32, name + "_index_buffer");
+  position_only_vertex_buffer = std::make_unique<VertexBuffer>(
+    device, false, name + "_position_only_vertex_buffer");
+
+  auto only_positions = vertices | std::views::transform([](const Vertex& v) {
+                          return v.position;
+                        });
+  position_only_vertex_buffer->upload_vertices(only_positions);
+
   vertex_buffer->upload_vertices(std::span(vertices.data(), vertices.size()));
   index_buffer->upload_indices(std::span(indices.data(), indices.size()));
 
   perf_stats.log_summary();
 
-  for (auto i = 0; i < submeshes.size(); ++i) {
+  for (auto i = 0U; i < submeshes.size(); ++i) {
     submesh_back_pointers[&submeshes.at(i)] = i;
+  }
+
+  for (auto& submesh : submeshes) {
+    global_aabb.grow(submesh.local_aabb);
   }
 
   return true;
@@ -821,4 +1021,12 @@ StaticMesh::upload_materials(const aiScene* scene,
 {
   upload_materials_impl_secondary(
     scene, device, directory, loaded_textures, materials);
+}
+
+StaticMesh::StaticMesh()
+{
+  if (!has_initialised_loader) {
+    setup_assimp_logger();
+    has_initialised_loader = true;
+  }
 }

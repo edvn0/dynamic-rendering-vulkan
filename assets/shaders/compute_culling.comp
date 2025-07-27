@@ -4,12 +4,12 @@
 
 #include "set0.glsl"
 
-layout(std430, set = 1, binding = 1) readonly buffer InstanceInput
+layout(std430, set = 1, binding = 1) readonly buffer instance_input
 {
   mat4 instance_transforms[];
 };
 
-layout(std430, set = 1, binding = 2) buffer InstanceOutput
+layout(std430, set = 1, binding = 2) buffer instance_output
 {
   mat4 culled_instance_transforms[];
 };

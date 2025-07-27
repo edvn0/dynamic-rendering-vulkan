@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <bitset>
 #include <string>
 #include <string_view>
 
@@ -103,4 +104,16 @@ make_bytes() -> std::tuple<std::unique_ptr<std::byte[]>, std::size_t>
 {
   return std::make_tuple(std::make_unique<std::byte[]>(sizeof(T) * Count),
                          sizeof(T) * Count);
+}
+
+static constexpr auto
+any(const auto& needle, auto&&... haystack)
+{
+  return ((needle == haystack) || ...);
+}
+
+static constexpr auto
+all(const auto& needle, auto&&... haystack)
+{
+  return ((needle == haystack) && ...);
 }

@@ -7,6 +7,9 @@ DrawCommandHasher::operator()(const DrawCommand& dc) const -> std::size_t
 {
   const auto h1 = std::hash<StaticMesh*>{}(dc.mesh);
   const auto h2 = std::hash<std::uint32_t>{}(dc.submesh_index);
+  if (!dc.override_material.is_valid()) {
+    return h1 ^ (h2 << 1);
+  }
   const auto h3 = std::hash<std::uint32_t>{}(dc.override_material.id);
   return h1 ^ (h2 << 1) ^ (h3 << 2);
 }

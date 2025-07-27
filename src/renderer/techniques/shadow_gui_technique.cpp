@@ -7,6 +7,8 @@
 #include "renderer/descriptor_manager.hpp"
 #include "renderer/renderer.hpp"
 
+#include <tracy/Tracy.hpp>
+
 void
 ShadowGUITechnique::initialise(Renderer& renderer,
                                const string_hash_map<const Image*>& values,
@@ -32,16 +34,24 @@ ShadowGUITechnique::initialise(Renderer& renderer,
                                  .debug_name = desc.output.name.c_str(),
                                });
 
-  renderer_camera_environment = &renderer.get_camera_environment();
-
   material->upload(binding, image);
+}
+
+auto
+ShadowGUITechnique::on_resize(const std::uint32_t, const std::uint32_t) -> void
+{
+  output_image->resize();
+  material->invalidate_all();
 }
 
 void
 ShadowGUITechnique::perform(const CommandBuffer& command_buffer,
                             const std::uint32_t frame_index) const
 {
+  ZoneScopedN("shadow_gui");
+
   const auto cmd = command_buffer.get(frame_index);
+  command_buffer.begin_timer(frame_index, "shadow_gui");
 
   Util::Vulkan::cmd_begin_debug_label(
     cmd, "Shadow GUI", { 0.1, 1.0, 1.0, 1.0 });
@@ -99,24 +109,11 @@ ShadowGUITechnique::perform(const CommandBuffer& command_buffer,
                           0,
                           nullptr);
 
-  const struct ShadowGUIPushConstants
-  {
-    float z_near{};
-    float z_far{};
-  } data{ renderer_camera_environment->z_near,
-          renderer_camera_environment->z_far };
-
-  vkCmdPushConstants(cmd,
-                     pipeline.layout,
-                     VK_SHADER_STAGE_FRAGMENT_BIT,
-                     0,
-                     sizeof(ShadowGUIPushConstants),
-                     &data);
-
   vkCmdDraw(cmd, 3, 1, 0, 0);
   vkCmdEndRendering(cmd);
 
   CoreUtils::cmd_transition_to_shader_read(cmd, *output_image);
+  command_buffer.end_timer(frame_index, "shadow_gui");
 
   Util::Vulkan::cmd_end_debug_label(cmd);
 }

@@ -23,6 +23,8 @@ public:
   template<typename T>
   auto has_component() const -> bool;
 
+  auto set_parent(Entity parent) -> void;
+
   [[nodiscard]] auto raw() const -> entt::entity { return handle; }
   [[nodiscard]] auto valid() const -> bool;
 
@@ -39,7 +41,7 @@ private:
 class ReadonlyEntity
 {
 public:
-  ReadonlyEntity(entt::entity e, Scene* s)
+  ReadonlyEntity(const entt::entity e, Scene* s)
     : entity(e, s)
   {
   }

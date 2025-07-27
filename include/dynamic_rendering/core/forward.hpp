@@ -15,6 +15,7 @@ class Window;
 class CommandBuffer;
 class GPUBuffer;
 class Image;
+class ImageArray;
 class Shader;
 struct CompiledPipeline;
 class GUISystem;
@@ -29,6 +30,8 @@ class IndexBuffer;
 class Material;
 class StaticMesh;
 struct InitialisationParameters;
+
+struct IFullscreenTechnique;
 
 class Renderer;
 class BlueprintRegistry;

@@ -8,11 +8,11 @@ struct InstanceData {
   mat4 transform;
 };
 
-layout(std430, set = 1, binding = 0) readonly buffer InstanceInput {
+layout(std430, set = 1, binding = 0) readonly buffer instance_input {
   InstanceData instances[];
 };
 
-layout(std430, set = 1, binding = 1) buffer VisibilityOutput {
+layout(std430, set = 1, binding = 1) buffer visibility_output {
   uint visibility[];
 };
 

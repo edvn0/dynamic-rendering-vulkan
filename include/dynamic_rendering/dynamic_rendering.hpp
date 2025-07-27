@@ -12,6 +12,7 @@
 #include <dynamic_rendering/core/forward.hpp>
 #include <dynamic_rendering/core/gpu_buffer.hpp>
 #include <dynamic_rendering/core/image.hpp>
+#include <dynamic_rendering/core/image_array.hpp>
 #include <dynamic_rendering/core/image_configuration.hpp>
 #include <dynamic_rendering/core/image_transition.hpp>
 #include <dynamic_rendering/core/input.hpp>

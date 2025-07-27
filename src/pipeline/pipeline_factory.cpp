@@ -153,14 +153,19 @@ PipelineFactory::create_pipeline(const PipelineBlueprint& blueprint,
     rasterizer.depthBiasSlopeFactor = state->slope_factor;
   }
 
+  assert(blueprint.attachments.size() == blueprint.color_blend_states.size() &&
+         "Number of attachments must match number of color blend states");
+
   VkPipelineColorBlendAttachmentState color_blend_attachment{
-    .blendEnable = blueprint.blend_enable,
+    .blendEnable = blueprint.color_blend_states.empty()
+                     ? VK_FALSE
+                     : blueprint.color_blend_states.at(0).enabled,
     .srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA,
     .dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
     .colorBlendOp = VK_BLEND_OP_ADD,
-    .srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE,
-    .dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO,
-    .alphaBlendOp = VK_BLEND_OP_ADD,
+    .srcAlphaBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA,
+    .dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
+    .alphaBlendOp = VK_BLEND_OP_SUBTRACT,
     .colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
                       VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT,
   };

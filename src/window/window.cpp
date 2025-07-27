@@ -34,15 +34,16 @@ Window::hookup_events() -> void
       d.framebuffer_resized = true;
     });
   glfwSetKeyCallback(
-    glfw_window, [](GLFWwindow* w, int key, int, int action, int) {
+    glfw_window, [](GLFWwindow* w, int key, int, int action, int mods) {
       auto const& d =
         *static_cast<Window::WindowData*>(glfwGetWindowUserPointer(w));
       auto code = static_cast<KeyCode>(key);
+      auto modifiers = static_cast<Modifiers>(mods);
       if (action == GLFW_PRESS) {
-        KeyPressedEvent ev{ code };
+        KeyPressedEvent ev{ code, modifiers };
         d.event_callback(ev);
       } else if (action == GLFW_RELEASE) {
-        KeyReleasedEvent ev{ code };
+        KeyReleasedEvent ev{ code, modifiers };
         d.event_callback(ev);
       }
     });
@@ -50,11 +51,12 @@ Window::hookup_events() -> void
     glfw_window, +[](GLFWwindow* w, int button, int action, int) {
       auto const& d =
         *static_cast<Window::WindowData*>(glfwGetWindowUserPointer(w));
+      const auto code = static_cast<MouseCode>(button);
       if (action == GLFW_PRESS) {
-        MouseButtonPressedEvent ev{ button };
+        MouseButtonPressedEvent ev{ code };
         d.event_callback(ev);
       } else if (action == GLFW_RELEASE) {
-        MouseButtonReleasedEvent ev{ button };
+        MouseButtonReleasedEvent ev{ code };
         d.event_callback(ev);
       }
     });
@@ -112,7 +114,27 @@ Window::Window(const WindowConfiguration& config)
   glfwSetWindowUserPointer(glfw_window, user_data.get());
   hookup_events();
 
+  glfwSetDropCallback(
+    glfw_window, +[](GLFWwindow*, int count, const char** paths) {
+      std::lock_guard lock(Window::drag_drop_mutex);
+      Window::drag_drop_files.clear();
+      for (int i = 0; i < count; ++i) {
+        Window::drag_drop_files.emplace_back(paths[i]);
+      }
+    });
+
   Input::initialise(glfw_window);
+}
+
+auto
+Window::poll_drag_drop_files() -> std::span<const std::filesystem::path>
+{
+  std::lock_guard lock(drag_drop_mutex);
+
+  drag_drop_cache = std::move(drag_drop_files);
+  drag_drop_files.clear(); // clear input buffer
+
+  return std::span<const std::filesystem::path>{ drag_drop_cache };
 }
 
 auto

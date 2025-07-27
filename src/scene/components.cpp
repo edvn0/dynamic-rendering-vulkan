@@ -13,8 +13,6 @@ Mesh::Mesh(const std::string_view path)
   if (const auto asset = Assets::Manager::the().load<StaticMesh>(path);
       asset.is_valid()) {
     mesh = asset;
-  } else {
-    Logger::log_debug("Could not load static mesh at path: {}", path);
   }
 }
 

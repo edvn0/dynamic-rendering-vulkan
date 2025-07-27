@@ -102,15 +102,22 @@ public:
   ~Scene() = default;
 
   auto create_entity(std::string_view) -> Entity;
+
+  template<typename... Args>
+  auto create_entity(const std::format_string<Args...>& fmt, Args&&... args)
+    -> Entity
+  {
+    return create_entity(std::format(fmt, std::forward<Args>(args)...));
+  }
+
   auto create_entt_entity() -> entt::entity;
   auto get_registry() -> auto& { return registry; }
 
-  auto on_initialise(const InitialisationParameters&) -> void;
   auto on_interface() -> void;
   auto on_update(double ts) -> void;
   auto on_render(Renderer& renderer) -> void;
   auto on_event(Event&) -> bool;
-  auto on_resize(const EditorCamera&, std::uint32_t w, std::uint32_t h) -> void;
+  auto on_resize(const EditorCamera&) -> void;
   template<typename... Ts>
   auto view()
   {
@@ -132,9 +139,13 @@ public:
     return registry.view<Ts...>().each(std::forward<decltype(func)>(func));
   }
 
-  auto set_selected_entity(entt::entity entity = entt::null) -> void
+  auto set_selected_entity(const entt::entity entity = entt::null) -> void
   {
     selected_entity = entity;
+  }
+  [[nodiscard]] auto get_selected_entity() const -> entt::entity
+  {
+    return selected_entity;
   }
 
   auto update_viewport_bounds(const DynamicRendering::ViewportBounds& bounds)
@@ -152,24 +163,15 @@ private:
 
   Entity scene_camera_entity;
 
-  bool show_components = false;
+  bool show_components = true;
   bool show_statistics = true;
 
   glm::vec2 vp_min{};
   glm::vec2 vp_max{};
 
-  auto draw_vector3_slider(const char* label,
-                           glm::vec3& value,
-                           float v_min,
-                           float v_max,
-                           const char* format) -> bool;
-  auto draw_vector4_slider(const char* label,
-                           glm::vec4& value,
-                           float v_min,
-                           float v_max,
-                           const char* format) -> bool;
-  auto draw_quaternion_slider(const char* label, glm::quat& quaternion) -> bool;
   auto draw_entity_item(entt::entity entity, std::string_view tag) -> void;
+  auto draw_entity_hierarchy(entt::entity entity, const std::string&) -> bool;
+  auto has_matching_child(entt::entity entity, const std::string&) -> bool;
   auto update_fly_controllers(double) -> void;
 
   friend class Entity;

@@ -1,7 +1,10 @@
 #pragma once
 
+#include <filesystem>
 #include <functional>
 #include <memory>
+#include <mutex>
+#include <vector>
 #include <vulkan/vulkan.h>
 
 #include "core/event_system.hpp"
@@ -41,12 +44,18 @@ public:
                      std::filesystem::path = get_default_config_path())
     -> std::unique_ptr<Window>;
 
+  static auto poll_drag_drop_files() -> std::span<const std::filesystem::path>;
+
 private:
   GLFWwindow* glfw_window{ nullptr };
   VkSurfaceKHR vk_surface{ VK_NULL_HANDLE };
   struct WindowData;
   std::unique_ptr<WindowData> user_data;
   std::filesystem::path config_path;
+
+  static inline std::mutex drag_drop_mutex;
+  static inline std::vector<std::filesystem::path> drag_drop_files;
+  static inline std::vector<std::filesystem::path> drag_drop_cache;
 
   explicit Window(const WindowConfiguration&);
   auto cleanup() -> void;

@@ -44,8 +44,8 @@ struct InstanceData
 struct DrawItem
 {
   DrawCommand command;
-  std::uint32_t first_instance;
-  std::uint32_t instance_count;
+  std::uint32_t first_instance{};
+  std::uint32_t instance_count{};
 };
 
 // Used to submit visible instances after culling
@@ -60,3 +60,4 @@ using DrawCommandMap =
 using IdentifierMap = std::
   unordered_map<DrawCommand, std::vector<std::uint32_t>, DrawCommandHasher>;
 using DrawList = std::vector<DrawItem>;
+using DrawListView = std::span<const DrawItem>;

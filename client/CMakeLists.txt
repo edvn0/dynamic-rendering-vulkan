@@ -13,6 +13,7 @@ find_package(glm REQUIRED CONFIG)
 add_executable(Client
   src/main.cpp
   src/app_layer.cpp
+  src/file_browser.cpp
 )
 
 target_link_libraries(Client PRIVATE
@@ -29,7 +30,8 @@ target_link_libraries(Client PRIVATE
 )
 
 target_include_directories(Client PRIVATE
-  ${CMAKE_SOURCE_DIR}/src
+  ${CMAKE_CURRENT_SOURCE_DIR}/include
+  ${CMAKE_SOURCE_DIR}/include/dynamic_rendering
 )
 
 if(MSVC)
@@ -41,3 +43,8 @@ endif()
 if(CMAKE_BUILD_TYPE STREQUAL "Debug" OR CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo")
   target_compile_definitions(${PROJECT_NAME} PRIVATE IS_DEBUG)
 endif()
+
+target_compile_definitions(${PROJECT_NAME} PRIVATE
+            GLM_FORCE_LEFT_HANDED
+            GLM_FORCE_DEPTH_ZERO_TO_ONE
+    )

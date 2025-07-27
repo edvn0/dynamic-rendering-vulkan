@@ -17,6 +17,8 @@ struct Handle
   {
   }
 
+  auto reset() -> void { id = invalid; }
+
   [[nodiscard]]
   auto is_valid() const -> bool
   {
@@ -24,9 +26,17 @@ struct Handle
   }
 
   auto get() -> T*;
-  auto get() const -> const T*;
+  [[nodiscard]] auto get() const -> const T*;
 
   auto operator<=>(const Handle& other) const = default;
+};
+
+struct HandleHasher
+{
+  auto operator()(const Handle<uint32_t>& handle) const -> std::size_t
+  {
+    return handle.id;
+  }
 };
 
 }

@@ -4,9 +4,39 @@ shaders:
   - stage: fragment
     empty: true
 
+vertex_input:
+  bindings:
+    - binding: 0
+      stride: 12
+      input_rate: vertex
+    - binding: 1
+      stride: 64
+      input_rate: instance
+  attributes:
+    - location: 0
+      binding: 0
+      format: vec3
+      offset: 0
+    - location: 1
+      binding: 1
+      format: vec4
+      offset: 0
+    - location: 2
+      binding: 1
+      format: vec4
+      offset: 16
+    - location: 3
+      binding: 1
+      format: vec4
+      offset: 32
+    - location: 4
+      binding: 1
+      format: vec4
+      offset: 48
+
 rasterization:
-  cull_mode: back
-  winding: cw
+  cull_mode: front
+  winding: ccw
 
 depth_stencil:
   depth_test: true
@@ -14,4 +44,4 @@ depth_stencil:
   format: d32_sfloat
   compare_op: greater
 
-msaa_samples: 16
+msaa_samples: 2

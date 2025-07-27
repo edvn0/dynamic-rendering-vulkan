@@ -7,6 +7,20 @@
 #include <VkBootstrap.h>
 #include <optional>
 
+class OneTimeCommand
+{
+  const Device& device;
+  VkQueue chosen_queue{ VK_NULL_HANDLE };
+  VkCommandBuffer command_buffer{ VK_NULL_HANDLE };
+  VkCommandPool command_pool{ VK_NULL_HANDLE };
+
+public:
+  explicit OneTimeCommand(const Device&, VkQueue = VK_NULL_HANDLE);
+  ~OneTimeCommand();
+
+  auto operator*() const { return command_buffer; }
+};
+
 class Device
 {
 public:
@@ -29,6 +43,12 @@ public:
   auto get_physical_device() const -> VkPhysicalDevice
   {
     return device.physical_device.physical_device;
+  }
+  auto get_physical_device_properties() const
+    -> const VkPhysicalDeviceProperties&
+  {
+    assert(props.has_value() && "Physical device properties not initialized");
+    return *props;
   }
   auto get_timestamp_period() const -> double;
   auto get_max_sample_count(VkSampleCountFlags = 0) const

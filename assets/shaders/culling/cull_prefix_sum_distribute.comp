@@ -3,7 +3,7 @@
 
 layout(local_size_x = 64) in;
 
-layout(std430, set = 1, binding = 0) buffer PrefixSumOutput {
+layout(std430, set = 1, binding = 0) buffer prefix_sum_output {
   uint prefix_sum[];
 };
 

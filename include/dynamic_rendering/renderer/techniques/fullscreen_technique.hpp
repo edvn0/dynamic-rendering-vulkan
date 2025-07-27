@@ -51,7 +51,9 @@ struct IFullscreenTechnique
   virtual auto initialise(Renderer&,
                           const string_hash_map<const Image*>&,
                           const string_hash_map<const GPUBuffer*>&) -> void = 0;
+  virtual auto on_resize(std::uint32_t, std::uint32_t) -> void = 0;
   [[nodiscard]] virtual auto get_material() const -> Material* = 0;
+  [[nodiscard]] virtual auto get_output() const -> const Image* = 0;
 };
 
 class FullscreenTechniqueBase : public IFullscreenTechnique
@@ -65,10 +67,20 @@ public:
     , desc(std::move(desc))
   {
   }
+
+  auto perform(const CommandBuffer&, std::uint32_t) const -> void;
+
   auto initialise(Renderer&,
                   const string_hash_map<const Image*>&,
                   const string_hash_map<const GPUBuffer*>&) -> void override
   {
+  }
+
+  auto get_output() const -> const Image* override { return nullptr; }
+
+  auto on_resize(std::uint32_t, std::uint32_t) -> void override
+  {
+    // NOTE: Base case can do nothing :)
   }
 
 protected:

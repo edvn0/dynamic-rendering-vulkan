@@ -147,7 +147,7 @@ public:
       return true;
     });
 
-    return false;
+    return event.handled;
   }
 
   auto focus(const glm::vec3& focus_point) -> void

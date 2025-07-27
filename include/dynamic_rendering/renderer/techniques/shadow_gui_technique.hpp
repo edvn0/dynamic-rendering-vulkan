@@ -25,18 +25,20 @@ public:
   auto initialise(Renderer&,
                   const string_hash_map<const Image*>&,
                   const string_hash_map<const GPUBuffer*>&) -> void override;
+  auto on_resize(std::uint32_t, std::uint32_t) -> void override;
   auto perform(const CommandBuffer&, std::uint32_t) const -> void override;
   [[nodiscard]] auto get_material() const -> Material* override
   {
     return material.get();
   }
-
   [[nodiscard]] auto valid() const { return material != nullptr; }
-  [[nodiscard]] auto get_output() const -> const auto& { return *output_image; }
+
+  [[nodiscard]] auto get_output() const -> const Image* override
+  {
+    return output_image.get();
+  }
 
 private:
   Assets::Pointer<Material> material;
   Assets::Pointer<Image> output_image;
-
-  const CameraEnvironment* renderer_camera_environment{ nullptr };
 };

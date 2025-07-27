@@ -1,9 +1,9 @@
 #pragma once
 
 #include "assets/pointer.hpp"
+#include "core/debug_utils.hpp"
 #include "core/device.hpp"
 #include "core/util.hpp"
-#include "debug_utils.hpp"
 
 #include <cstring>
 #include <span>
@@ -11,6 +11,20 @@
 #include <type_traits>
 #include <vk_mem_alloc.h>
 #include <vulkan/vulkan.h>
+
+auto
+align_buffer_offset(std::size_t offset, std::size_t alignment) -> std::size_t;
+auto
+get_aligned_buffer_size(const Device& device,
+                        std::size_t requested_size,
+                        VkBufferUsageFlags usage_flags) -> std::size_t;
+auto
+get_aligned_buffer_size(const Device& device,
+                        std::size_t requested_size,
+                        const GPUBuffer&) -> std::size_t;
+auto
+get_buffer_alignment(const Device& device, VkBufferUsageFlags usage_flags)
+  -> std::size_t;
 
 template<typename T>
 concept AdmitsGPUBuffer =
@@ -26,6 +40,24 @@ upload_to_device_buffer(const Device& device,
                         byte_span data,
                         std::size_t offset = 0ULL) -> void;
 
+enum class GPUBufferType : std::uint32_t
+{
+  TransferSrc = 0x1,
+  TransferDst = 0x2,
+  UniformTexel = 0x4,
+  StorageTexel = 0x8,
+  Uniform = 0x10,
+  Storage = 0x20,
+  Index = 0x40,
+  Vertex = 0x80,
+};
+constexpr auto
+operator|(GPUBufferType l, GPUBufferType r) -> GPUBufferType
+{
+  return static_cast<GPUBufferType>(std::to_underlying(l) |
+                                    std::to_underlying(r));
+}
+
 class GPUBuffer
 {
 public:
@@ -37,18 +69,44 @@ public:
     , usage_flags(usage)
     , mapped_on_create(mapped_on_create)
   {
+    assert(!name.empty());
     if (!name.empty()) {
       set_name(name);
     }
   }
   ~GPUBuffer();
 
+  static auto zero_initialise(const Device&,
+                              std::size_t,
+                              VkBufferUsageFlags,
+                              bool = false,
+                              std::string_view = {})
+    -> std::unique_ptr<GPUBuffer>;
+  template<GPUBufferType Type, std::size_t Bytes>
+  static auto zero_initialise(const Device& device,
+                              bool mapped_on_create,
+                              std::string_view name)
+    -> std::unique_ptr<GPUBuffer>
+  {
+    return zero_initialise(device,
+                           Bytes,
+                           static_cast<VkBufferUsageFlags>(Type),
+                           mapped_on_create,
+                           name);
+  }
+  template<GPUBufferType Type>
   static auto zero_initialise(const Device& device,
                               std::size_t bytes,
-                              VkBufferUsageFlags usage,
-                              bool mapped_on_create = false,
-                              std::string_view name = {})
-    -> std::unique_ptr<GPUBuffer>;
+                              bool mapped_on_create,
+                              std::string_view name)
+    -> std::unique_ptr<GPUBuffer>
+  {
+    return zero_initialise(device,
+                           bytes,
+                           static_cast<VkBufferUsageFlags>(Type),
+                           mapped_on_create,
+                           name);
+  }
 
   [[nodiscard]] auto get_usage_flags() const -> VkBufferUsageFlags
   {
@@ -147,14 +205,18 @@ public:
     if (!mapped)
       return false;
 
-    const auto size = sizeof(T);
-    if (offset_bytes + size > current_size)
+    if (const auto size = sizeof(T); offset_bytes + size > current_size)
       return false;
 
     std::memcpy(&user_allocated,
                 static_cast<const std::byte*>(mapped) + offset_bytes,
                 sizeof(T));
     return true;
+  }
+
+  [[nodiscard]] auto get_allocation() const -> const VmaAllocation&
+  {
+    return allocation;
   }
 
 private:
@@ -247,6 +309,19 @@ public:
   auto upload_vertices(std::span<T, N> data) -> void
   {
     buffer.upload(std::span<const T, N>{ data });
+  }
+
+  template<std::ranges::input_range R>
+    requires AdmitsGPUBuffer<std::ranges::range_value_t<R>>
+  auto upload_vertices(R&& r) -> void
+  {
+    using T = std::ranges::range_value_t<R>;
+    std::vector<T> temp;
+    temp.reserve(std::ranges::distance(r));
+    for (const auto& item : r) {
+      temp.push_back(item);
+    }
+    upload_vertices(std::span<T>{ temp });
   }
 
   [[nodiscard]] auto get_buffer() const -> const GPUBuffer& { return buffer; }

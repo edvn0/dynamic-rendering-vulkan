@@ -1,0 +1,15 @@
+type: point_lights
+name: point_lights
+material: point_lights_material
+
+inputs:
+  - binding: scene_depth
+
+output:
+  binding: output_target
+  name: point_lights_output
+  extent: framebuffer
+  format: BGRA8_SRGB
+  usage:
+    - Sampled
+    - Colour

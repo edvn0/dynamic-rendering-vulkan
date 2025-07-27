@@ -1,30 +1,66 @@
 #version 450
 
-#include "gaussian.glsl"
 #include "set0.glsl"
 
 layout(local_size_x = 8, local_size_y = 8) in;
 
-layout(set = 1, binding = 0, rgba32f) uniform
-  restrict readonly image2D input_image;
-layout(set = 1, binding = 1, rgba32f) uniform
-  restrict writeonly image2D output_image;
+layout(set = 1, binding = 0, r11f_g11f_b10f) readonly uniform image2D input_image;
+layout(set = 1, binding = 1, r11f_g11f_b10f) writeonly uniform image2D output_image;
 
-void
-main()
+const int SAMPLE_COUNT = 10;
+
+const float OFFSETS[10] = float[10](
+-8.3708650970136,
+-6.400317149797591,
+-4.4305055426526785,
+-2.4612181104350137,
+-0.49222828273139496,
+1.4767017588568079,
+3.4458098836553415,
+5.415332322090894,
+7.385486338269373,
+9.0
+);
+
+const float WEIGHTS[10] = float[10](
+0.022008053131951713,
+0.0551370797690372,
+0.10811849651707603,
+0.16595572188490385,
+0.19940735666087397,
+0.1875678781544587,
+0.13811466896683441,
+0.07961037316160938,
+0.035918352993393375,
+0.008162018759861726
+);
+
+const bool HORIZONTAL = false;
+
+void main()
 {
-  ivec2 size = imageSize(input_image);
-  ivec2 coord = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 coord = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 size = imageSize(input_image);
 
-  if (coord.x >= size.x || coord.y >= size.y)
+    if (any(greaterThanEqual(coord, size)))
     return;
 
-  vec4 sum = vec4(0.0);
-  for (int i = 0; i < N; ++i) {
-    ivec2 offset = ivec2(0, 1) * (i - M);
-    ivec2 sample_coord = clamp(coord + offset, ivec2(0), size - 1);
-    sum += coeffs[i] * imageLoad(input_image, sample_coord);
-  }
+    vec4 sum = vec4(0.0);
 
-  imageStore(output_image, coord, sum);
+    for (int i = 0; i < SAMPLE_COUNT; ++i) {
+        float offset = OFFSETS[i];
+        int offset_int = int(offset);
+
+        // Apply offset in the chosen direction
+        ivec2 delta = HORIZONTAL
+        ? ivec2(offset_int, 0)
+        : ivec2(0, offset_int);
+
+        ivec2 pos = clamp(coord + delta, ivec2(0), size - 1);
+        vec4 s = imageLoad(input_image, pos);
+
+        sum += s * WEIGHTS[i];
+    }
+
+    imageStore(output_image, coord, sum);
 }

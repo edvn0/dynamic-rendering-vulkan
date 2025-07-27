@@ -64,6 +64,10 @@ public:
   {
     return mip_layer_views[layer * mip_levels + mip];
   }
+  [[nodiscard]] auto get_layer_view(const std::uint32_t layer) const
+  {
+    return get_mip_layer_view(0, layer);
+  }
   [[nodiscard]] auto get_image() const -> VkImage { return image; }
   [[nodiscard]] auto width() const -> std::uint32_t { return extent.width; }
   [[nodiscard]] auto height() const -> std::uint32_t { return extent.height; }
@@ -91,11 +95,22 @@ public:
   }
 
   auto resize(std::uint32_t new_width, std::uint32_t new_height) -> void;
+
+  /// @brief Resize the image to the current extent.
+  auto resize() -> void { resize(extent.width, extent.height); }
+
   auto set_debug_name(std::string_view name) -> void;
   auto upload_rgba(std::span<const unsigned char>) -> void;
 
+  auto reset_dirty(Badge<Material>) -> void { is_dirty = false; }
+  auto dirty() const -> bool { return is_dirty; }
+
   static auto load_from_file(const Device&,
                              const std::string&,
+                             bool flip_y = true) -> Assets::Pointer<Image>;
+  static auto load_from_file(const Device&,
+                             const std::string&,
+                             const SampledTextureImageConfiguration&,
                              bool flip_y = true) -> Assets::Pointer<Image>;
   static auto load_cubemap(const Device&, const std::string&)
     -> Assets::Pointer<Image>;
@@ -105,12 +120,13 @@ public:
     Assets::Pointer<Image> image;
     std::unique_ptr<GPUBuffer> staging;
   };
-  static auto load_from_file_with_staging(const Device& dev,
-                                          const std::string& path,
-                                          bool flip_y,
-                                          bool ui_allow,
-                                          VkCommandBuffer cmd)
-    -> ImageWithStaging;
+  static auto load_from_file_with_staging(
+    const Device& dev,
+    const std::string& path,
+    bool flip_y,
+    bool ui_allow,
+    VkCommandBuffer cmd,
+    VkFormat image_format = VK_FORMAT_R8G8B8A8_SRGB) -> ImageWithStaging;
   static auto is_cubemap_externally(const std::string& path)
     -> std::expected<bool, std::string>;
   static auto init_sampler_cache(const Device& device) -> void;
@@ -145,6 +161,9 @@ private:
   // For UI systems.
   bool allow_in_ui{ true }; // For UI systems
   std::uint64_t texture_implementation_pointer{};
+
+  // For material automatic updates.
+  bool is_dirty{ true };
 
   auto upload_rgba_with_command_buffer(std::span<const unsigned char>,
                                        VkCommandBuffer) -> void;
